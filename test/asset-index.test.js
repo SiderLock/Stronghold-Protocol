@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createAssetIndex, hash16 } from '../server/http/assetIndex.js';
+import { link } from './helpers/links.js';
 import { rewriteManifest, relOf } from '../server/http/assetViews.js';
 import { startServer } from '../server/index.js';
 
@@ -51,7 +52,7 @@ describe('the asset index', () => {
       'public/assets/char/a.png': a, 'public/assets/spine/x/x.atlas': b, 'public/assets/.hidden': 'h', 'public/assets/.git/obj': 'o',
       'public/fonts/f.woff2': 'font', 'public/js/app.js': 'not indexed', 'elsewhere/linked/l.png': 'linked',
     });
-    fs.symlinkSync(path.join(dir, 'elsewhere/linked'), path.join(dir, 'public/assets/link'), 'dir');
+    link(path.join(dir, 'elsewhere/linked'), path.join(dir, 'public/assets/link'), 'dir');
     const cacheFile = path.join(dir, '.cache/asset-hashes.json');
     try {
       const idx = createAssetIndex({ publicDir: path.join(dir, 'public'), cacheFile, delayMs: 0 });

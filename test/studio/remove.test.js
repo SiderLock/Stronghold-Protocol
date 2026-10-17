@@ -16,6 +16,7 @@ import { PLUGIN_ERRORS } from '../../shared/plugins/errors.js';
 import { StubMatch } from '../../server/match/StubMatch.js';
 import { TestClient } from '../helpers/wsClient.js';
 import { png, writePlugin, cosmetic } from '../helpers/pluginFixtures.js';
+import { link, unlink } from '../helpers/links.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /** Where a removed plugin went: _removed/<id>-<UTC YYYYMMDD-HHMMSS-mmm>, -2 … when taken. */
@@ -100,7 +101,7 @@ describe('removing plugins in the studio', () => {
     fs.mkdirSync(path.join(plugins, '.hidden'));
     skin(path.join(plugins, 'Mixed-Case'));
     const target = skin(path.join(tmp, 'linked-target'));
-    fs.symlinkSync(target, path.join(plugins, 'linked-skin'));
+    link(target, path.join(plugins, 'linked-skin'));
     srv.packs.rescan();
     const r = await remove(['Bad_ID', '../old-skin', 'nope-skin', 'mixed-case', '_keep', '.hidden', 'linked-skin', 'ok-skin']);
     assert.equal(r.status, 200);
@@ -121,7 +122,7 @@ describe('removing plugins in the studio', () => {
     // every one refused: 200 all the same, nothing removed
     const none = await remove(['nope-skin', 'linked-skin']);
     assert.deepEqual([none.status, none.body.removed, none.body.refused.map((x) => x.error)], [200, [], ['PLUGIN_UNKNOWN', 'PLUGIN_STUDIO_PATH']]);
-    fs.rmSync(path.join(plugins, 'linked-skin'));
+    unlink(path.join(plugins, 'linked-skin'));
     fs.rmSync(path.join(plugins, 'Mixed-Case'), { recursive: true });
     srv.packs.rescan();
   });
@@ -177,7 +178,7 @@ describe('removing plugins in the studio', () => {
     const elsewhere = path.join(tmp, 'elsewhere');
     fs.mkdirSync(elsewhere);
     if (fs.existsSync(removed)) fs.renameSync(removed, kept);
-    fs.symlinkSync(elsewhere, removed);
+    link(elsewhere, removed);
     try {
       const r = await remove(['stuck-skin']);
       assert.equal(r.status, 200);
@@ -185,7 +186,8 @@ describe('removing plugins in the studio', () => {
       assert.ok(fs.existsSync(path.join(plugins, 'stuck-skin', 'plugin.json')));
       assert.deepEqual(fs.readdirSync(elsewhere), [], 'nothing went through the link');
     } finally {
-      fs.rmSync(removed);
+      // A junction/dir link is removed without following it; rmSync would treat it as a real tree on Windows.
+      unlink(removed);
       if (fs.existsSync(kept)) fs.renameSync(kept, removed);
     }
   });

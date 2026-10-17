@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fixture } from '../helpers/contentFixtures.js';
+import { link } from '../helpers/links.js';
 import { createPlugin, templateById, TEMPLATES, manifestText } from '../../server/studio/templates/index.js';
 import { createPluginFiles } from '../../server/studio/files.js';
 import { createAuthoring } from '../../server/studio/authoring.js';
@@ -83,7 +84,7 @@ test('numeric fields mirror default skills; wizard revision protects external ed
 
 test('generated script harness runs with tools/plugin.mjs test, with SDK registrations preloaded', { timeout: 30000 }, t => {
   const f = fixture(t); makePlugin(f, 'script', 'harness-demo');
-  for (const name of ['data', 'test', 'server', 'shared']) fs.symlinkSync(path.resolve(name), path.join(f.dir, name));
+  for (const name of ['data', 'test', 'server', 'shared']) link(path.resolve(name), path.join(f.dir, name));
   const run = spawnSync(process.execPath, ['tools/plugin.mjs', 'test', 'harness-demo', '--root', f.dir], { encoding: 'utf8', timeout: 25000 });
   assert.equal(run.status, 0, run.stdout + run.stderr);
   assert.match(run.stdout, /ℹ pass 1\b/); // the spec report on every Node version (Node 22's default here would be TAP)

@@ -16,6 +16,7 @@ import { createPluginWatcher, treeWithin } from '../../server/studio/watch.js';
 import { StubMatch } from '../../server/match/StubMatch.js';
 import { TestClient } from '../helpers/wsClient.js';
 import { png, writePlugin, cosmetic } from '../helpers/pluginFixtures.js';
+import { link } from '../helpers/links.js';
 
 const TOAST = '房间插件「{names}」的文件在服务器上变了，请在插件面板中点「重新应用」';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,7 +50,7 @@ test('the watch: a plugins folder over the entry limit is not watched as a tree 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-watch-big-'));
   const plugins = path.join(dir, 'plugins');
   writePlugin(path.join(plugins, 'skin'), cosmetic({ assets: { chars: { char_102_texas: { avatar: 'a.png' } } } }), { 'a.png': png(2, 2) });
-  fs.symlinkSync(dir, path.join(plugins, 'loop')); // a link back up: never followed by the count
+  link(dir, path.join(plugins, 'loop')); // a link back up: never followed by the count
   const registry = createPluginRegistry({ publicDir: path.join(dir, 'public'), dataDir: path.join(dir, 'data'), packsDir: path.join(dir, 'packs'), pluginsDir: plugins }, { recheckMs: 60000 });
   const warns = [];
   const w = createPluginWatcher({ pluginsDir: plugins, registry, log: { warn: (m) => warns.push(m) }, maxEntries: 2 });

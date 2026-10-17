@@ -16,6 +16,7 @@ import {
   installedPluginVersion, isNonPublicAddress, isRemoteAddress, loadCatalogText, pinningLookup, readDownloadAllow,
 } from '../../server/plugins/install.js';
 import { main } from '../../tools/plugin.mjs';
+import { link } from '../helpers/links.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const sha = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -196,10 +197,10 @@ test('a symlink id is not followed: status has no version, and --force renames t
   fs.mkdirSync(plugins);
   fs.mkdirSync(path.join(real, 'elsewhere'), { recursive: true });
   fs.writeFileSync(path.join(real, 'elsewhere', 'plugin.json'), JSON.stringify({ version: '9.9.9' }));
-  fs.symlinkSync(path.join(real, 'elsewhere'), path.join(plugins, 'demo-skin'));
+  link(path.join(real, 'elsewhere'), path.join(plugins, 'demo-skin'));
   const incoming = path.join(tmp, 'incoming-target');
   fs.mkdirSync(incoming);
-  fs.symlinkSync(incoming, path.join(plugins, '_incoming'));
+  link(incoming, path.join(plugins, '_incoming'));
   try {
     assert.equal(installedPluginVersion(plugins, 'demo-skin'), null);
     assert.throws(() => installPluginBytes(pluginZip('demo-skin'), { pluginsDir: plugins }), (e) => e.code === 'PLUGIN_INSTALL_ZIP');

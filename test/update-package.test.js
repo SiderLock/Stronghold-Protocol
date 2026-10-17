@@ -117,7 +117,8 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0
 function fakeCheckout(version) {
   const dir = tmp('co');
   const scripts = { start: 'node server/index.js', setup: 'node tools/setup.mjs', doctor: 'node tools/doctor.mjs', launch: 'node scripts/launch.mjs',
-    postinstall: 'node tools/vendor.mjs', vendor: 'node tools/vendor.mjs', assets: 'node tools/vendor.mjs && node tools/fetch-assets.mjs' };
+    postinstall: 'node tools/vendor.mjs', vendor: 'node tools/vendor.mjs', assets: 'node tools/vendor.mjs && node tools/fetch-assets.mjs',
+    'assets:pack': 'node tools/asset-cache-pack.mjs' };
   put(dir, 'package.json', JSON.stringify({ name: 'sp-test', version, main: 'server/index.js', scripts, dependencies: {} }));
   put(dir, 'package-lock.json', JSON.stringify({ name: 'sp-test', version, lockfileVersion: 3, packages: { '': { name: 'sp-test', version } } }));
   put(dir, 'server/index.js', "import './sim/rng.js';\n");
@@ -127,7 +128,7 @@ function fakeCheckout(version) {
   put(dir, 'public/index.html', '<!doctype html>\n');
   put(dir, 'data/chess.json', '{}\n');
   put(dir, 'data/assets.json', JSON.stringify({ chars: { a: { avatar: '/assets/char/a.png' } }, fonts: { css: '/fonts/fonts.css' } }));
-  for (const f of ['tools/setup.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs', 'tools/doctor.mjs', 'scripts/launch.mjs', 'tools/golden.mjs']) put(dir, f);
+  for (const f of ['tools/setup.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs', 'tools/doctor.mjs', 'scripts/launch.mjs', 'tools/golden.mjs', 'tools/asset-cache-pack.mjs']) put(dir, f);
   put(dir, 'README.md', '# readme\n');
   put(dir, '.gitignore', 'public/assets/\npublic/fonts/\ndata/local-assets.json\n');
   put(dir, 'public/assets/char/a.png', PNG);
@@ -199,8 +200,8 @@ test('a whole update: base zip v9.9.8 → --update v9.9.9 ships only what change
     const listed = JSON.parse(m);
     assert.equal(listed.app, '9.9.9');
     assert.deepEqual(Object.keys(listed.files).sort(), ['README.md', 'data/chess.json', 'package-lock.json', 'package.json', 'public/index.html',
-      'scripts/launch.mjs', 'server/index.js', 'server/new.js', 'server/sim/rng.js', 'shared/constants.js', 'tools/doctor.mjs',
-      'tools/fetch-assets.mjs', 'tools/setup.mjs', 'tools/vendor.mjs'], 'no art, no data/assets.json');
+      'scripts/launch.mjs', 'server/index.js', 'server/new.js', 'server/sim/rng.js', 'shared/constants.js',
+      'tools/asset-cache-pack.mjs', 'tools/doctor.mjs', 'tools/fetch-assets.mjs', 'tools/setup.mjs', 'tools/vendor.mjs'], 'no art, no data/assets.json');
     assert.deepEqual(listed.files['server/new.js'], dg('export const n = 1;\n'));
 
     // the player: the base extracted, a pack of their own, the update extracted over it, the server started

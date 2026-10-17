@@ -20,11 +20,13 @@ const nameOf = (f) => typeof f === 'string' ? f : f[0];
 const V1_EXTENSIONS = Object.freeze({
   'room.create': ['assetCache'], 'room.join': ['assetCache'],
   'lobby.quickMatch': ['assetCache'], 'room.spectate': ['assetCache'],
+  'b.result': ['cs'], // 0.3.0 content identity (DESIGN §8.4)
 });
 // Published v1 has no new numeric IDs: these post-v1 business types deliberately use its JSON fallback.
 const V1_JSON_FALLBACK = Object.freeze({
-  c2s: ['room.chat', 'room.setMatchmaking', 'lobby.join', 'lobby.spectate'],
-  s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer'],
+  c2s: ['room.chat', 'room.setMatchmaking', 'lobby.join', 'lobby.spectate', 'b.rehearsalResult',
+    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins'],
+  s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel'],
 });
 
 test('v1 complete catalog fingerprint prevents accidental published field or enum renumbering', () => {

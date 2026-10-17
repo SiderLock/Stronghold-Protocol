@@ -23,6 +23,7 @@ import { unzipFiles, zipFiles } from '../../server/plugins/zip.js';
 import { listPluginFiles, readPluginFolder, WALK_LIMITS } from '../../server/plugins/registry.js';
 import { buildPluginLock, zipPlugin } from '../../server/plugins/pack.js';
 import { png, skel, atlas, writePlugin, cosmetic } from '../helpers/pluginFixtures.js';
+import { link, tryFileLink, unlink } from '../helpers/links.js';
 
 const req = (remoteAddress, headers = {}) => ({ socket: { remoteAddress }, headers: { host: 'localhost:3000', ...headers } });
 
@@ -94,8 +95,8 @@ test('files: confined to plugins/<id>/ — ids, paths, links, types, sizes; a wr
     const outside = path.join(dir, 'outside');
     fs.mkdirSync(outside);
     fs.writeFileSync(path.join(outside, 'secret.png'), 'secret');
-    fs.symlinkSync(path.join(outside, 'secret.png'), path.join(plugins, 'ab', 'link.png'));
-    fs.symlinkSync(outside, path.join(plugins, 'ab', 'out'));
+    if (!tryFileLink(path.join(outside, 'secret.png'), path.join(plugins, 'ab', 'link.png'))) return; // no file links here
+    link(outside, path.join(plugins, 'ab', 'out'));
     assert.equal(code(() => f.stat('ab', 'link.png')), 'PLUGIN_STUDIO_PATH:403');
     assert.equal(code(() => f.write('ab', 'link.png', png())), 'PLUGIN_STUDIO_PATH:403');
     assert.equal(code(() => f.write('ab', 'out/new.png', png())), 'PLUGIN_STUDIO_PATH:403');
@@ -107,7 +108,7 @@ test('files: confined to plugins/<id>/ — ids, paths, links, types, sizes; a wr
     const real = path.join(dir, 'elsewhere');
     fs.mkdirSync(real);
     fs.writeFileSync(path.join(real, 'secret.json'), '{"s":"SECRET"}');
-    fs.symlinkSync(real, path.join(plugins, 'linked'));
+    link(real, path.join(plugins, 'linked'));
     for (const fn of [() => f.root('linked'), () => f.stat('linked', 'secret.json'), () => f.resolve('linked', 'secret.json'), () => f.write('linked', 'a.png', png()),
       () => f.remove('linked', 'secret.json'), () => f.list('linked'), () => f.readSidecar('linked', '.studio.json'), () => f.writeSidecar('linked', '.studio.json', Buffer.from('{}')),
       () => f.moveOut('linked', 'secret.json')]) {
@@ -354,7 +355,7 @@ describe('the studio over HTTP', () => {
     assert.equal(fs.existsSync(path.join(tmp, 'x.png')), false);
   });
 
-  test('links put into a plugin folder by hand: nothing is read or written through them (plugin.json, an overlay file, the lock, the studio\'s note, plugins/_moved)', async () => {
+  test('links put into a plugin folder by hand: nothing is read or written through them (plugin.json, an overlay file, the lock, the studio\'s note, plugins/_moved)', async (t) => {
     const outside = path.join(tmp, 'outside');
     fs.mkdirSync(outside, { recursive: true });
     const SECRET = '{"name":"SECRET-NAME","chars":"SECRET-VALUE"}';
@@ -363,10 +364,20 @@ describe('the studio over HTTP', () => {
     const victim = path.join(outside, 'victim.txt');
     fs.writeFileSync(victim, 'keep me');
     const leaks = (body) => /SECRET/.test(JSON.stringify(body));
+    // Always create lnk-files (later tests in this suite read its README); file-link cases need a real file link.
+    let r = await call('POST', '/studio/api/plugins', { template: 'art', id: 'lnk-files', name: 'x', target: 'operator:char_102_texas' });
+    assert.equal(r.status, 201);
+    const dir = path.join(plugins, 'lnk-files');
+    const canFileLink = tryFileLink(secret, path.join(dir, 'probe-link'));
+    if (canFileLink) fs.unlinkSync(path.join(dir, 'probe-link'));
+    if (!canFileLink) {
+      t.skip('no file symbolic links here');
+      return;
+    }
     // plugin.json itself a link: its text is never sent; the check names the link; an edit is refused; the zip leaves it out
     fs.mkdirSync(path.join(plugins, 'lnk-manifest'));
-    fs.symlinkSync(secret, path.join(plugins, 'lnk-manifest', 'plugin.json'));
-    let r = await call('GET', '/studio/api/plugins/lnk-manifest');
+    if (!tryFileLink(secret, path.join(plugins, 'lnk-manifest', 'plugin.json'))) return;
+    r = await call('GET', '/studio/api/plugins/lnk-manifest');
     assert.equal(r.status, 200);
     assert.equal(leaks(r.body), false, 'the state');
     assert.deepEqual([r.body.text, r.body.check.issues.map((i) => [i.code, i.file])], [null, [['PLUGIN_FILE_LINK', 'plugin.json']]]);
@@ -377,11 +388,8 @@ describe('the studio over HTTP', () => {
     assert.deepEqual(unzipFiles(z.body).map((e) => e.name), []);
     assert.equal(fs.readFileSync(secret, 'utf8'), SECRET);
     // an overlay file that is a link: never read through — the state, the preview and a pack say nothing of the file outside
-    r = await call('POST', '/studio/api/plugins', { template: 'art', id: 'lnk-files', name: 'x', target: 'operator:char_102_texas' });
-    assert.equal(r.status, 201);
-    const dir = path.join(plugins, 'lnk-files');
     fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(cosmetic({ assets: 'overlay.json' })));
-    fs.symlinkSync(secret, path.join(dir, 'overlay.json'));
+    if (!tryFileLink(secret, path.join(dir, 'overlay.json'))) return;
     r = await call('GET', '/studio/api/plugins/lnk-files');
     assert.equal(leaks(r.body), false, 'the state');
     assert.deepEqual(r.body.check.issues.map((i) => [i.code, i.file]), [['PLUGIN_FILE_LINK', 'overlay.json']]);
@@ -391,9 +399,9 @@ describe('the studio over HTTP', () => {
     fs.writeFileSync(path.join(dir, 'plugin.json'), JSON.stringify(cosmetic({ assets: { chars: { char_102_texas: {} } } })));
     // the studio's note and the lock as links to a file outside: saving and packing replace the link, never write through it
     fs.rmSync(path.join(dir, '.studio.json'));
-    fs.symlinkSync(victim, path.join(dir, '.studio.json'));
+    if (!tryFileLink(victim, path.join(dir, '.studio.json'))) return;
     fs.rmSync(path.join(dir, 'plugin.lock.json'), { force: true });
-    fs.symlinkSync(victim, path.join(dir, 'plugin.lock.json'));
+    if (!tryFileLink(victim, path.join(dir, 'plugin.lock.json'))) return;
     r = await call('POST', '/studio/api/plugins/lnk-files/sections', { sections: [{ template: 'art', target: 'operator:char_102_texas' }] });
     assert.equal(r.status, 200);
     r = await call('POST', '/studio/api/plugins/lnk-files/pack', {});
@@ -403,8 +411,8 @@ describe('the studio over HTTP', () => {
     assert.equal(r.body.check.ok, true, 'the folder holds plain files again');
     // plugins/_moved a link to a folder outside: a file is never moved through it
     fs.writeFileSync(path.join(dir, 'notes.psd'), 'x');
-    fs.rmSync(path.join(plugins, '_moved'), { recursive: true, force: true });
-    fs.symlinkSync(outside, path.join(plugins, '_moved'));
+    unlink(path.join(plugins, '_moved'));
+    link(outside, path.join(plugins, '_moved'));
     r = await call('POST', '/studio/api/plugins/lnk-files/fix', { code: 'PLUGIN_FILE_TYPE', file: 'notes.psd' });
     assert.deepEqual([r.status, r.body.error], [403, 'PLUGIN_STUDIO_PATH']);
     assert.ok(fs.existsSync(path.join(dir, 'notes.psd')), 'the file stays where it was');
@@ -436,7 +444,7 @@ describe('the studio over HTTP', () => {
     const target = path.join(tmp, 'linked-target');
     writePlugin(target, cosmetic({ assets: { chars: { char_102_texas: { avatar: 'a.png' } } } }), { 'a.png': png(4, 4, [9, 9, 9, 255]), 'secret.json': '{"s":"LEAK-JSON"}', 'notes.txt': 'LEAK-TXT' });
     const before = fs.readdirSync(target).sort();
-    fs.symlinkSync(target, path.join(plugins, 'linked-skin'));
+    link(target, path.join(plugins, 'linked-skin'));
     srv.packs.rescan();
     const leaks = (b) => /LEAK/.test(Buffer.isBuffer(b) ? b.toString('latin1') : JSON.stringify(b));
     const NO = {};
@@ -458,7 +466,7 @@ describe('the studio over HTTP', () => {
     const h8 = entry.visual.served.get('a.png').sha256.slice(0, 8);
     assert.equal((await raw('GET', `/p/linked-skin/${h8}/a.png`)).status, 200);
     for (const f of ['secret.json', 'notes.txt', 'plugin.json']) assert.equal((await raw('GET', `/p/linked-skin/${h8}/${f}`)).status, 404, f);
-    fs.rmSync(path.join(plugins, 'linked-skin'));
+    unlink(path.join(plugins, 'linked-skin'));
     srv.packs.rescan();
   });
 

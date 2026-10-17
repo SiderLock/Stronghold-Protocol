@@ -45,7 +45,7 @@
 .mchat-line__group {
   display: inline-grid; place-items: center; flex: none; min-width: max(.18rem, 14px); height: max(.18rem, 14px); padding: 0 .025rem;
   color: #0b1520; background: var(--pool-group-color); border: 1px solid rgba(8, 11, 10, .65);
-  font-family: var(--font-num); font-size: max(.11rem, 9px); font-weight: 700; line-height: 1;
+  font-family: var(--font-num); font-size: max(calc(.11 * var(--t)), 9px); font-weight: 700; line-height: 1;
 }
 .mchat-line__who > b { min-width: 0; overflow-wrap: anywhere; color: var(--mint-500); font-size: max(calc(.12 * var(--t)), 10px); }
 .mchat-line__seat { flex: none; font-size: max(calc(.10 * var(--t)), 9px); color: var(--text-dim); }
