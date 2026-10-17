@@ -198,6 +198,9 @@ test('Final Assault freezes overtime, silence handover and AI pacer; resumes the
   // Target-state fixture: directly enter the boss round, without simulating all preceding rounds.
   m.startRound(m.gd.bossRound);
   h.runToPhase(PHASE.PREP, m.gd.bossRound);
+  // Force one client field (the two humans) and one server-run bot field — pairing is otherwise
+  // seeded shuffle and may put a human on both sides, leaving no mode==='server' field for the pacer.
+  m.bossPairs = [['p_0', 'p_1'], ['ai_0', 'ai_1']];
   assert.ok(h.drive(() => m.phase === PHASE.FINAL_ASSAULT));
   h.sched.advance(1000);
   const field = m.fields.find((f) => f.mode === 'client');

@@ -155,6 +155,7 @@ export class MatchPhases {
     if (this.phase !== PHASE.BAND_DRAFT || !d || !group) return;
     const g = group;
     this.clearDraftGroupTimer(g);
+    // loop-cap: idx walks g.order once
     while (g.idx < g.order.length) {
       const ps = this.players.get(g.order[g.idx]);
       if (ps && ps.alive && !ps.left && !d.picks[ps.playerId]) break;

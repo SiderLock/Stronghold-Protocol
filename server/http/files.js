@@ -264,7 +264,12 @@ function ifRangeMatches(req, etag, lastModified) {
 
 function cacheControlFor(ext, mountName, segments, query) {
   if (ext === '.html' || ext === '.htm') return 'no-cache';
-  if (mountName === 'public' && ['assets', 'fonts'].includes(segments[0]) && /(^|&)v=/.test(query)) return IMMUTABLE_CACHE;
+  // `?v=<hash>` is a content-addressed cache-buster (assets/fonts manifests and the content set's
+  // plain /data/…?v= URLs): a new hash is a new URL, so the body can be immutable for a year.
+  if (/(^|&)v=/.test(query)
+    && ((mountName === 'public' && ['assets', 'fonts'].includes(segments[0])) || mountName === 'data')) {
+    return IMMUTABLE_CACHE;
+  }
   if (mountName === 'public' && segments.length > 1 && LONG_CACHE_DIRS.includes(segments[0])) return LONG_CACHE;
   return 'no-cache';
 }
