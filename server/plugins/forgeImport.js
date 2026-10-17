@@ -337,7 +337,9 @@ function openValidationView({ root, dataDir, pluginsDir, stage }) {
       try { st = fs.statSync(abs); } catch { return; }
       if (!st.isDirectory()) return;
       if (!fs.existsSync(path.join(abs, PLUGIN_MANIFEST))) return;
-      fs.symlinkSync(abs, dest);
+      // Windows without Developer Mode / SeCreateSymbolicLinkPrivilege refuses a plain symlink (EPERM);
+      // a directory junction is the unprivileged equivalent and is enough for this validation view.
+      fs.symlinkSync(abs, dest, process.platform === 'win32' ? 'junction' : 'dir');
     };
     if (pluginsDir && fs.existsSync(pluginsDir)) {
       for (const name of fs.readdirSync(pluginsDir)) take(name, path.join(pluginsDir, name));
