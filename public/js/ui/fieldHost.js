@@ -14,7 +14,9 @@ import { data } from '../data.js';
 import { audio } from '../audio.js';
 import { settingsStore } from './settings.js';
 
-const LOAD_TIMEOUT_MS = 12000;
+// 20s: the engine module graph grew with 0.3.0's official effects, and a cold cache on a slow link
+// (or one shared with an asset download) used to exceed 12s and pin the match to the simplified view.
+const LOAD_TIMEOUT_MS = 20000;
 const METHODS = ['setStage', 'setCamera', 'setPrep', 'enterBattle', 'pushSnapshot', 'pushEvents', 'highlightTiles', 'on', 'resize', 'destroy'];
 // direction-step hooks (ui/facingWheel.js): optional — the wheel falls back to the engine's dev hooks when absent;
 // setPen (enemy preview pen list), prepField ({ kind, side, mirror } of the Final Assault prep), stripesUnder (the view

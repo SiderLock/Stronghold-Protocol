@@ -421,8 +421,8 @@ export async function createFieldView(host, options = {}) {
   setupCleanup.push(() => impostors.destroy());
   ctx.impostors = impostors;
   tiles.setView(bandFor('prep'), camRect(), fieldRows('prep'));
-  // the real board art of the local client (optional): wait briefly so the first frame already uses it; a late
-  // arrival swaps the atlas in place
+  // the real board art of the local client (optional): started here and swapped in when it arrives — never
+  // awaited before the view returns (a slow or missing local-art fetch must not pin the mount to fallback)
   const artPromise = loadBoardArt(assets).then((art) => {
     if (art && !destroyed) { tiles.setArt(art); tiles.project(cam, true); }
     return art;
@@ -2201,9 +2201,12 @@ export async function createFieldView(host, options = {}) {
   onAbort = () => view.destroy();
   signal?.addEventListener('abort', onAbort, { once: true });
   signal?.throwIfAborted();
-  await withTimeout(artPromise, 2500, signal);
-  if (want3d) await withTimeout(boardReady, 6000, signal);
-  signal?.throwIfAborted();
+  // Optional board art / 3D pack load in the background (artPromise / boardReady already apply themselves).
+  // Waiting here stacked their timeouts on top of the asset/font waits and pushed createFieldView past
+  // fieldHost's budget on a slow link — the match fell back to the simplified view even though the engine
+  // was already constructed. Late art still swaps in place; a cancelled view destroys itself via onAbort.
+  void artPromise;
+  if (want3d) void boardReady;
   return view;
   } catch (err) {
     if (view) view.destroy();

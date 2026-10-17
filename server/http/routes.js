@@ -5,6 +5,9 @@
 //   * /studio and /studio/… → the plugin studio (server/studio/index.js: for this machine and the local network only — any
 //     other client gets the 404 page; its API also takes POST / PUT / DELETE), when the server has one;
 //   * any method but GET / HEAD → 405 with `Allow: GET, HEAD`;
+//   * a bandwidth emergency → 503 for bulk art/audio and the asset-cache API; the page shell and runtime code
+//     (`isEmergencyShellPath`: `/`, `/js/`, `/css/`, `/vendor/`, `/shared/`, `/sim/`, `/data/`, `/data.js`) stay up so
+//     an open or reloading match can still load its renderer;
 //   * GET /healthz → JSON status (protocol `version`, release `app`, uptime, the served `build`, the vanilla content
 //     hash `content.vanilla`, the modded content sets in use `content.sets` and — only when there are some — how many
 //     unofficial plugins the server has, `content.plugins` (the title screen's count before any hello) — DESIGN §32 —,
@@ -27,6 +30,21 @@ import { setSecurityHeaders, sendError, sendJson, splitUrl } from './common.js';
 import { clientAddress, isLocalIp } from '../net.js';
 
 const MAX_URL_LENGTH = 4096;
+
+/**
+ * Paths that stay available while a bandwidth emergency is active: the page shell and the runtime code a
+ * match view needs (fieldHost's dynamic `import('../render/app.js')` and its graph, PIXI under /vendor).
+ * Bulk art/audio under /assets, /fonts, /media and the asset-cache fill API stay gated so the egress
+ * budget goes to the matches already running. `/` is included so a reload during the emergency can still
+ * get a working client instead of a 503 body.
+ */
+export function isEmergencyShellPath(rawPath) {
+  if (typeof rawPath !== 'string' || !rawPath.startsWith('/')) return false;
+  if (rawPath === '/' || rawPath === '/index.html' || rawPath === '/data.js') return true;
+  return rawPath.startsWith('/js/') || rawPath.startsWith('/css/')
+    || rawPath.startsWith('/vendor/') || rawPath.startsWith('/shared/')
+    || rawPath.startsWith('/sim/') || rawPath.startsWith('/data/');
+}
 
 /** `{ plugins: n }` when the server has n > 0 unofficial plugins (the lobby's visual sets count them), else nothing. */
 function pluginCount(lobby) {
@@ -115,7 +133,7 @@ export function createRequestHandler({ serveStatic, health, log, announcements, 
       return;
     }
     const protection = emergency();
-    if (protection?.active) {
+    if (protection?.active && !isEmergencyShellPath(parts.rawPath)) {
       const seconds = protection.retryAt ? Math.max(1, Math.ceil((protection.retryAt - Date.now()) / 1000)) : 120;
       res.setHeader('Retry-After', String(seconds));
       res.setHeader('Connection', 'close');

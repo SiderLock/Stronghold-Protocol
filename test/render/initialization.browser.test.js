@@ -20,7 +20,8 @@ function trackBrowserResources() {
   const set = window.setTimeout.bind(window), clear = window.clearTimeout.bind(window);
   window.setTimeout = (fn, ms, ...args) => {
     const id = set(() => { timers.delete(id); fn(...args); }, ms);
-    if (ms === 12000) timers.set(id, () => fn(...args));
+    // fieldHost LOAD_TIMEOUT_MS (public/js/ui/fieldHost.js) — keep in sync when that budget changes.
+    if (ms === 20000) timers.set(id, () => fn(...args));
     return id;
   };
   window.clearTimeout = (id) => { timers.delete(id); clear(id); };
@@ -206,7 +207,7 @@ describe('field initialization in headless Chrome', { skip }, () => {
     assert.deepEqual(errors, []);
   });
 
-  test('timeout during board-art startup immediately releases the allocated app and permits a fresh engine', async (t) => {
+  test('delayed board art does not block the engine mount; destroy still frees the app', async (t) => {
     const { page, errors } = await open(t);
     await page.evaluate(async () => {
       const { assets } = await import('/js/assets.js');
@@ -219,18 +220,13 @@ describe('field initialization in headless Chrome', { skip }, () => {
       };
     });
     await start(page);
+    // createFieldView returns as soon as the engine is constructed — a hung local-art fetch is not its budget.
+    await page.waitForFunction(() => window.__initialization.view?.kind === 'engine');
     await page.waitForFunction(() => window.__initialization.artBlocked);
     const allocated = await page.evaluate(() => window.__initialization.snapshot());
     assert.deepEqual(allocated.apps, [{ destroyed: false, ticking: true, attached: true }]);
-    await page.evaluate(() => window.__initialization.expire());
-    await page.waitForFunction(() => window.__initialization.view?.kind === 'fallback');
-    const cancelled = await page.evaluate(() => window.__initialization.snapshot());
-    assert.deepEqual(cancelled.apps, [{ destroyed: true, ticking: false, attached: false }], 'cancellation frees the real renderer before the delayed art resolves');
-    assert.equal(cancelled.canvases, 0);
-    assert.equal(cancelled.observers, 1);
-    assert.deepEqual(cancelled.listeners, []);
-    const target = await clickFallback(page);
-    assert.deepEqual(await page.evaluate(() => window.__initialization.clicks), [target]);
+    assert.equal(allocated.canvases, 1);
+    assert.equal(allocated.fallbacks, 0);
     await page.evaluate(async () => {
       const s = window.__initialization;
       await s.releaseArt();

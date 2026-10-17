@@ -39,7 +39,8 @@ test('emergency cuts website traffic and new identities while preserving a real 
   assert.equal(server.bandwidthEmergency.trip('test-congestion'), true);
   const notice = await host.waitFor('m.emergency', (msg) => msg.active);
   assert.ok(JSON.stringify(notice).length < 200);
-  assert.equal(notice.retryAt - notice.since, 120000);
+  // DEV-20261012-03: auto-resume default is 60s (was 120s).
+  assert.equal(notice.retryAt - notice.since, 60000);
   await host.waitFor('m.public', (msg) => msg.emergencyFrozen);
   assert.equal(match.emergencyFrozen, true);
   assert.equal((await host.request({ t: 'g.infoReady' })).code, 'SERVER_EMERGENCY');
@@ -48,7 +49,13 @@ test('emergency cuts website traffic and new identities while preserving a real 
   assert.equal((await host.request({ t: 'lobby.quickMatch' })).code, 'SERVER_EMERGENCY');
   assert.equal((await host.request({ t: 'room.join', code: room.code })).t, 'ok', 'same membership resync remains valid');
   assert.equal((await host.request({ t: 'ping', c: 1 })).t, 'pong');
-  for (const path of ['/', '/js/main.js', '/assets/cold.png', '/api/announcements', '/api/asset-cache/status']) {
+  // Runtime shell stays up so an open/reloading match can still load the render engine (routes.js isEmergencyShellPath).
+  for (const path of ['/', '/js/main.js', '/vendor/pixi.min.js', '/data/chess.json']) {
+    const response = await fetch(`${server.url}${path}`);
+    assert.equal(response.status, 200, path);
+  }
+  // Bulk art and the asset-cache fill API stay gated — that is what the emergency is for.
+  for (const path of ['/assets/cold.png', '/fonts/cold.woff2', '/api/asset-cache/status', '/api/asset-cache/catalog']) {
     const response = await fetch(`${server.url}${path}`);
     assert.equal(response.status, 503, path);
     assert.equal(response.headers.get('connection'), 'close');
