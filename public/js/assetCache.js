@@ -58,9 +58,10 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     if (checkingStorage) return checkingStorage;
     checkingStorage = (async () => {
       // Quota and persistence inspection can fail independently in private browser modes.
+      // estimate() can stall in some browsers; do not block the dialog's summary on it.
       const [estimate, persisted] = await Promise.allSettled([
-        Promise.resolve().then(() => env.navigator.storage?.estimate?.()),
-        Promise.resolve().then(() => env.navigator.storage?.persisted?.()),
+        timeLimited(Promise.resolve().then(() => env.navigator.storage?.estimate?.()), 5000, 'ASSET_CACHE_STORAGE_ERROR'),
+        timeLimited(Promise.resolve().then(() => env.navigator.storage?.persisted?.()), 5000, 'ASSET_CACHE_STORAGE_ERROR'),
       ]);
       patch({ storage: { ...state.storage,
         ...(estimate.status === 'fulfilled' && estimate.value
@@ -310,30 +311,47 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     }
     initializing = (async () => {
       patch({ phase: 'initializing', error: null });
+      let restoreError = null;
+      let summaryError = null;
+      // The status summary is a plain fetch and is what the dialog shows (server version, totals).
+      // Never let a slow Service Worker / Cache Storage keep the panel on 0/0 尚未校验.
+      try { await refreshSummary(); }
+      catch (error) { summaryError = error.code || 'ASSET_CACHE_CATALOG_UNAVAILABLE'; }
+      // Settle the dialog out of "checking" as soon as the summary is known, so 在线补齐/获取目录
+      // are not disabled for the whole Service Worker bring-up. ensureReady still waits for this promise.
+      if (summary && !catalog) patch({ phase: 'catalog-required', error: summaryError });
       try {
         registration = await timeLimited(env.navigator.serviceWorker.register(swURL, { scope: '/', type: 'module', updateViaCache: 'none' }),
           15000, 'ASSET_CACHE_SW_UNAVAILABLE');
         registration = await timeLimited(env.navigator.serviceWorker.ready, 15000, 'ASSET_CACHE_SW_UNAVAILABLE');
         env.navigator.serviceWorker.addEventListener('message', onSWMessage);
-        let restoreError = null;
         try {
-          const local = await localCatalog();
+          // Cache Storage can stall under storage pressure; never hang initialization on it.
+          const local = await timeLimited(localCatalog(), 8000, 'ASSET_CACHE_STORAGE_ERROR');
           // Pin before PLAYING so an older active SW can also restore a direct match reconnect.
           if (local) await adoptCatalog(local, { restoring: true });
         } catch (error) { restoreError = error.code || 'ASSET_CACHE_STORAGE_ERROR'; }
-        const playback = await swMessage('ASSET_CACHE_PLAYING', { playing: ownPlaying });
-        patch({ playing: ownPlaying || !!playback.playing });
+        try {
+          const playback = await swMessage('ASSET_CACHE_PLAYING', { playing: ownPlaying });
+          patch({ playing: ownPlaying || !!playback.playing });
+        } catch { /* PLAYING is a match guard; a failed handshake must not block 缺项补齐. */ }
+        // Mutations still call ensureCompatibleSW first; do not cache a successful probe here or a
+        // later outdated worker would skip its upgrade check.
         initialized = true;
-        let summaryError = null;
-        try { await refreshSummary(); }
-        catch (error) { summaryError = error.code || 'ASSET_CACHE_CATALOG_UNAVAILABLE'; }
-        if (catalog) await runWorker('scan');
+        if (catalog) await timeLimited(runWorker('scan'), 60000, 'ASSET_CACHE_STORAGE_ERROR');
         patch({ phase: settledPhase(), error: restoreError || summaryError });
-        await updateStorage();
       } catch (error) {
         const paused = error.code === 'ASSET_CACHE_PLAYING' || error.code === 'ASSET_CACHE_PAUSED';
-        patch({ phase: paused ? 'paused' : 'error', error: paused ? null : error.code || 'ASSET_CACHE_STORAGE_ERROR' });
+        if (paused) {
+          patch({ phase: 'paused', error: null });
+        } else if (summary) {
+          // Summary already landed: settle into a usable phase and report the SW/storage failure.
+          patch({ phase: settledPhase(), error: restoreError || summaryError || error.code || 'ASSET_CACHE_STORAGE_ERROR' });
+        } else {
+          patch({ phase: 'error', error: restoreError || summaryError || error.code || 'ASSET_CACHE_STORAGE_ERROR' });
+        }
       }
+      await updateStorage();
       return getState();
     })();
     try { return await initializing; } finally { initializing = null; }

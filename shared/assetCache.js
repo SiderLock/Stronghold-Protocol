@@ -12,7 +12,7 @@ export const MAX_MANIFEST_BYTES = 32 * 1024 * 1024;
 // Seven explicit audio extensions plus the extension-less route each have plain and content-hash aliases.
 export const MAX_ASSET_ALIASES = 32;
 const SHA = /^[a-f0-9]{64}$/;
-const TYPES = /\.(?:png|jpe?g|gif|webp|avif|bmp|mp3|m4a|aac|ogg|oga|opus|wav|woff2?|ttf|otf|css|json|atlas|obj|skel|bin)$/i;
+const TYPES = /\.(?:png|jpe?g|gif|webp|avif|bmp|svg|mp3|m4a|aac|ogg|oga|opus|wav|woff2?|ttf|otf|css|json|atlas|obj|skel|bin)$/i;
 
 export function assetCacheError(code, cause) {
   return Object.assign(new Error(code, cause ? { cause } : undefined), { code });
