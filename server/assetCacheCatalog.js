@@ -11,7 +11,7 @@ import { rewriteManifest } from './http/assetViews.js';
 export const ASSET_CACHE_SCHEMA = 1;
 export const ASSET_CACHE_MIME = Object.freeze({
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-  '.webp': 'image/webp', '.avif': 'image/avif', '.bmp': 'image/bmp',
+  '.webp': 'image/webp', '.avif': 'image/avif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
   '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg',
   '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.wav': 'audio/wav',
   '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',

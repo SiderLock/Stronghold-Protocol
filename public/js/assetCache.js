@@ -317,6 +317,9 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       // Never let a slow Service Worker / Cache Storage keep the panel on 0/0 尚未校验.
       try { await refreshSummary(); }
       catch (error) { summaryError = error.code || 'ASSET_CACHE_CATALOG_UNAVAILABLE'; }
+      // Settle the dialog out of "checking" as soon as the summary is known, so 在线补齐/获取目录
+      // are not disabled for the whole Service Worker bring-up. ensureReady still waits for this promise.
+      if (summary && !catalog) patch({ phase: 'catalog-required', error: summaryError });
       try {
         registration = await timeLimited(env.navigator.serviceWorker.register(swURL, { scope: '/', type: 'module', updateViaCache: 'none' }),
           15000, 'ASSET_CACHE_SW_UNAVAILABLE');
@@ -328,8 +331,12 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
           // Pin before PLAYING so an older active SW can also restore a direct match reconnect.
           if (local) await adoptCatalog(local, { restoring: true });
         } catch (error) { restoreError = error.code || 'ASSET_CACHE_STORAGE_ERROR'; }
-        const playback = await swMessage('ASSET_CACHE_PLAYING', { playing: ownPlaying });
-        patch({ playing: ownPlaying || !!playback.playing });
+        try {
+          const playback = await swMessage('ASSET_CACHE_PLAYING', { playing: ownPlaying });
+          patch({ playing: ownPlaying || !!playback.playing });
+        } catch { /* PLAYING is a match guard; a failed handshake must not block 缺项补齐. */ }
+        // Mutations still call ensureCompatibleSW first; do not cache a successful probe here or a
+        // later outdated worker would skip its upgrade check.
         initialized = true;
         if (catalog) await timeLimited(runWorker('scan'), 60000, 'ASSET_CACHE_STORAGE_ERROR');
         patch({ phase: settledPhase(), error: restoreError || summaryError });
