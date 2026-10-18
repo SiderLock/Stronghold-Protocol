@@ -73,7 +73,32 @@ export class MatchInfra {
   }
 
   /**
-   * Solo timers (research 01 §843 / 06 §3: 下半 独立模拟 has no time limit on 休整期 / 机变 — "休整期及机变阶段没有时间
+   * Arm one fixed-group draft turn. A test match with timers off holds the expire in `_testDraftHolds`
+   * (one slot per group, so parallel drafts can all pause). Single-group test matches still go through
+   * setDeadline so the public countdown / g.test advance cover them.
+   */
+  armDraftTurnTimer(g, ms, expire, { singleGroupHold = false } = {}) {
+    if (g && g.timer) { this.cancel(g.timer); g.timer = null; }
+    if (g) g._expire = expire;
+    if (this.test === true && this.testTimers === false && typeof expire === 'function') {
+      if (g) g.turnDeadline = 0;
+      this._testDraftHolds.set(String(g?.token ?? g?.id ?? ''), expire);
+      return;
+    }
+    if (singleGroupHold) {
+      this.setDeadline(ms / 1000 / (this.timerScale || 1), expire);
+      if (g) g.turnDeadline = this.deadline;
+      return;
+    }
+    if (g) {
+      g.turnDeadline = this.sched.gameNow() + ms;
+      g.timer = this.later(ms, expire);
+    } else {
+      this.later(ms, expire);
+    }
+  }
+
+  /** Solo timers (research 01 §843 / 06 §3: 下半 独立模拟 has no time limit on 休整期 / 机变 — "休整期及机变阶段没有时间
    * 限制"; the strategy draft is free too): a solo match publishes a deadline ONLY for its battles. INFO_CHECK waits
    * for 准备就绪 (co-op keeps the official 25 s guard), BAND_DRAFT / SP_DRAFT / PREP are untimed, and the fixed
    * presentation steps (BATTLE_CHECK, ROUND_START, SETTLE) run silently (no countdown). The same holds for any match

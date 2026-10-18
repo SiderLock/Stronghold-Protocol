@@ -63,6 +63,8 @@ export class MatchPhases {
     group.turnDeadline = 0;
     group.turnSeconds = 0;
     group.token++;
+    if (this._testDraftHolds) this._testDraftHolds.delete(String(group.token - 1 ?? ''));
+    if (this._testDraftHolds) this._testDraftHolds.delete(String(group.id ?? ''));
   }
 
   syncDraftDeadline(stage) {
@@ -185,15 +187,9 @@ export class MatchPhases {
         const pid = this.draftTurn(g.playerIds[0]);
         if (pid) this._applyBand(this.players.get(pid), this.timeoutBand(pid));
       };
-      // A single-group test match can hold the turn through setDeadline (g.test timers off). Parallel
-      // groups keep their own timers: the held-phase slot cannot track several turn clocks at once.
-      if (this.test && d.groups.length === 1) {
-        this.setDeadline(ms / 1000 / (this.timerScale || 1), expire);
-        g.turnDeadline = this.deadline;
-        g.timer = null;
-      } else {
-        g.timer = this.later(ms, expire);
-      }
+      // A single-group test match can hold the turn through setDeadline (g.test timers off).
+      // Parallel groups each get a `_testDraftHolds` slot while timers are off (armDraftTurnTimer).
+      this.armDraftTurnTimer(g, ms, expire, { singleGroupHold: this.test && d.groups.length === 1 });
     }
     this.syncDraftDeadline(d);
     const cur = this.players.get(g.order[g.idx]);

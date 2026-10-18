@@ -95,14 +95,9 @@ export class MatchSpDraft {
         if (!avail.length) { this.startSpTurn(g); return; }
         this._applyCard(ps, avail[Math.floor(this.rngDraft() * avail.length)]);
       };
-      // Same single-group test hold as the strategy draft (g.test timers); parallel groups keep g.timer.
-      if (this.test && s.groups.length === 1) {
-        this.setDeadline(secs / (this.timerScale || 1), expire);
-        g.turnDeadline = this.deadline;
-        g.timer = null;
-      } else {
-        g.timer = this.later(ms, expire);
-      }
+      // Single-group test hold via setDeadline; parallel groups each keep a `_testDraftHolds` slot
+      // while timers are off so every group's turn can pause (armDraftTurnTimer).
+      this.armDraftTurnTimer(g, ms, expire, { singleGroupHold: this.test && s.groups.length === 1 });
     }
     this.syncDraftDeadline(s);
     const cur = this.players.get(g.order[g.idx]);

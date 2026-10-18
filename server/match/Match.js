@@ -356,6 +356,8 @@ export class Match {
       this._testHeld = null;
       /** the last callback setDeadline armed, so timers can be turned off mid-phase */
       this._testArmed = null;
+      /** group draft turn callbacks held while testTimers is false (key → expire); parallel groups each keep one */
+      this._testDraftHolds = new Map();
       /** false once the input journal stops logging (the replay decoder's line cap) */
       this.testReplayable = true;
       /** replay: stop a sliced callback after this many steps; null while recording */
