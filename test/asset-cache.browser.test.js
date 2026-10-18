@@ -328,7 +328,7 @@ test('Edge legacy cache SW migrates a 17-alias directory without closing tabs or
     assert.equal(next.version, catalog().version); assert.equal(next.catalogCurrent, true);
     assert.equal(next.readyFiles, 3); assert.equal(next.missingFiles, 0);
     const capabilities = await swCapabilities(page);
-    assert.equal(capabilities.ok, true); assert.equal(capabilities.protocol, 1);
+    assert.equal(capabilities.ok, true); assert.equal(capabilities.protocol, 1); assert.equal(capabilities.imported, true);
     assert.equal(await second.evaluate(() => window.cacheFixture.state().version), legacyCatalog.version,
       'activation must preserve the other page\'s pinned catalog');
     const after = await cacheSnapshot(page);

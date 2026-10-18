@@ -1,7 +1,13 @@
 // Browser asset-cache coordinator; pure at import time so importing it under Node is safe.
 // All expensive work runs in a dedicated worker. UI consumes codes through i18n, never raw errors.
 import { ASSET_CACHE_META, ASSET_CACHE_LATEST_KEY, ASSET_CACHE_SW_PROTOCOL, MAX_MANIFEST_BYTES, verifyAssetCatalog,
-  assetCacheCatalogKey, validateAssetCacheSummary, catalogMatchesSummary, assetCacheError } from '../../shared/assetCache.js';
+  assetCacheCatalogKey, validateAssetCacheSummary, catalogMatchesSummary, assetCacheError,
+  IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL, IMPORTED_BORROWED_URL,
+  ASSET_CACHE_INDEX_URL } from '../../shared/assetCache.js';
+
+// Re-exported for the imported-art helpers' consumers (public/sw.js duplicates these constants as a classic script).
+export { IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL, IMPORTED_BORROWED_URL,
+  ASSET_CACHE_INDEX_URL };
 
 const initialState = (env) => {
   const supported = !!(env.isSecureContext && env.caches && env.navigator?.serviceWorker
@@ -47,6 +53,51 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     for (const fn of [...listeners]) { try { fn(getState()); } catch { /* Consumer must not break cache progress. */ } }
   };
 
+  // A page loaded under the legacy classic /sw.js never got a persisted PLAYING pin (that worker has no message
+  // handler), yet it may still be in a match. New pages advertise their match state in localStorage so the page that
+  // performs the migration can refuse to replace the worker while a sibling tab is playing. The 20 s lease covers a
+  // crashed tab; a live tab refreshes it every 5 s.
+  const PLAYING_MARKER = 'sp-asset-cache-playing:';
+  const PLAYING_LEASE_MS = 20000;
+  const pageMarker = (() => { try { return env.crypto?.randomUUID?.() || String(Math.random()).slice(2); } catch { return 'page'; } })();
+  let markerTimer = null;
+  const otherPagePlaying = () => {
+    try {
+      const storage = env.localStorage;
+      if (!storage) return false;
+      const now = Date.now();
+      const own = PLAYING_MARKER + pageMarker;
+      for (let i = storage.length - 1; i >= 0; i--) {
+        const key = storage.key(i);
+        if (!key || !key.startsWith(PLAYING_MARKER) || key === own) continue;
+        const at = Number(storage.getItem(key));
+        if (Number.isFinite(at) && now - at < PLAYING_LEASE_MS) return true;
+        storage.removeItem(key); // crashed / closed tab
+      }
+    } catch { /* storage disabled: fall back to the SW pins */ }
+    return false;
+  };
+  const markPlaying = (value) => {
+    try {
+      const storage = env.localStorage;
+      if (!storage) return;
+      if (value) {
+        storage.setItem(PLAYING_MARKER + pageMarker, String(Date.now()));
+        if (markerTimer === null && typeof env.setInterval === 'function') {
+          markerTimer = env.setInterval(() => {
+            try { storage.setItem(PLAYING_MARKER + pageMarker, String(Date.now())); } catch { /* storage gone */ }
+          }, 5000);
+        }
+      } else {
+        storage.removeItem(PLAYING_MARKER + pageMarker);
+        if (markerTimer !== null) { env.clearInterval(markerTimer); markerTimer = null; }
+      }
+    } catch { /* private mode / storage disabled */ }
+  };
+  // A closed tab releases the lease at once; a crashed one expires after PLAYING_LEASE_MS.
+  const releaseMarker = () => markPlaying(false);
+  try { env.addEventListener?.('pagehide', releaseMarker); } catch { /* no window (tests) */ }
+
   function timeLimited(promise, ms, code) {
     return new Promise((resolve, reject) => {
       const timer = env.setTimeout(() => reject(assetCacheError(code)), ms);
@@ -73,14 +124,18 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     try { await checkingStorage; } finally { checkingStorage = null; }
   }
 
-  async function swMessage(type, payload = {}, target = env.navigator.serviceWorker.controller || registration?.active) {
+  async function swMessage(type, payload = {}, target = env.navigator.serviceWorker.controller || registration?.active,
+    timeoutMs = 10000) {
     if (!target) throw assetCacheError('ASSET_CACHE_SW_UNAVAILABLE');
+    // A controller from an older deployment (/sw.js) does not answer messages at all: the rejection is a plain
+    // timeout. A DOMException's numeric legacy code (AbortError 20) must never reach the UI as an error code.
+    const code = (value) => (typeof value === 'string' && value ? value : 'ASSET_CACHE_STORAGE_ERROR');
     return new Promise((resolve, reject) => {
       const channel = new env.MessageChannel();
-      const timer = env.setTimeout(() => { channel.port1.close(); reject(assetCacheError('ASSET_CACHE_SW_UNAVAILABLE')); }, 10000);
+      const timer = env.setTimeout(() => { channel.port1.close(); reject(assetCacheError('ASSET_CACHE_SW_UNAVAILABLE')); }, timeoutMs);
       channel.port1.onmessage = ({ data }) => {
         env.clearTimeout(timer); channel.port1.close();
-        if (data?.ok) resolve(data); else reject(assetCacheError(data?.error || 'ASSET_CACHE_STORAGE_ERROR'));
+        if (data?.ok) resolve(data); else reject(assetCacheError(code(data?.error)));
       };
       try { target.postMessage({ type, ...payload }, [channel.port2]); }
       catch (error) { env.clearTimeout(timer); channel.port1.close(); reject(assetCacheError('ASSET_CACHE_SW_UNAVAILABLE', error)); }
@@ -119,42 +174,69 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     });
   }
 
-  // Reloading can leave a new page controlled by the previous SW, whose catalog validator
-  // cannot accept new aliases. Explicit maintenance upgrades it before any catalog transfer;
-  // the waiting worker independently checks every live playing pin before skipWaiting.
-  async function ensureCompatibleSW(job) {
-    const target = () => env.navigator.serviceWorker.controller || registration?.active;
-    const compatible = async () => {
-      const current = target();
-      if (current && current === compatibleSW) return true;
-      try {
-        const response = await swMessage('ASSET_CACHE_CAPABILITIES', {}, current);
-        if (response.protocol === ASSET_CACHE_SW_PROTOCOL) { compatibleSW = current; return true; }
-      } catch { /* Previous SW protocols respond with BAD_MESSAGE; update safely below. */ }
-      return false;
-    };
-    if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
-    if (await compatible()) return;
+  // One merged SW (public/asset-cache-sw.js) owns scope '/': it serves the pre-cache and the title screen's imported
+  // art, and answers the ASSET_CACHE_* messages. A page loaded from an earlier deployment may still be controlled by
+  // the classic /sw.js: that worker only serves imported art and answers no messages, so every pre-cache action used
+  // to time out before it could upgrade. The new worker is activated only when no live page has a playing pin.
+  async function compatibleSWNow({ cache = true } = {}) {
+    const current = env.navigator.serviceWorker.controller;
+    if (!current) return null;
+    if (cache && current === compatibleSW) return current;
     try {
-      if (!registration?.waiting) {
+      const response = await swMessage('ASSET_CACHE_CAPABILITIES', {}, current, 2500);
+      if (response.protocol === ASSET_CACHE_SW_PROTOCOL && response.imported) { if (cache) compatibleSW = current; return current; }
+    } catch { /* /sw.js has no message handler; a timed-out probe must not block the upgrade. */ }
+    return null;
+  }
+
+  /** Ask the waiting merged worker to activate; the worker itself refuses while any live page has a playing pin. */
+  async function activateWaiting(job) {
+    const waiting = registration?.waiting;
+    if (!waiting) return false;
+    if (job?.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
+    if (state.playing || ownPlaying || otherPagePlaying()) throw assetCacheError('ASSET_CACHE_PLAYING');
+    const capabilities = await swMessage('ASSET_CACHE_CAPABILITIES', {}, waiting, 2500);
+    if (capabilities?.protocol !== ASSET_CACHE_SW_PROTOCOL || !capabilities.imported) return false;
+    if (job?.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
+    const guard = await swMessage('ASSET_CACHE_CAN_MUTATE', {}, waiting, 5000);
+    if (guard.playing) throw assetCacheError('ASSET_CACHE_PLAYING');
+    if (job?.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
+    await swMessage('ASSET_CACHE_ACTIVATE', {}, waiting, 10000);
+    await waitForSW(waiting, ['activated']);
+    await waitForController(waiting);
+    compatibleSW = null;
+    return true;
+  }
+
+  // An explicit operation first makes sure its messages will reach the merged worker, then checks the match guard.
+  // The old order probed the legacy controller first and always timed out before the waiting worker could replace it.
+  async function ensureCompatibleSW(job) {
+    if (job?.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
+    // A legacy controller never received this page's PLAYING pin; never replace it while this page (or a sibling tab
+    // that also predates the merged worker) is in a match. The waiting worker's own pin check covers modern tabs.
+    if (state.playing || ownPlaying || otherPagePlaying()) throw assetCacheError('ASSET_CACHE_PLAYING');
+    if (await compatibleSWNow()) return;
+    if (!registration) await initialize();
+    if (!registration) throw assetCacheError('ASSET_CACHE_SW_UPDATE_REQUIRED');
+    if (!env.navigator.serviceWorker.controller && registration.active) {
+      try { await waitForController(registration.active); } catch { /* still installing */ }
+      if (await compatibleSWNow()) return;
+    }
+    if (job?.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
+    try {
+      if (await activateWaiting(job)) {
+        if (await compatibleSWNow()) return;
+      }
+      if (!registration.waiting) {
         await timeLimited(registration.update(), 15000, 'ASSET_CACHE_SW_UPDATE_REQUIRED');
         if (registration.installing) await waitForSW(registration.installing, ['installed', 'activated']);
+        if (await activateWaiting(job) && await compatibleSWNow()) return;
       }
-      if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
-      await assertMutable();
-      if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
-      const waiting = registration.waiting;
-      if (waiting) {
-        await swMessage('ASSET_CACHE_ACTIVATE', {}, waiting);
-        await waitForSW(waiting, ['activated']);
-        await waitForController(waiting);
-      }
-      if (!await compatible()) throw assetCacheError('ASSET_CACHE_SW_UPDATE_REQUIRED');
     } catch (error) {
       if (error.code === 'ASSET_CACHE_PLAYING' || error.code === 'ASSET_CACHE_PAUSED') throw error;
       throw assetCacheError('ASSET_CACHE_SW_UPDATE_REQUIRED', error);
     }
-    await assertMutable();
+    if (!await compatibleSWNow()) throw assetCacheError('ASSET_CACHE_SW_UPDATE_REQUIRED');
   }
 
   const settledPhase = () => !catalog ? 'catalog-required' : !state.catalogCurrent ? 'catalog-stale'
@@ -321,20 +403,39 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       // are not disabled for the whole Service Worker bring-up. ensureReady still waits for this promise.
       if (summary && !catalog) patch({ phase: 'catalog-required', error: summaryError });
       try {
-        registration = await timeLimited(env.navigator.serviceWorker.register(swURL, { scope: '/', type: 'module', updateViaCache: 'none' }),
-          15000, 'ASSET_CACHE_SW_UNAVAILABLE');
+        try {
+          registration = await timeLimited(env.navigator.serviceWorker.register(swURL, { scope: '/', type: 'module', updateViaCache: 'none' }),
+            15000, 'ASSET_CACHE_SW_UNAVAILABLE');
+        } catch (moduleError) {
+          // Browsers without module service workers (Firefox before 114) keep the classic title-import worker so
+          // local pack import still works; only the pre-cache panel is unavailable there.
+          if (moduleError?.name !== 'TypeError' && moduleError?.name !== 'NotSupportedError') throw moduleError;
+          registration = await timeLimited(env.navigator.serviceWorker.register('/sw.js', { scope: '/' }),
+            15000, 'ASSET_CACHE_SW_UNAVAILABLE');
+          patch({ supported: false, error: 'ASSET_CACHE_UNSUPPORTED' });
+        }
         registration = await timeLimited(env.navigator.serviceWorker.ready, 15000, 'ASSET_CACHE_SW_UNAVAILABLE');
         env.navigator.serviceWorker.addEventListener('message', onSWMessage);
+        if (!state.supported) { await updateStorage(); return getState(); }
+        // Do not replace an older controller just because a page loaded: a live match on another tab must keep
+        // its worker. The first explicit pre-cache action upgrades through ensureCompatibleSW (before the guard).
+        if (!env.navigator.serviceWorker.controller && registration?.active) {
+          try { await waitForController(registration.active); } catch { /* still installing */ }
+        }
         try {
           // Cache Storage can stall under storage pressure; never hang initialization on it.
           const local = await timeLimited(localCatalog(), 8000, 'ASSET_CACHE_STORAGE_ERROR');
           // Pin before PLAYING so an older active SW can also restore a direct match reconnect.
           if (local) await adoptCatalog(local, { restoring: true });
         } catch (error) { restoreError = error.code || 'ASSET_CACHE_STORAGE_ERROR'; }
-        try {
-          const playback = await swMessage('ASSET_CACHE_PLAYING', { playing: ownPlaying });
-          patch({ playing: ownPlaying || !!playback.playing });
-        } catch { /* PLAYING is a match guard; a failed handshake must not block 缺项补齐. */ }
+        // Probe without caching: a later explicit operation must re-check the worker, so a legacy controller
+        // replaced mid-session is still upgraded (and the probe tests rely on that).
+        if (await compatibleSWNow({ cache: false })) {
+          try {
+            const playback = await swMessage('ASSET_CACHE_PLAYING', { playing: ownPlaying });
+            patch({ playing: ownPlaying || !!playback.playing });
+          } catch { /* PLAYING is a match guard; a failed handshake must not block 缺项补齐. */ }
+        }
         // Mutations still call ensureCompatibleSW first; do not cache a successful probe here or a
         // later outdated worker would skip its upgrade check.
         initialized = true;
@@ -504,8 +605,10 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       const run = async () => {
         if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
         if (mutates) {
+          // Upgrade/probe first: with a legacy /sw.js controller the guard message below would only time out and
+          // the waiting merged worker would never be reached (the 0.3.1 import failure).
+          await ensureCompatibleSW(job);
           await assertMutable();
-          if (action !== 'clear') await ensureCompatibleSW(job);
           if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
           if (action !== 'clear') await refreshSummary({ force: true });
           if (action === 'catalog-update') {
@@ -537,8 +640,14 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
           await adoptMatchingLocalCatalog();
         }
         if (!mutates) {
-          const playback = await swMessage('ASSET_CACHE_CAN_MUTATE');
-          patch({ playing: ownPlaying || !!playback.playing });
+          // A local scan does not need the SW; only the playing guard does. Keep scanning when an upgrade is
+          // pending instead of failing the whole check with a message timeout.
+          if (await compatibleSWNow()) {
+            try {
+              const playback = await swMessage('ASSET_CACHE_CAN_MUTATE');
+              patch({ playing: ownPlaying || !!playback.playing });
+            } catch { /* a failed guard must not hide what the local scan found */ }
+          }
         }
         if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
         if (action === 'clear') {
@@ -546,7 +655,11 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
           patch({ readyFiles: 0, readyBytes: 0, missingFiles: state.totalFiles, missingBytes: state.totalBytes });
         } else if (catalog) {
           await runWorker(action === 'catalog' || action === 'catalog-update' ? 'scan' : action, { deep, ...(file ? { file } : {}) });
-          if (action === 'import' || action === 'download') await swMessage('ASSET_CACHE_PRUNE');
+          // Stale copies are housekeeping: a failure here (e.g. a legacy cache without an index) must not turn a
+          // finished import/download into an error after every byte was already verified and written.
+          if (action === 'import' || action === 'download') {
+            try { await swMessage('ASSET_CACHE_PRUNE'); } catch { /* keep the verified bytes */ }
+          }
         }
       };
       if (mutates) await env.navigator.locks.request('sp-asset-cache-mutation', { ifAvailable: true }, async (lock) => {
@@ -658,6 +771,7 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       if (ownPlaying === !!value) return;
       ownPlaying = !!value;
       patch({ playing: ownPlaying });
+      markPlaying(ownPlaying);
       if (ownPlaying) pause();
       if (registration) {
         try {
@@ -671,6 +785,8 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     },
     destroy() {
       pause();
+      try { env.removeEventListener?.('pagehide', releaseMarker); } catch { /* no window */ }
+      markPlaying(false);
       if (backgroundTimer !== null) env.clearTimeout(backgroundTimer);
       env.navigator?.serviceWorker?.removeEventListener('message', onSWMessage);
       listeners.clear();
@@ -683,25 +799,14 @@ export const assetCache = createAssetCacheManager();
 
 // Imported-art helpers (upstream 0.3.0, public/sw.js): Cache Storage for a player-imported pack. Kept beside the
 // asset-cache coordinator above so every consumer can import both APIs from this module.
-// Imported art in Cache Storage, and the predicate the classic worker in public/sw.js duplicates.
-//
-// Keep IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX and IMPORTED_ASSET_PATH byte-for-byte in sync with
-// public/sw.js. That file is a classic script (not a module) so Firefox 108 and Safari 16.4 can register it; it
-// cannot import this module. A unit test fails if the two copies disagree.
+// The constants themselves live in shared/assetCache.js: the merged module SW (public/asset-cache-sw.js) and the
+// worker read the same module, so the two sides cannot drift. public/sw.js stays a classic fallback for browsers
+// without module service workers and keeps its own copy (a unit test checks the sync).
 //
 // The worker serves only same-origin GET of a content-hashed /assets/, /fonts/ or /media/ URL. A hit comes from
 // this cache. A miss goes to the network and is not written here. HTML, scripts, /data/, /sim/ and /ws are never
 // matched. A Range request is left to the network so audio seeking still reaches the server. What an import stored is
 // also listed in one index entry of the cache (IMPORTED_INDEX_URL): Chrome cannot list a cache that large.
-
-/** Cache Storage name. Bump the suffix to drop previously imported bytes on the next activation. */
-export const IMPORTED_ASSET_CACHE = 'sp-imported-assets-v1';
-
-/** Prefix of every version of this cache. Activation deletes other names that start with it. */
-export const IMPORTED_ASSET_CACHE_PREFIX = 'sp-imported-assets-';
-
-/** Pathname of a URL this cache may answer. The hash is the same 16 hex digits as shared/assetPaths.js. */
-export const IMPORTED_ASSET_PATH = /^\/(?:assets|fonts|media)\/~[0-9a-f]{16}\//;
 
 /**
  * Whether a request should be answered from the import cache.
@@ -733,13 +838,15 @@ export function importSupport(nav = globalThis.navigator, secure = globalThis.is
 }
 
 /**
- * Register public/sw.js. Failures are swallowed: a missing worker must not stop the game.
- * Call only from boot. Unit tests import the downloader and must not register a worker as a side effect.
+ * Register the merged asset worker. Kept as a small boot helper for callers that only need imported art; the
+ * pre-cache manager registers the same worker in initialize(). Failures are swallowed: a missing worker must not
+ * stop the game. Unit tests import the downloader and must not register a worker as a side effect.
  * @returns {Promise<boolean>}
  */
 export function registerImportedAssetWorker(nav = globalThis.navigator, secure = globalThis.isSecureContext) {
   if (!secure || !nav?.serviceWorker?.register) return Promise.resolve(false);
-  return nav.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).then(() => true, () => false);
+  return nav.serviceWorker.register('/asset-cache-sw.js', { scope: '/', type: 'module', updateViaCache: 'none' })
+    .then(() => true, () => false);
 }
 
 /** Content-Type stored with an imported response, chosen from the URL the game will request. */
@@ -784,18 +891,31 @@ function pathnameOf(url) {
  * which the worker never answers (not a hashed /assets/, /fonts/ or /media/ URL). Chrome refuses Cache.keys() for a
  * cache of more than about 15,000 entries ("Operation too large"); a whole pack stores some 43,000 (the audio twice).
  */
-export const IMPORTED_INDEX_URL = '/sp-imported-index.json';
-
-/** The index as a Set, or null without a readable one. */
-async function readImportIndex(cache) {
+async function readImportList(cache, url) {
   try {
-    const hit = await cache.match(IMPORTED_INDEX_URL);
+    const hit = await cache.match(url);
     if (!hit) return null;
     const list = await hit.json();
-    return Array.isArray(list) ? new Set(list.filter((p) => typeof p === 'string' && p !== IMPORTED_INDEX_URL)) : null;
+    return Array.isArray(list) ? new Set(list.filter((p) => typeof p === 'string' && p && p !== url)) : null;
   } catch {
     return null;
   }
+}
+
+async function writeImportList(cache, url, paths) {
+  await cache.put(url, new Response(JSON.stringify([...paths].sort()), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  }));
+}
+
+/** The index as a Set, or null without a readable one. */
+async function readImportIndex(cache) {
+  return readImportList(cache, IMPORTED_INDEX_URL);
+}
+
+/** Pathnames whose bytes the title import borrows from the pre-cache, or null without a readable list. */
+async function readImportedBorrowed(cache) {
+  return readImportList(cache, IMPORTED_BORROWED_URL);
 }
 
 /** Pathnames of Cache.keys() (throws for a cache too large to list). */
@@ -803,20 +923,24 @@ async function keyPaths(cache) {
   const out = new Set();
   for (const req of await cache.keys()) {
     const path = pathnameOf(typeof req === 'string' ? req : req.url);
-    if (path && path !== IMPORTED_INDEX_URL) out.add(path);
+    if (path && path !== IMPORTED_INDEX_URL && path !== IMPORTED_BORROWED_URL) out.add(path);
   }
   return out;
 }
 
 /**
  * Pathnames currently stored for imported art (assets, fonts and the audio /media/ alias): the import's index, else
- * the cache's keys (a cache written without an index); an empty set when neither can be read.
+ * the cache's keys (a cache written without an index); an empty set when neither can be read. Paths borrowed from the
+ * pre-cache (the title import skipped rewriting a file it already had) are included: the merged SW serves both caches.
  */
 export async function listImportedPaths(cachesApi = globalThis.caches) {
   if (!cachesApi?.open) return new Set();
   try {
     const cache = await cachesApi.open(IMPORTED_ASSET_CACHE);
-    return (await readImportIndex(cache)) ?? await keyPaths(cache);
+    const stored = (await readImportIndex(cache)) ?? await keyPaths(cache);
+    const borrowed = await readImportedBorrowed(cache);
+    if (borrowed) for (const path of borrowed) stored.add(path);
+    return stored;
   } catch {
     return new Set();
   }
@@ -833,10 +957,22 @@ export async function addImportedPaths(cache, paths) {
   if (!all) {
     try { all = await keyPaths(cache); } catch { all = new Set(); }
   }
-  for (const p of paths) if (typeof p === 'string' && p && p !== IMPORTED_INDEX_URL) all.add(p);
-  await cache.put(IMPORTED_INDEX_URL, new Response(JSON.stringify([...all].sort()), {
-    status: 200, headers: { 'Content-Type': 'application/json' },
-  }));
+  for (const p of paths) if (typeof p === 'string' && p && p !== IMPORTED_INDEX_URL && p !== IMPORTED_BORROWED_URL) all.add(p);
+  await writeImportList(cache, IMPORTED_INDEX_URL, all);
+}
+
+/**
+ * Record paths whose bytes already live in the pre-cache. The title import checks each file's full SHA-256 against
+ * `sp-asset-cache-v1` before writing; a hit is not stored twice. The merged SW serves the pre-cache copy, and the
+ * pre-cache's clear removes this list again (public/asset-cache-sw.js).
+ * @param {Cache} cache the open import cache
+ * @param {Iterable<string>} paths
+ */
+export async function addImportedBorrowedPaths(cache, paths) {
+  let all = await readImportedBorrowed(cache);
+  if (!all) all = new Set();
+  for (const p of paths) if (typeof p === 'string' && p && p !== IMPORTED_INDEX_URL && p !== IMPORTED_BORROWED_URL) all.add(p);
+  await writeImportList(cache, IMPORTED_BORROWED_URL, all);
 }
 
 /** How many imported files are stored, counting /assets/ and /fonts/ only (not the /media/ alias). */
@@ -853,6 +989,7 @@ export async function countImportedFiles(cachesApi = globalThis.caches) {
  * Delete the stored pathnames that `wanted` does not name and rewrite the index to what remains (设置 → 素材存储 →
  * 清理旧版本素材, 0.3.1). A file that changed got a new hash, so its old copy is never served again (shared/assetPaths.js)
  * but stayed here. `removedFiles` counts /assets/ and /fonts/ only, like countImportedFiles (an audio file is stored twice).
+ * Borrowed paths are only dropped from their list: their bytes belong to the pre-cache, not to this cache.
  * @param {Set<string>} wanted pathnames the server's current manifests name, their /media aliases included
  * @returns {Promise<{ removed: number, removedFiles: number, kept: number }>}
  */
@@ -860,8 +997,10 @@ export async function pruneImportedPaths(wanted, cachesApi = globalThis.caches) 
   const cache = await cachesApi.open(IMPORTED_ASSET_CACHE);
   // no index yet: the keys, when Cache.keys() still answers (a whole pack always wrote an index)
   const stored = (await readImportIndex(cache)) ?? await keyPaths(cache);
+  const borrowed = await readImportedBorrowed(cache);
   const stale = [...stored].filter((p) => !wanted.has(p));
   const kept = [...stored].filter((p) => wanted.has(p));
+  const keptBorrowed = borrowed ? [...borrowed].filter((p) => wanted.has(p)) : [];
   let removed = 0, removedFiles = 0;
   for (let i = 0; i < stale.length; i += 32) {
     await Promise.all(stale.slice(i, i + 32).map(async (p) => {
@@ -872,10 +1011,9 @@ export async function pruneImportedPaths(wanted, cachesApi = globalThis.caches) 
       if (p.startsWith('/assets/') || p.startsWith('/fonts/')) removedFiles++;
     }));
   }
-  await cache.put(IMPORTED_INDEX_URL, new Response(JSON.stringify(kept.sort()), {
-    status: 200, headers: { 'Content-Type': 'application/json' },
-  }));
-  return { removed, removedFiles, kept: kept.length };
+  await writeImportList(cache, IMPORTED_INDEX_URL, kept);
+  if (borrowed) await writeImportList(cache, IMPORTED_BORROWED_URL, keptBorrowed);
+  return { removed, removedFiles, kept: kept.length + keptBorrowed.length };
 }
 
 /** Delete every version of the import cache. The worker stays registered. */

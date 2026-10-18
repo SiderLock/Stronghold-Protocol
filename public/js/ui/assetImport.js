@@ -109,7 +109,7 @@ export function AssetImportButton() {
   const support = importSupport();
   const importText = importStatus(imported);
   const showImportCounts = ['complete', 'partial', 'empty', 'cancelled', 'error'].includes(imported.phase)
-    && (imported.accepted + imported.rejected + imported.skipped + imported.failed) > 0;
+    && (imported.accepted + imported.reused + imported.rejected + imported.skipped + imported.failed) > 0;
 
   const startFiles = (files) => {
     if (!files?.length || !support.ok) return;
@@ -216,8 +216,8 @@ export function AssetImportButton() {
       }</p>`}
       <p role="status" data-testid="asset-import-status" class="asset-import__status">${importText}</p>
       ${importBusy || (imported.total > 0 && imported.phase !== 'idle') ? html`<${ProgressBar} value=${imported.done} max=${imported.total || 1} label=${t('已完成 {done} / {total} 个文件', { done: imported.done, total: imported.total })} />` : null}
-      ${showImportCounts ? html`<p data-testid="asset-import-counts">${t('已导入 {accepted} 个，校验不符 {rejected} 个，跳过 {skipped} 个，无法读取 {failed} 个', {
-        accepted: imported.accepted, rejected: imported.rejected, skipped: imported.skipped, failed: imported.failed,
+      ${showImportCounts ? html`<p data-testid="asset-import-counts">${t('已导入 {accepted} 个，复用 {reused} 个，校验不符 {rejected} 个，跳过 {skipped} 个，无法读取 {failed} 个', {
+        accepted: imported.accepted, reused: imported.reused, rejected: imported.rejected, skipped: imported.skipped, failed: imported.failed,
       })}</p>` : null}
       ${imported.unsupported > 0 ? html`<p class="t-lo">${t('其中 {n} 个因压缩方式不支持被跳过', { n: imported.unsupported })}</p>` : null}
       ${storeInfo && storeInfo.usage != null ? html`<p class="t-lo">${t('已缓存 {count} 个文件，浏览器存储约 {size} MB。', {

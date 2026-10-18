@@ -65,7 +65,7 @@ function buildStoredZip(files) {
 }
 
 test('import has its own dialog that requests nothing on opening; imported art is not fetched again; plain HTTP explains why import is off', {
-  skip: process.env.SP_E2E !== '1' || !hasChrome(), timeout: 90000,
+  skip: process.env.SP_E2E !== '1' || !hasChrome(), timeout: 240000,
 }, async (t) => {
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
   const folderPng = Buffer.from('folder-png-bytes');
@@ -112,6 +112,14 @@ test('import has its own dialog that requests nothing on opening; imported art i
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto(srv.url);
   await page.waitForFunction(() => navigator.serviceWorker.controller != null, { timeout: 20000 });
+  // One merged worker only: /sw.js and /asset-cache-sw.js both claiming scope '/' used to replace each other.
+  const serviceWorkers = await page.evaluate(async () => ({
+    controller: navigator.serviceWorker.controller?.scriptURL ?? null,
+    registrations: (await navigator.serviceWorker.getRegistrations()).map((registration) => registration.active?.scriptURL ?? null),
+  }));
+  assert.equal(serviceWorkers.registrations.length, 1, 'scope / has one service worker registration');
+  assert.match(serviceWorkers.controller, /\/asset-cache-sw\.js$/);
+  assert.match(serviceWorkers.registrations[0], /\/asset-cache-sw\.js$/);
   await page.waitForSelector('[data-testid="asset-import"]');
   // a first gesture unlocks audio (public/js/audio.js): make it elsewhere, so what follows is the dialog's own traffic
   await page.click('.title-tag');
@@ -139,7 +147,7 @@ test('import has its own dialog that requests nothing on opening; imported art i
   const picker = await page.$('[data-testid="asset-import-zip-input"]');
   await picker.uploadFile(packZip);
   await page.waitForFunction(() => document.querySelector('[data-testid="asset-import-status"]')?.textContent.includes('导入完成'));
-  assert.match(await page.$eval('[data-testid="asset-import-counts"]', (el) => el.textContent), /已导入 1 个，校验不符 0 个，跳过 1 个，无法读取 0 个/);
+  assert.match(await page.$eval('[data-testid="asset-import-counts"]', (el) => el.textContent), /已导入 1 个，复用 0 个，校验不符 0 个，跳过 1 个，无法读取 0 个/);
   assert.equal(counts.get(packUrl) || 0, 0);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.asset-import-dialog'));

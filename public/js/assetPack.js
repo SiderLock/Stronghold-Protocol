@@ -16,8 +16,9 @@
 // read; multi-disk archives are not. Caps: 500_000 entries, 64 MB central directory, 256 MB per entry.
 
 import { splitHashedPath } from '../../shared/assetPaths.js';
+import { ASSET_CACHE_NAME, assetContentKey } from '../../shared/assetCache.js';
 import { mediaUrl } from './media.js';
-import { IMPORTED_ASSET_CACHE, addImportedPaths, putImportedAsset, pruneImportedPaths } from './assetCache.js';
+import { IMPORTED_ASSET_CACHE, addImportedBorrowedPaths, addImportedPaths, putImportedAsset, pruneImportedPaths } from './assetCache.js';
 
 export const MAX_ZIP_ENTRIES = 500_000;
 export const MAX_ENTRY_BYTES = 256 * 1024 * 1024;
@@ -342,12 +343,17 @@ export function detectAssetPrefix(paths, rels) {
   return bestScore > 0 ? best : null;
 }
 
-/** First 16 hex digits of SHA-256, the same truncation as server/http/assetIndex.js `hash16`. */
-export async function sha256Hex16(data) {
+/** Full SHA-256, the content key of the pre-cache (`shared/assetCache.js`). */
+export async function sha256Hex(data) {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', data));
   let hex = '';
-  for (let i = 0; i < 8; i++) hex += digest[i].toString(16).padStart(2, '0');
+  for (let i = 0; i < 32; i++) hex += digest[i].toString(16).padStart(2, '0');
   return hex;
+}
+
+/** First 16 hex digits of SHA-256, the same truncation as server/http/assetIndex.js `hash16`. */
+export async function sha256Hex16(data) {
+  return (await sha256Hex(data)).slice(0, 16);
 }
 
 /** Model hash: SHA-256 of the members' file hashes joined by newlines, then the first 16 hex digits. */
@@ -564,6 +570,7 @@ const idleState = () => ({
   total: 0,
   done: 0,
   accepted: 0,
+  reused: 0,
   rejected: 0,
   skipped: 0,
   failed: 0,
@@ -586,6 +593,7 @@ export function createAssetImport({
   let total = 0;
   let done = 0;
   let accepted = 0;
+  let reused = 0;
   let rejected = 0;
   let skipped = 0;
   let failed = 0;
@@ -596,7 +604,7 @@ export function createAssetImport({
   const listeners = new Set();
 
   const snapshot = () => ({
-    phase, total, done, accepted, rejected, skipped, failed, unsupported, error,
+    phase, total, done, accepted, reused, rejected, skipped, failed, unsupported, error,
   });
 
   const publish = (force = false) => {
@@ -610,6 +618,7 @@ export function createAssetImport({
   const finish = (kind) => {
     done++;
     if (kind === 'accepted') accepted++;
+    else if (kind === 'reused') reused++;
     else if (kind === 'rejected') rejected++;
     else if (kind === 'failed') failed++;
     else {
@@ -663,13 +672,34 @@ export function createAssetImport({
 
   async function run(source) {
     let cache = null;
+    let precache = null;
+    let precacheUnavailable = false;
     /** Pathnames this run stored: added to the import's index as it ends (assetCache.js addImportedPaths). */
     const storedPaths = new Set();
+    /** Pathnames whose bytes already live in the pre-cache (same pack imported through the lobby first). */
+    const borrowedPaths = new Set();
+    const pageOrigin = (() => { try { return globalThis.location?.origin || ''; } catch { return ''; } })();
+    const precacheHit = async (fullSha) => {
+      if (precacheUnavailable || !pageOrigin || !cachesApi?.open) return false;
+      try {
+        if (!precache) precache = await cachesApi.open(ASSET_CACHE_NAME);
+        return !!(await precache.match(pageOrigin + assetContentKey(fullSha)));
+      } catch {
+        precacheUnavailable = true;
+        return false;
+      }
+    };
+    const borrow = (urls) => {
+      for (const url of urls) {
+        try { borrowedPaths.add(new URL(url, 'http://localhost').pathname); } catch { /* not a URL */ }
+      }
+    };
     phase = 'reading';
     error = null;
     total = 0;
     done = 0;
     accepted = 0;
+    reused = 0;
     rejected = 0;
     skipped = 0;
     failed = 0;
@@ -770,7 +800,11 @@ export function createAssetImport({
           continue;
         }
         const hashes = [];
-        for (const member of group.members) hashes.push(await sha256Hex16(loaded.get(member.rel)));
+        const fullHashes = [];
+        for (const member of group.members) {
+          const full = await sha256Hex(loaded.get(member.rel));
+          fullHashes.push(full); hashes.push(full.slice(0, 16));
+        }
         if (cancelFlag) break;
         const model = await modelHashOf(hashes);
         if (model === group.hash) {
@@ -785,8 +819,14 @@ export function createAssetImport({
                 if (alt.hash === hashes[i]) for (const url of cacheUrlsFor(alt.url)) urls.add(url);
               }
             }
-            await store(urls, loaded.get(member.rel));
-            settle(member.rel, 'accepted');
+            if (urls.size && await precacheHit(fullHashes[i])) {
+              // The lobby pre-cache already has these bytes; the merged SW serves that copy.
+              borrow(urls);
+              settle(member.rel, 'reused');
+            } else {
+              await store(urls, loaded.get(member.rel));
+              settle(member.rel, 'accepted');
+            }
             loaded.delete(member.rel);
             reads.delete(member.rel);
           }
@@ -807,13 +847,19 @@ export function createAssetImport({
           reads.delete(rel);
           continue;
         }
-        const hash = await sha256Hex16(got.bytes);
+        const full = await sha256Hex(got.bytes);
+        const hash = full.slice(0, 16);
         const urls = [];
         if (hash === spec.hash) urls.push(...cacheUrlsFor(spec.url));
         for (const alt of spec.alts) if (hash === alt.hash) urls.push(...cacheUrlsFor(alt.url));
         if (urls.length) {
-          await store(urls, got.bytes);
-          settle(rel, 'accepted');
+          if (await precacheHit(full)) {
+            borrow(urls);
+            settle(rel, 'reused');
+          } else {
+            await store(urls, got.bytes);
+            settle(rel, 'accepted');
+          }
         } else settle(rel, 'rejected');
         reads.delete(rel);
       }
@@ -823,8 +869,8 @@ export function createAssetImport({
       }
 
       if (cancelFlag) phase = 'cancelled';
-      else if (accepted > 0 && rejected === 0 && failed === 0) phase = 'complete';
-      else if (accepted === 0 && rejected === 0 && failed === 0) phase = 'empty';
+      else if (accepted + reused > 0 && rejected === 0 && failed === 0) phase = 'complete';
+      else if (accepted + reused === 0 && rejected === 0 && failed === 0) phase = 'empty';
       else phase = 'partial';
     } catch (cause) {
       if (cancelFlag) phase = 'cancelled';
@@ -834,8 +880,18 @@ export function createAssetImport({
       }
     } finally {
       // before the end is published: the dialog's count and the download queue read the index as the import ends
-      if (cache && storedPaths.size) {
-        try { await addImportedPaths(cache, storedPaths); } catch { /* the entries stay; Cache.keys() may still list them */ }
+      if (storedPaths.size || borrowedPaths.size) {
+        if (!cache) {
+          try { cache = await cachesApi.open(IMPORTED_ASSET_CACHE); } catch { cache = null; }
+        }
+        if (cache) {
+          if (storedPaths.size) {
+            try { await addImportedPaths(cache, storedPaths); } catch { /* the entries stay; Cache.keys() may still list them */ }
+          }
+          if (borrowedPaths.size) {
+            try { await addImportedBorrowedPaths(cache, borrowedPaths); } catch { /* pre-cache bytes still serve */ }
+          }
+        }
       }
       publish(true);
     }

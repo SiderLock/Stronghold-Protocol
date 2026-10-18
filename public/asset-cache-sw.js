@@ -1,8 +1,12 @@
 // Asset-only cache: HTML, application code, data, APIs and private announcements never enter it.
 // Content hashes let unchanged files survive upgrades; per-client catalogs pin live matches.
-import { ASSET_CACHE_NAME, ASSET_CACHE_META, ASSET_CACHE_SW_PROTOCOL, assetContentKey, catalogURLMap,
+//
+// This is the single service worker for scope '/' (main.js no longer registers public/sw.js): besides the pre-cache
+// catalog it serves the title screen's imported art from sp-imported-assets-v1, so the two import entries share one
+// controller instead of replacing each other.
+import { ASSET_CACHE_NAME, ASSET_CACHE_META, ASSET_CACHE_SW_PROTOCOL, ASSET_CACHE_INDEX_URL, assetContentKey, catalogURLMap,
   verifyAssetCatalog, decodedAssetPath, isVerifiedAssetResponse, validatedCacheHeaders,
-  parseAssetRange, sha256Hex } from '/shared/assetCache.js';
+  parseAssetRange, sha256Hex, IMPORTED_ASSET_CACHE, IMPORTED_ASSET_PATH, IMPORTED_BORROWED_URL } from '/shared/assetCache.js';
 
 const origin = self.location.origin;
 const catalogPath = (version) => `${origin}/__sp_asset_cache__/catalog/${version}`;
@@ -63,7 +67,7 @@ async function handleMessage(event) {
   const port = event.ports[0];
   try {
     if (data.type === 'ASSET_CACHE_CAPABILITIES') {
-      port.postMessage({ ok: true, protocol: ASSET_CACHE_SW_PROTOCOL });
+      port.postMessage({ ok: true, protocol: ASSET_CACHE_SW_PROTOCOL, imported: true });
       return;
     }
     if (data.type === 'ASSET_CACHE_ACTIVATE') {
@@ -101,6 +105,11 @@ async function handleMessage(event) {
     } else if (data.type === 'ASSET_CACHE_CLEAR') {
       if (await livePlaying()) throw new Error('ASSET_CACHE_PLAYING');
       await caches.delete(ASSET_CACHE_NAME);
+      // Borrowed paths point at the pre-cache bytes that just went away; the stored import index is untouched.
+      try {
+        const imported = await caches.open(IMPORTED_ASSET_CACHE);
+        await imported.delete(IMPORTED_BORROWED_URL);
+      } catch { /* no imported cache on this origin */ }
       await broadcast({ type: 'ASSET_CACHE_UPDATED' });
       port.postMessage({ ok: true });
     } else if (data.type === 'ASSET_CACHE_PRUNE') {
@@ -114,18 +123,50 @@ async function handleMessage(event) {
         for (const entry of indexed?.catalog.files || []) keep.add(origin + assetContentKey(entry.sha256));
       }
       const cache = await caches.open(ASSET_CACHE_NAME);
-      for (const key of await cache.keys()) if (!keep.has(key.url)) await cache.delete(key);
+      // Cache.keys() throws "Operation too large" for a full 0.3.1 pack (18,242 content keys, ~10 MB query cap).
+      // The worker writes this SHA index after every operation; prune uses it and never enumerates the cache.
+      const index = await readJSON(cache, origin + ASSET_CACHE_INDEX_URL);
+      if (Array.isArray(index)) {
+        const kept = [];
+        const shas = index.filter((sha) => typeof sha === 'string' && /^[a-f0-9]{64}$/.test(sha));
+        for (let i = 0; i < shas.length; i += 32) {
+          await Promise.all(shas.slice(i, i + 32).map(async (sha) => {
+            const key = origin + assetContentKey(sha);
+            if (keep.has(key)) kept.push(sha);
+            else await cache.delete(key);
+          }));
+        }
+        await cache.put(origin + ASSET_CACHE_INDEX_URL, Response.json(kept.sort()));
+      } else {
+        // Legacy cache written before the index existed. Only a small one can be enumerated; when the query is too
+        // large, skip stale cleanup instead of failing the import/download that just succeeded.
+        try {
+          const kept = [];
+          for (const key of await cache.keys()) {
+            if (keep.has(key.url)) {
+              const sha = key.headers.get('x-sp-asset-sha256');
+              if (/^[a-f0-9]{64}$/.test(sha || '')) kept.push(sha);
+            } else await cache.delete(key);
+          }
+          if (kept.length) await cache.put(origin + ASSET_CACHE_INDEX_URL, Response.json(kept.sort()));
+        } catch { /* too large to enumerate without an index: leave the stale entries for now */ }
+      }
       const livePins = new Set(live.map((client) => pinPath(client.id)));
       for (const key of await meta.keys()) {
-        if (key.url.includes('/__sp_asset_cache__/pin/') && !livePins.has(key.url)) { await meta.delete(key); }
+        if (key.url.includes('/__sp_asset_cache__/pin/') && !livePins.has(key.url)) { await meta.delete(key.url); }
         if (key.url.includes('/__sp_asset_cache__/catalog/') && !versions.has(key.url.split('/').at(-1))) {
-          await meta.delete(key); catalogs.delete(key.url.split('/').at(-1));
+          await meta.delete(key.url); catalogs.delete(key.url.split('/').at(-1));
         }
       }
       for (const id of pins.keys()) if (!livePins.has(pinPath(id))) pins.delete(id);
       port.postMessage({ ok: true });
     } else throw new Error('ASSET_CACHE_BAD_MESSAGE');
-  } catch (error) { port.postMessage({ ok: false, error: error.code || error.message || 'ASSET_CACHE_STORAGE_ERROR' }); }
+  } catch (error) {
+    // DOMException's legacy numeric code (AbortError 20) is not a protocol code; never send it to the page as one.
+    const code = typeof error?.code === 'string' ? error.code
+      : (typeof error?.message === 'string' && /^ASSET_CACHE_[A-Z_]+$/.test(error.message) ? error.message : 'ASSET_CACHE_STORAGE_ERROR');
+    port.postMessage({ ok: false, error: code });
+  }
 }
 self.addEventListener('message', (event) => {
   // Metadata writes are asynchronous. Preserve delivery order so PIN and PLAYING do not
@@ -156,6 +197,19 @@ async function cachedResponse(response, entry, request) {
   return new Response(response.body, { status: 200, headers });
 }
 
+/** Exact-key hit in the title screen's imported-art cache (public/sw.js's rule), or null. */
+async function importedHit(request) {
+  if (request.headers.has('range')) return null;
+  let url;
+  try { url = new URL(request.url); } catch { return null; }
+  if (url.origin !== origin || !IMPORTED_ASSET_PATH.test(url.pathname)) return null;
+  try {
+    const cache = await caches.open(IMPORTED_ASSET_CACHE);
+    // Exact key: an import stores each URL without a query. ignoreSearch would scan every entry of a full pack.
+    return (await cache.match(origin + url.pathname)) || null;
+  } catch { return null; }
+}
+
 async function fetchAsset(event, path) {
   try {
     const pin = await getPin(event.clientId);
@@ -165,11 +219,18 @@ async function fetchAsset(event, path) {
     // A ~hash path matches only this pinned catalog's exact aliases. Stripping it could serve old model bytes
     // for a new manifest (or replace the model's aggregate hash with an unrelated file hash).
     const entry = indexed?.urls.get(path);
-    if (!entry) return fetch(event.request);
+    if (!entry) {
+      const imported = await importedHit(event.request);
+      return imported || fetch(event.request);
+    }
     const cache = await caches.open(ASSET_CACHE_NAME);
     const key = origin + assetContentKey(entry.sha256);
     const hit = await cache.match(key);
     if (isVerifiedAssetResponse(hit, entry)) return cachedResponse(hit, entry, event.request);
+    // The title import already verified these bytes against the served manifests; one copy in either cache is
+    // enough, so do not download a second time before the pre-cache's own passive fill can run.
+    const imported = await importedHit(event.request);
+    if (imported) return imported;
     const response = await fetch(event.request);
     // Ordinary gameplay remains immediate. Verification runs after returning the network response,
     // with a small concurrency ceiling so a model burst cannot create hundreds of buffered bodies.

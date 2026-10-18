@@ -6,15 +6,16 @@ import vm from 'node:vm';
 import { hash16 } from '../../server/http/assetIndex.js';
 import { rewriteManifest } from '../../server/http/assetViews.js';
 import { siteCsp, SIM_WORKER_CSP } from '../../server/http/csp.js';
+import { ASSET_CACHE_NAME, assetContentKey } from '../../shared/assetCache.js';
 import { createAssetDownload } from '../../public/js/assetDownload.js';
 import {
-  IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL,
-  addImportedPaths, askPersistStorage, countImportedFiles, importSupport, listImportedPaths, pruneImportedPaths, shouldServeImportedAsset,
-  storagePersisted,
+  IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL, IMPORTED_BORROWED_URL,
+  addImportedBorrowedPaths, addImportedPaths, askPersistStorage, countImportedFiles, importSupport, listImportedPaths,
+  pruneImportedPaths, shouldServeImportedAsset, storagePersisted,
 } from '../../public/js/assetCache.js';
 import {
   cacheUrlsFor, crc32, createAssetImport, detectAssetPrefix, importedKeepSet, modelHashOf, normalizePackPath,
-  openZip, plainRel, planFromManifests, pruneImportedAssets, sha256Hex16,
+  openZip, plainRel, planFromManifests, pruneImportedAssets, sha256Hex, sha256Hex16,
 } from '../../public/js/assetPack.js';
 
 const enc = new TextEncoder();
@@ -113,33 +114,39 @@ function indexFor(map) {
  * Cache Storage in memory. `keysLimit`: Cache.keys() throws above that many entries, as Chrome's does ("Operation too
  * large", about 15,000 entries). `assets()`: the stored URLs without the import's index entry.
  */
-function memoryCache({ keysLimit = Infinity } = {}) {
-  const store = new Map();
-  const caches = {
-    async open(name) {
-      assert.equal(name, IMPORTED_ASSET_CACHE);
-      return {
-        async put(url, response) {
-          store.set(String(url), {
-            bytes: new Uint8Array(await response.arrayBuffer()),
-            type: response.headers.get('content-type'),
-          });
-        },
-        async match(url) {
-          const hit = store.get(String(url));
-          return hit ? new Response(hit.bytes.slice(), { headers: { 'content-type': hit.type || '' } }) : undefined;
-        },
-        async keys() {
-          if (store.size > keysLimit) throw new DOMException("Failed to execute 'keys' on 'Cache': Operation too large.", 'AbortError');
-          return [...store.keys()].map((url) => ({ url }));
-        },
-        async delete(url) { return store.delete(String(url)); },
-      };
-    },
-    async keys() { return [IMPORTED_ASSET_CACHE]; },
-    async delete() { store.clear(); return true; },
+function memoryCache({ keysLimit = Infinity, precache = {} } = {}) {
+  const stores = new Map([[IMPORTED_ASSET_CACHE, new Map()], [ASSET_CACHE_NAME, new Map()]]);
+  const store = stores.get(IMPORTED_ASSET_CACHE);
+  for (const [url, bytes] of Object.entries(precache)) {
+    stores.get(ASSET_CACHE_NAME).set(String(url), { bytes: new Uint8Array(bytes), type: 'application/octet-stream' });
+  }
+  const cacheFor = (name) => {
+    if (!stores.has(name)) stores.set(name, new Map());
+    const entries = stores.get(name);
+    return {
+      async put(url, response) {
+        entries.set(String(url), {
+          bytes: new Uint8Array(await response.arrayBuffer()),
+          type: response.headers.get('content-type'),
+        });
+      },
+      async match(url) {
+        const hit = entries.get(String(url));
+        return hit ? new Response(hit.bytes.slice(), { headers: { 'content-type': hit.type || '' } }) : undefined;
+      },
+      async keys() {
+        if (entries.size > keysLimit) throw new DOMException("Failed to execute 'keys' on 'Cache': Operation too large.", 'AbortError');
+        return [...entries.keys()].map((url) => ({ url }));
+      },
+      async delete(url) { return entries.delete(String(url)); },
+    };
   };
-  const assets = () => [...store.keys()].filter((url) => url !== IMPORTED_INDEX_URL);
+  const caches = {
+    async open(name) { return cacheFor(name); },
+    async keys() { return [...stores.keys()]; },
+    async delete(name) { if (stores.has(name)) stores.get(name).clear(); return true; },
+  };
+  const assets = () => [...store.keys()].filter((url) => url !== IMPORTED_INDEX_URL && url !== IMPORTED_BORROWED_URL);
   return { caches, store, assets };
 }
 
@@ -777,3 +784,43 @@ test('清理旧版本素材 deletes nothing when a served manifest cannot be rea
   }
 });
 
+
+test('a file already in the pre-cache is borrowed, not written twice, and counts for both importers', async (t) => {
+  const saved = globalThis.location;
+  globalThis.location = { origin: 'https://game.test' };
+  t.after(() => { if (saved === undefined) delete globalThis.location; else globalThis.location = saved; });
+  const body = bytesOf('already precached');
+  const full = await sha256Hex(body);
+  const hash = full.slice(0, 16);
+  const view = rewriteManifest({ a: '/assets/a.png' }, 'assets.json', indexFor({ 'assets/a.png': hash })).doc;
+  const mem = memoryCache({ precache: { ['https://game.test' + assetContentKey(full)]: body } });
+  const imp = createAssetImport({ fetch: manifestFetch(view).fetch, caches: mem.caches });
+  await imp.start({ type: 'files', files: [{ path: 'public/assets/a.png', read: async () => body }] });
+  assert.equal(imp.get().phase, 'complete');
+  assert.equal(imp.get().accepted, 0);
+  assert.equal(imp.get().reused, 1);
+  assert.equal(mem.assets().length, 0, 'the pre-cache copy is not duplicated into the import cache');
+  const cache = await mem.caches.open(IMPORTED_ASSET_CACHE);
+  const borrowed = await (await cache.match(IMPORTED_BORROWED_URL)).json();
+  assert.deepEqual(borrowed, [`/assets/~${hash}/a.png`]);
+  const paths = await listImportedPaths(mem.caches);
+  assert.ok(paths.has(`/assets/~${hash}/a.png`));
+  assert.equal(await countImportedFiles(mem.caches), 1);
+  // A later re-import sees the same pre-cache bytes again and stays complete without writing anything.
+  await imp.start({ type: 'files', files: [{ path: 'public/assets/a.png', read: async () => body }] });
+  assert.equal(imp.get().phase, 'complete');
+  assert.equal(imp.get().reused, 1);
+  assert.equal(mem.assets().length, 0);
+});
+
+test('borrowed paths are dropped by prune and by the pre-cache keep-set without touching stored bytes', async () => {
+  const cache = (await memoryCache().caches.open(IMPORTED_ASSET_CACHE));
+  await addImportedBorrowedPaths(cache, ['/assets/~0123456789abcdef/a.png', '/assets/~1111111111111111/old.png']);
+  const mem = memoryCache();
+  const c = await mem.caches.open(IMPORTED_ASSET_CACHE);
+  await addImportedBorrowedPaths(c, ['/assets/~0123456789abcdef/a.png', '/assets/~1111111111111111/old.png']);
+  assert.equal((await listImportedPaths(mem.caches)).size, 2);
+  const result = await pruneImportedPaths(new Set(['/assets/~0123456789abcdef/a.png']), mem.caches);
+  assert.equal(result.removed, 0);
+  assert.deepEqual([...await listImportedPaths(mem.caches)], ['/assets/~0123456789abcdef/a.png']);
+});

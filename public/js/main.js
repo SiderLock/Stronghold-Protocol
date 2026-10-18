@@ -55,7 +55,6 @@ import { AnnouncementHost, installAnnouncements } from './ui/announcements.js';
 import { UrgentAnnouncementHost, installUrgentAnnouncements } from './ui/urgentAnnouncements.js';
 import { AssetCacheHost, installAssetCache } from './ui/assetCache.js';
 import { installDeviceSupport } from './ui/device.js';
-import { registerImportedAssetWorker } from './assetCache.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost } from './screens/stats.js';
 import { installRehearsal } from './battle/rehearsal.js';
@@ -410,8 +409,7 @@ async function boot() {
   installTrafficMeter();
   // touch / hover / fullscreen classes, zoom-gesture blocking, rotation re-layout (ui/device.js, css/devices.css)
   installDeviceSupport();
-  // Hashed art a player imported. HTTPS or localhost only; a failure here must not stop boot.
-  void registerImportedAssetWorker();
+  // One merged asset worker serves the imported art and the pre-cache; installAssetCache() below registers it.
   // A page restored from the back/forward cache has a dead socket and a stale token choice: start over.
   window.addEventListener('pageshow', (ev) => { if (ev.persisted) location.reload(); });
   // Pick this tab's reconnect token (asks other live tabs; ≤150 ms) while fonts load.

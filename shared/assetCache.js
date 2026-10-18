@@ -6,6 +6,20 @@ export const ASSET_CACHE_NAME = 'sp-asset-cache-v1';
 export const ASSET_CACHE_META = 'sp-asset-cache-meta-v1';
 export const CACHE_KEY_PREFIX = '/__sp_asset_cache__/sha256/';
 export const ASSET_CACHE_LATEST_KEY = '/__sp_asset_cache__/latest';
+/**
+ * Content-key index of the pre-cache, written by the worker after each operation. The SW prunes with it:
+ * `Cache.keys()` throws "Operation too large" once a full 0.3.1 pack (18,242 entries) is stored.
+ */
+export const ASSET_CACHE_INDEX_URL = '/sp-asset-cache-index.json';
+
+// The title screen's own import (public/sw.js, 0.3.0) keeps its bytes in a second cache. One merged service
+// worker serves both, and each side recognises the other's files (see docs/ASSETS.md).
+export const IMPORTED_ASSET_CACHE = 'sp-imported-assets-v1';
+export const IMPORTED_ASSET_CACHE_PREFIX = 'sp-imported-assets-';
+export const IMPORTED_ASSET_PATH = /^\/(?:assets|fonts|media)\/~[0-9a-f]{16}\//;
+export const IMPORTED_INDEX_URL = '/sp-imported-index.json';
+/** Paths whose bytes this cache borrows from the pre-cache (the title import skips rewriting an existing file). */
+export const IMPORTED_BORROWED_URL = '/sp-imported-borrowed.json';
 export const MAX_ASSET_BYTES = 128 * 1024 * 1024;
 export const MAX_CATALOG_FILES = 100000;
 export const MAX_MANIFEST_BYTES = 32 * 1024 * 1024;

@@ -1842,7 +1842,7 @@
   "素材包不是有效的 zip。": "This asset pack is not a valid zip.",
   "无法读取素材清单，导入已停止。": "Could not read the asset manifest. Import stopped.",
   "导入失败。": "Import failed.",
-  "已导入 {accepted} 个，校验不符 {rejected} 个，跳过 {skipped} 个，无法读取 {failed} 个": "Imported {accepted}, hash mismatch {rejected}, skipped {skipped}, unreadable {failed}",
+  "已导入 {accepted} 个，复用 {reused} 个，校验不符 {rejected} 个，跳过 {skipped} 个，无法读取 {failed} 个": "Imported {accepted}, reused {reused}, hash mismatch {rejected}, skipped {skipped}, unreadable {failed}",
   "其中 {n} 个因压缩方式不支持被跳过": "{n} skipped because their compression is not supported",
   "清除已导入的素材": "Clear imported assets",
   "只删除这台浏览器里导入的素材，不会影响服务器。": "This only deletes assets imported in this browser. The server is not changed.",
@@ -2389,5 +2389,7 @@
   "观战席 {used} / {capacity}": "Spectators {used} / {capacity}",
   "观战席已满": "Spectator seats full",
   "等候中": "Waiting",
-  "缓存组件尚未完成升级，请关闭本站的全部游戏标签页后重新打开，再重试。": "The asset cache component has not finished updating. Close all game tabs for this site, reopen it, then retry."
+  "缓存组件尚未完成升级，请关闭本站的全部游戏标签页后重新打开，再重试。": "The asset cache component has not finished updating. Close all game tabs for this site, reopen it, then retry.",
+  "缓存组件未能启动，请关闭本站全部标签页后重新打开再试。": "The cache component could not start. Close every tab of this site, reopen, and try again.",
+  "浏览器存储或缓存组件异常，请关闭本站全部游戏标签页后重新打开再试；若仍失败请改用导入素材包。": "Browser storage or the cache component failed. Close every game tab of this site, reopen, and try again; if it still fails, import the asset pack instead."
 }
