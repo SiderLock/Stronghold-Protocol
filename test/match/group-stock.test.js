@@ -73,11 +73,7 @@ test('exhausting one equipment group gates only its shop, reward, golden upgrade
     assert.ok(x && y);
     assert.equal(m.itemPoolFor(a).left(PACK), 0);
     assert.equal(m.itemPoolFor(b).left(PACK), 2);
-    assert.equal(a.buy(0).error, 'SOLD_OUT');
-    assert.equal(a.funds, 20);
-    assert.equal(a.pickReward(0).error, 'SOLD_OUT');
-    assert.equal(a.offers.length, 1);
-    assert.equal(a.upgradeItem(x), false);
+    // Rolls and non-displayed grants stay gated (D029). Already-displayed takes are #624 / shared-stock.
     assert.equal(a._rollItemSlot(), null);
     assert.equal(b._rollItemSlot().id, PACK);
     const ca = makeCtx(m, a, { key: 'test' }, 'onTest'), cb = makeCtx(m, b, { key: 'test' }, 'onTest');
