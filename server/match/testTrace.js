@@ -110,6 +110,8 @@ export function installTestTrace(m, opts) {
   m.sched = {
     virtual: scheduler.virtual, instant: scheduler.instant,
     now: () => eventNow ?? scheduler.now(),
+    // D030 freeze clock: the real FreezeScheduler owns gameNow; the shim must keep it or setDeadline breaks.
+    gameNow: () => (typeof scheduler.gameNow === 'function' ? scheduler.gameNow() : (eventNow ?? scheduler.now())),
     setTimeout: (fn, ms) => register('setTimeout', fn, ms),
     setInterval: (fn, ms) => register('setInterval', fn, ms),
     clearTimeout: (h) => scheduler.clearTimeout(h),
