@@ -114,12 +114,12 @@ export function rowLpTip(lp, cap = 10) {
  * @param {{ pub:any, myId:string, watching:string|null, bubbles: Map<string,{id:string,seq:number}>,
  *   emotes?: Array<{seq:number,playerId:string,id:string,at:number}>, emoteNow?:number, emoteTtl?:number, onWatch:(p:any)=>void,
  *   compact?: boolean, teamLp?: number|null, self?: { lp?: number|null, pending: number, unite: boolean, left?: number|null } | null,
- *   cap?: number, uniteLocal?: Record<string, number> | null,
+ *   cap?: number, uniteLocal?: Record<string, number> | null, spMarks?: Map<string,'done'|'turn'> | null,
  *   observe?: null | { canObserve: (p:any) => { fieldId?: string, reason?: string|null, back?: boolean }, observing: boolean, onBack: () => void } }} props
  *   uniteLocal: the local 联防 replica's per-leaker counts while it is on screen (battle runner state().uniteLeft), else null
  */
 export function TeamPanel({ pub, myId, watching, bubbles, emotes = [], emoteNow = Date.now(), emoteTtl = 3000,
-  onWatch, compact = false, observe = null, self: selfLive = null, cap = 10, uniteLocal = null }) {
+  onWatch, compact = false, observe = null, self: selfLive = null, cap = 10, uniteLocal = null, spMarks = null }) {
   const [openPid, setOpenPid] = useState(null);
   const feedRef = useRef(null);
   // the playerId whose avatar just called onWatch, so the other click of a double-click does not open the view again
@@ -196,6 +196,8 @@ export function TeamPanel({ pub, myId, watching, bubbles, emotes = [], emoteNow 
           ${group ? html`<${Tooltip} text=${groupTip} placement="right" class="team__group-badge">${group.label}<//>` : null}
           ${p.isBot ? html`<span class="team__ai">AI</span>` : null}
           ${self ? html`<span class="team__you"><${Icon} name="user" /></span>` : null}
+          ${spMarks?.get(p.playerId) === 'done' ? html`<span class="team__spmark is-done" title=${t('已完成选择')}><${Icon} name="check" /></span>`
+            : spMarks?.get(p.playerId) === 'turn' ? html`<span class="team__spmark is-turn" title=${t('正在决策…')}><i></i><i></i><i></i></span>` : null}
         </button>
         <div class="team__info">
           <span class="team__name">${p.name || t('博士')}</span>

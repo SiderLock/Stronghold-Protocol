@@ -155,6 +155,7 @@ export class MatchPhases {
     if (this.phase !== PHASE.BAND_DRAFT || !d || !group) return;
     const g = group;
     this.clearDraftGroupTimer(g);
+    if (this.test) this.setDeadline(0);
     // loop-cap: idx walks g.order once
     while (g.idx < g.order.length) {
       const ps = this.players.get(g.order[g.idx]);
@@ -179,11 +180,20 @@ export class MatchPhases {
     if (!g.untimed) {
       const ms = this.bandTurnMs();
       g.turnDeadline = this.sched.gameNow() + ms;
-      g.timer = this.later(ms, () => {
+      const expire = () => {
         if (this.phase !== PHASE.BAND_DRAFT || this.draft !== d || token !== g.token) return;
         const pid = this.draftTurn(g.playerIds[0]);
         if (pid) this._applyBand(this.players.get(pid), this.timeoutBand(pid));
-      });
+      };
+      // A single-group test match can hold the turn through setDeadline (g.test timers off). Parallel
+      // groups keep their own timers: the held-phase slot cannot track several turn clocks at once.
+      if (this.test && d.groups.length === 1) {
+        this.setDeadline(ms / 1000 / (this.timerScale || 1), expire);
+        g.turnDeadline = this.deadline;
+        g.timer = null;
+      } else {
+        g.timer = this.later(ms, expire);
+      }
     }
     this.syncDraftDeadline(d);
     const cur = this.players.get(g.order[g.idx]);
@@ -336,11 +346,29 @@ export class MatchPhases {
 
   enterBattleCheck() {
     this.phase = PHASE.BATTLE_CHECK;
-    this.setDeadline(this.gd.timer('battleCheck'), () => this.startRound(1), { silent: this.soloUntimed });
+    this.setDeadline(this.gd.timer('battleCheck'), () => this.afterBattleCheck(), { silent: this.soloUntimed });
     this.markPublic();
   }
 
-  startRound(r) {
+  /**
+   * BATTLE_CHECK is over: R1 is about to begin. A plugin window declared at `battleCheck` for this round opens here —
+   * "before the round begins", the host's own step first (docs/PLUGINS.md §10b) — and holds R1 back until it closes; a
+   * content set without a window continues exactly as before (`openOfferWindow` returns before it touches anything).
+   */
+  afterBattleCheck() {
+    this.startRound(1);
+  }
+
+  startRound(r, afterStart = null) {
+    // Every round, including boss rounds. [ASSUMED] Expire nonblocking windows at the next round.
+    for (const w of this.offerWin) this._closeOffer(w);
+    this.offersDispose(); // A test-console round jump must discard the older continuation too.
+    const step = () => { this._startRoundAfterOffers(r); afterStart?.(); };
+    if (this.openOfferWindow('battleCheck', r) !== 'open') { step(); return; }
+    this._offerResume = step;
+  }
+
+  _startRoundAfterOffers(r) {
     this.phase = PHASE.ROUND_START;
     this.round = r;
     this.fields = [];
@@ -391,6 +419,14 @@ export class MatchPhases {
 
   afterRoundStart() {
     if (this.gd.spRounds().includes(this.round)) this.enterSpDraft();
-    else this.enterPrep();
+    else this.beforePrepOffers();
+  }
+
+  beforePrepOffers() {
+    // The official round start and its draw/draft finish first; only entering prep waits.
+    this.sp = null;
+    const step = () => this.enterPrep();
+    if (this.openOfferWindow('prep', this.round) !== 'open') { step(); return; }
+    this._offerResume = step;
   }
 }

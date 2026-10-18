@@ -1,7 +1,8 @@
 // Lobby screen: pick 独立模拟 / 同盟模拟 and a difficulty (标准/险境/绝境/终极), create a room,
 // or join one with a 同盟密钥 (recent codes remembered) — as a player (加入同盟) or in one of its MAX_SPECTATORS
 // spectator seats (观战: room.spectate, also while its match runs; community report #26, a remake feature — the
-// official room has none). Shows connection status + ping.
+// official room has none). Shows connection status + ping. The top bar opens the read-only S.W.E.E.P.报告
+// (screens/sweep.js: 盟约 / 策略 / 敌方资料 and the enemy codex).
 //
 // Difficulty descriptions come from data/config.json `modes[modeId]` when present, else from the
 // official act2autochess `modeDataDict` texts embedded below (desc + effectDescList), so the
@@ -11,15 +12,17 @@
 // Texts go through t() (docs/I18N.md); the module-level tables hold msgids (N_) translated where they are shown, the
 // config.json mode texts come localized from data.js.
 
+import { TestMark } from '../ui/testConsole.js';
 import { ResumeMatchButton } from '../ui/resumeMatch.js';
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, DEFAULT_SEATS, ROOM_CAPACITIES, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { html, confirmDialog, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { AnnouncementButton } from '../ui/announcements.js';
 import { AssetCacheButton } from '../ui/assetCache.js';
 import { openStats } from './stats.js';
+import { SweepReport } from './sweep.js';
 import { SettingsButton } from '../ui/settings.js';
 import { PwaInstallButton } from '../ui/device.js';
 import { LoadoutButton } from './loadout.js';
@@ -29,6 +32,7 @@ import { getConfig, getMode, getStage, useData } from '../data.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
 import { createLobbyDiscovery } from '../lobbyDiscovery.js';
 import { LobbyOnlinePill, LobbyDiscoveryPanel, LobbyRoomList } from '../ui/lobbyDiscovery.js';
+import { NoticesButton } from '../ui/notices.js';
 
 /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
 export const MODE_TEXT = {
@@ -169,9 +173,24 @@ export function recentRooms() {
 }
 
 /** @param {string} code */
-export function rememberRoom(code) {
+export function rememberRoom(code, test = false) {
   if (!CODE_RE.test(code)) return;
-  savePref('recentRooms', [code, ...recentRooms().filter((c) => c !== code)].slice(0, 4));
+  const recent = [code, ...recentRooms().filter((c) => c !== code)].slice(0, 4);
+  const marks = loadPref('recentTestRooms', []);
+  savePref('recentTestRooms', recent.filter(c => c === code ? test : Array.isArray(marks) && marks.includes(c)));
+  savePref('recentRooms', recent);
+}
+
+export async function joinKnown(type, key) {
+  try { return await net.request(type, { code: key }); } catch (err) {
+    if (err?.code !== ERR.TEST_CONFIRM) throw err;
+    const text = type === 'room.spectate'
+      ? t('这是测试房间，不计入任何记录。确认观战？')
+      : t('这是测试房间，不计入任何记录。确认加入？');
+    if (await confirmDialog({ title: t('测试'), text })) {
+      return net.request(type, { code: key, testAck: true });
+    }
+  }
 }
 
 const FALLBACK_TIPS = [
@@ -258,6 +277,8 @@ export function LobbyScreen() {
     return ROOM_CAPACITIES.includes(saved) ? saved : DEFAULT_SEATS;
   });
   const [code, setCode] = useState('');
+  const [asTest, setAsTest] = useState(false);
+  const testMode = useStore((s) => s.testMode === true);
   const [busy, setBusy] = useState(null);
   const discoveryRef = useRef(null);
   if (!discoveryRef.current) discoveryRef.current = createLobbyDiscovery({ net });
@@ -268,6 +289,8 @@ export function LobbyScreen() {
     return ROOM_CAPACITIES.includes(saved) ? saved : null;
   });
   const [recent] = useState(recentRooms);
+  const marks = loadPref('recentTestRooms', []);
+  const [sweepOpen, setSweepOpen] = useState(false);
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
@@ -293,7 +316,10 @@ export function LobbyScreen() {
       if (alive.current) setBusy(null);
     }
   };
-  const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty, ...(roomMode === 'coop' ? { capacity } : {}) }));
+  const create = () => run('create', () => net.request('room.create', {
+    mode: roomMode, difficulty, ...(roomMode === 'coop' ? { capacity } : {}),
+    ...(testMode && asTest ? { test: true } : {}),
+  }));
   const quickMatch = () => run('quickMatch', () => net.request('lobby.quickMatch', matchCapacity ? { capacity: matchCapacity } : {}).catch((err) => {
     if (err?.code === ERR.ROOM_NOT_FOUND) { toast(t('暂无可加入的房间，请稍后重试或创建同盟。'), 'warn'); return; }
     throw err;
@@ -305,14 +331,14 @@ export function LobbyScreen() {
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field
     const k = codeArg(c, code);
     if (!k) { toast(t('同盟密钥为 {ROOM_CODE_LEN} 位字母或数字', { ROOM_CODE_LEN }), 'warn'); return; }
-    run('join', () => net.request('room.join', { code: k }));
+    run('join', () => joinKnown('room.join', k));
   };
   // a spectator seat: no player seat taken, nothing to do but watch (also a match already running)
   const spectate = (c = code) => {
     // same guard as join: `onClick=${spectate}` passes the click event, not a code
     const k = codeArg(c, code);
     if (!k) { toast(t('同盟密钥为 {ROOM_CODE_LEN} 位字母或数字', { ROOM_CODE_LEN }), 'warn'); return; }
-    run('spectate', () => net.request('room.spectate', { code: k }).catch((err) => {
+    run('spectate', () => joinKnown('room.spectate', k).catch((err) => {
       // Clearer than the bare ERR_TEXT: the usual cause is a code that is not the host's (a remembered one from an
       // earlier room, or another machine's) — the server can only answer "no such room".
       if (err?.code === ERR.ROOM_NOT_FOUND) {
@@ -338,8 +364,13 @@ export function LobbyScreen() {
         <${PingPill} ms=${conn.ping} online=${online} />
         <${LobbyOnlinePill} count=${discoveryState.online} connected=${online} />
         <${AssetCacheButton} />
-        <${ResumeMatchButton} />
-        <${PwaInstallButton} class="lobby-pwa" square=${true} />
+        <span class="topbar__sep" aria-hidden="true"></span>
+        <div class="topbar__tools">
+          <${NoticesButton} />
+          <${SettingsButton} class="lobby-settings" variant="secondary" square=${true} />
+          <${GuideButton} class="lobby-guide" variant="secondary" square=${true} />
+          <${PwaInstallButton} class="lobby-pwa" square=${true} />
+        </div>
       </div>
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
@@ -347,10 +378,9 @@ export function LobbyScreen() {
       </div>
       <div class="topbar__right">
         <${AnnouncementButton} variant="secondary" />
-        <div class="topbar__tools">
-          <${SettingsButton} class="lobby-settings" variant="secondary" square=${true} />
-          <${GuideButton} class="lobby-guide" variant="secondary" square=${true} />
-        </div>
+        <${ResumeMatchButton} />
+        <${Button} variant="secondary" size="sm" icon="book" class="lobby-sweep" onClick=${() => setSweepOpen(true)}
+          title=${t('S.W.E.E.P.报告：盟约、策略与敌方资料')}>S.W.E.E.P.<//>
         <${LoadoutButton} from="lobby" size="sm" class="lobby-loadout" label=${t('干员调配')} />
         <button type="button" class="me-chip me-chip--btn stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>
           <${AvatarFrame} size="sm" name=${me.name} seat=${0} self=${true} />
@@ -387,7 +417,7 @@ export function LobbyScreen() {
           <div class="join-foot">
             ${recent.length ? html`<span class="t-lo">${t('最近的同盟')}</span>
               ${recent.map((c) => html`<button key=${c} type="button" class="code-chip num" title=${t('填入密钥（不会直接加入）')}
-                onClick=${() => setCode(c)}>${c}</button>`)}`
+                onClick=${() => setCode(c)}>${c}${Array.isArray(marks) && marks.includes(c) ? html` <${TestMark} />` : null}</button>`)}`
               : html`<span class="t-dim">${t('向同伴索取 {ROOM_CODE_LEN} 位同盟密钥，或直接打开邀请链接', { ROOM_CODE_LEN })}</span>`}
           </div>
         <//>
@@ -407,6 +437,11 @@ export function LobbyScreen() {
           </div>
         </div>` : null}
         <div class="create-box">
+          ${testMode ? html`<label class="create-box__test" data-testid="create-test">
+            <input type="checkbox" checked=${asTest} onChange=${(e) => setAsTest(e.target.checked)} />
+            <span>${t('测试房间')}</span>
+            <em class="t-dim">${t('不计入战绩。房间会标明「测试」，只有房主能使用测试指令。')}</em>
+          </label>` : null}
           <${Tooltip} block=${true} text=${online ? null : t('正在连接服务器…')}>
             <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
               ${roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
@@ -423,5 +458,6 @@ export function LobbyScreen() {
     ${discoveryState.open ? html`<${LobbyRoomList} state=${discoveryState} connected=${online}
       onClose=${() => discovery.close()} onRefresh=${() => discovery.refresh()} onPage=${(page) => discovery.page(page)}
       onJoin=${directoryJoin} onSpectate=${directorySpectate} busy=${!!busy} />` : null}
+    ${sweepOpen ? html`<${SweepReport} onClose=${() => setSweepOpen(false)} />` : null}
   </div>`;
 }
