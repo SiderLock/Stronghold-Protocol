@@ -76,7 +76,7 @@ import { PACKS_URL, PACK_INDEX_FILE } from '../../shared/packs.js';
 import { PLUGINS_URL, PLUGIN_INDEX_VERSION, buildPluginIndex, extOf, isPackPath, isPluginId } from '../../shared/plugins/manifest.js';
 import { csUrlPart } from '../../shared/plugins/identity.js';
 import { FILE_URL_DIGITS, PLUGIN_AUDIO_EXTS, PLUGIN_FILES_URL, VISUAL_DOC_FILE, VISUAL_SETS_URL, VS_URL_DIGITS } from '../../shared/plugins/visual.js';
-import { SIM_WORKER_CSP } from './csp.js';
+import { SIM_WORKER_CSP, importMapHash, buildSiteCsp } from './csp.js';
 import { UI_FRAME_CSP } from '../../shared/plugins/ui.js';
 
 /** Browser stand-in of server/data.js, served at /data.js (see the header). Served byte for byte: its first line names the entry, server/index.js. */
@@ -356,6 +356,11 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       try { rendered = await runtime.renderIndex(absPath); }
       catch (error) { log.warn?.('[http] runtime cache unavailable, serving revalidated HTML', error.message); }
       if (rendered) {
+        // The served import map is rewritten (?rv= pins). Its CSP hash must match those bytes, or the
+        // browser blocks the inline map and every module fails to load.
+        const text = rendered.body.toString('utf8');
+        const m = /<script\s+type=["']importmap["']\s*>([\s\S]*?)<\/script>/.exec(text);
+        if (m) res.setHeader('Content-Security-Policy', buildSiteCsp([importMapHash(m[1])]));
         // Only a content ETag validates generated HTML: index.html's mtime alone cannot detect a data-only update.
         await serveBuffer(req, res, rendered.body, { type: MIME['.html'], tag: rendered.tag, cache: gzipCache });
         return;
