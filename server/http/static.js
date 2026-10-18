@@ -261,7 +261,14 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     if (views && (decoded === '/data/assets.json' || decoded === '/data/local-assets.json' || decoded === '/data/local-fx.json')) {
       const view = await views.get(decoded.slice('/data/'.length));
       if (view) {
-        await serveBuffer(req, res, { body: view.body, hash: view.hash, type: MIME['.json'], cacheControl: 'no-cache', key: `view:${decoded}`, cache: gzipCache });
+        // ?rv=<sha256 of these exact bytes> is the runtime pin (D022): immutable only when it matches,
+        // and the frozen pin keeps its bytes after a rescan.
+        const version = await runtime.version(decoded, query);
+        if (version === false) { stale(req, res); return; }
+        // A pinned manifest keeps its frozen bytes after a rescan (runtime body()).
+        const body = version ? (version.frozenBody || view.body) : view.body;
+        await serveBuffer(req, res, { body, hash: version ? `rv-${version.hash}` : view.hash, type: MIME['.json'],
+          cacheControl: version ? immutable : 'no-cache', key: `view:${decoded}`, cache: gzipCache });
         return;
       }
     }
