@@ -28,7 +28,7 @@ function fixture({ storage = {}, secure = true, persistedCatalog = true, fastUpd
       metadata.set(origin + assetCacheCatalogKey(data.catalog.version), structuredClone(data.catalog));
     }
     if (data.type === 'ASSET_CACHE_CLEAR') ready = 0;
-    ports[0].postMessage({ ok: true, playing, protocol: ASSET_CACHE_SW_PROTOCOL });
+    ports[0].postMessage({ ok: true, playing, protocol: ASSET_CACHE_SW_PROTOCOL, imported: true });
   } };
   const registration = { active: sw };
   const environment = {
@@ -665,5 +665,45 @@ test('persistence inspection failure does not hide quota estimates or erase gran
     assert.equal(f.manager.getState().storage.quota, 1000);
     await f.manager.initialize();
     assert.equal(f.manager.getState().storage.persisted, true);
+  } finally { f.manager.destroy(); }
+});
+
+test('a legacy controller is replaced by the waiting merged worker before the mutation guard', async () => {
+  const f = fixture();
+  try {
+    await f.manager.initialize();
+    const old = f.environment.navigator.serviceWorker.controller;
+    old.postMessage = () => {}; // the classic /sw.js answers no messages: the old code waited 10 s and failed
+    let activated = false;
+    const waiting = {
+      state: 'installed', _state: null, _controller: null,
+      addEventListener(type, fn) { if (type === 'statechange') this._state = fn; },
+      removeEventListener(type) { if (type === 'statechange') this._state = null; },
+      postMessage(data, ports) {
+        if (data.type === 'ASSET_CACHE_CAPABILITIES') ports[0].postMessage({ ok: true, protocol: ASSET_CACHE_SW_PROTOCOL, imported: true });
+        else if (data.type === 'ASSET_CACHE_CAN_MUTATE') ports[0].postMessage({ ok: true, playing: false });
+        else if (data.type === 'ASSET_CACHE_ACTIVATE') {
+          activated = true;
+          ports[0].postMessage({ ok: true });
+          setTimeout(() => {
+            this.state = 'activated';
+            f.environment.navigator.serviceWorker.controller = waiting;
+            f.environment.navigator.serviceWorker.removeEventListener('controllerchange');
+            f._controllerListener?.();
+            this._state?.();
+          }, 0);
+        } else ports[0].postMessage({ ok: true });
+      },
+    };
+    f.registration.waiting = waiting;
+    const originalAdd = f.environment.navigator.serviceWorker.addEventListener;
+    f.environment.navigator.serviceWorker.addEventListener = (name, fn) => {
+      if (name === 'controllerchange') f._controllerListener = fn;
+      originalAdd(name, fn);
+    };
+    const result = await f.manager.clear();
+    assert.equal(activated, true, 'the waiting merged worker is activated before the guard');
+    assert.equal(result.phase, 'idle');
+    assert.equal(f.manager.getState().error, null);
   } finally { f.manager.destroy(); }
 });

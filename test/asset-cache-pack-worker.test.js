@@ -33,17 +33,22 @@ async function fixture(t) {
   return { root, files };
 }
 
-function worker() {
+function worker({ keysThrow = false } = {}) {
   const stores = new Map(); let network = 0, id = 0;
   const messages = [];
   const storage = { async open(name) {
     if (!stores.has(name)) stores.set(name, new Map());
     const entries = stores.get(name);
+    const absolute = (value) => (typeof value === 'string' ? new URL(value, origin).href : value.url);
     return {
-      async keys() { return [...entries.values()].map(({ request }) => request.clone()); },
-      async match(value) { return entries.get(typeof value === 'string' ? value : value.url)?.response.clone(); },
-      async put(request, response) { entries.set(request.url, { request: request.clone(), response: response.clone() }); },
-      async delete(value) { return entries.delete(typeof value === 'string' ? value : value.url); },
+      async keys() {
+        if (keysThrow) throw new DOMException("Failed to execute 'keys' on 'Cache': Operation too large.", 'AbortError');
+        return [...entries.values()].map(({ request }) => request.clone());
+      },
+      async match(value) { return entries.get(absolute(value))?.response.clone(); },
+      async put(value, response) { const request = typeof value === 'string' ? new Request(absolute(value)) : value.clone();
+        entries.set(request.url, { request, response: response.clone() }); },
+      async delete(value) { return entries.delete(absolute(value)); },
     };
   } };
   const self = { location: { origin }, postMessage(message) { messages.push(message); } };
@@ -61,6 +66,11 @@ function worker() {
   };
   const blob = async (file) => new Blob([await fs.readFile(file)]);
   return { run, network: () => network,
+    seedImported: async (paths) => {
+      const cache = await storage.open(helpers.IMPORTED_ASSET_CACHE);
+      await cache.put(helpers.IMPORTED_INDEX_URL, Response.json(paths));
+    },
+    scan: async (catalog, deep = false) => run({ action: 'scan', catalog, deep }),
     readCatalog: async (file) => (await run({ action: 'read-catalog', format: 'zip', file: await blob(file) })).done.catalog,
     importZIP: async (file, catalog) => run({ action: 'import', catalog, file: await blob(file) }),
     cachedBody: async (file) => (await (await storage.open(helpers.ASSET_CACHE_NAME)).match(origin + helpers.assetContentKey(file.sha256))).text(),
@@ -131,4 +141,52 @@ test('pre-hash schema-1 ZIP updates to exact hash aliases through a directory-on
   assert.equal(imported.progress.readyFiles, 2); assert.equal(imported.progress.missingFiles, 0);
   assert.equal(imported.progress.importStats.imported, 0); assert.equal(w.network(), 0);
   for (const entry of directory.files) assert.equal(hash(await w.cachedBody(entry)), entry.sha256);
+});
+
+test('a title-imported file counts as ready through the shared index without being downloaded again', async (t) => {
+  const f = await fixture(t);
+  const catalog = await f.files({ '/assets/title.png': 'imported by the title screen' });
+  const w = worker();
+  const entry = catalog.files[0];
+  const hashed = `/assets/~${entry.sha256.slice(0, 16)}/title.png`;
+  entry.aliases = [hashed];
+  catalog.version = hash(JSON.stringify({ schema: 1, files: catalog.files }));
+  await w.seedImported([hashed]);
+  const result = await w.scan(catalog);
+  assert.equal(result.progress.readyFiles, 1);
+  assert.equal(result.progress.missingFiles, 0);
+  assert.equal(w.network(), 0);
+  const again = await w.run({ action: 'download', catalog });
+  assert.equal(again.progress.readyFiles, 1);
+  assert.equal(w.network(), 0, 'the imported copy is reused instead of downloaded');
+});
+
+test('a full pre-cache never calls Cache.keys(), whose query limit a 0.3.1 pack exceeds', async (t) => {
+  const f = await fixture(t);
+  const catalog = await f.files({ '/assets/a.png': 'a', '/assets/b.png': 'b' });
+  const pack = await packAssetCache({ root: f.root, catalog });
+  const w = worker({ keysThrow: true });
+  const directory = await w.readCatalog(pack.zipPath);
+  // Import would have thrown an AbortError from the first cache.keys() before this fix.
+  const imported = await w.importZIP(pack.zipPath, directory);
+  assert.equal(imported.progress.readyFiles, 2);
+  assert.equal(imported.progress.importStats.imported, 2);
+  const scanned = await w.scan(directory);
+  assert.equal(scanned.progress.readyFiles, 2);
+  assert.equal(scanned.progress.missingFiles, 0);
+});
+
+test('a duplicate content entry stays missing until its own URL is ready, not just its SHA', async (t) => {
+  const f = await fixture(t);
+  const catalog = await f.files({ '/assets/a.png': 'same bytes', '/assets/b.png': 'same bytes' });
+  const [a, b] = catalog.files;
+  assert.equal(a.sha256, b.sha256);
+  a.aliases = [`/assets/~${a.sha256.slice(0, 16)}/a.png`];
+  b.aliases = [`/assets/~${b.sha256.slice(0, 16)}/b.png`];
+  catalog.version = hash(JSON.stringify({ schema: 1, files: catalog.files }));
+  const w = worker();
+  await w.seedImported([a.aliases[0]]);
+  const scanned = await w.scan(catalog);
+  assert.equal(scanned.progress.readyFiles, 1);
+  assert.equal(scanned.progress.missingFiles, 1, 'b.png shares bytes but its URL is not imported');
 });

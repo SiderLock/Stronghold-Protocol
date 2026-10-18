@@ -126,7 +126,9 @@ export async function startServer(opts = {}) {
   // the content hashes of the art (built in the background once listening) and the manifests served with them
   const indexOptions = assetIndexOptionsFrom(opts, publicDir);
   const assetIndex = indexOptions ? createAssetIndex({ publicDir, log, ...indexOptions }) : null;
-  const views = assetIndex ? createManifestViews({ dataDir, index: assetIndex, log }) : null;
+  // Manifest views always exist (upstream 0.3.1): createManifestViews accepts a null index and still merges
+  // local operator art. Fork settings/announcements stay process-wide and feed applySettings / notice monitor.
+  const views = createManifestViews({ dataDir, index: assetIndex, log });
   const serverSettings = createServerSettings({ dir: opts.serverSettingsDir, root: ROOT, log,
     onChange: (next) => applySettings(next) });
   const announcements = createAnnouncementStore({ dir: opts.announcementsDir, root: ROOT, log });
@@ -248,6 +250,9 @@ export async function startServer(opts = {}) {
     const actual = server.address();
     const scriptHost = actual && typeof actual === 'object' ? actual.address : '';
     packs.setScriptHost(scriptHost);
+    const testGate = lobby.setTestHost(scriptHost);
+    if (testGate.warn) log.warn(`[test-mode] ${testGate.warn}`);
+    else if (testGate.enabled) log.info('[test-mode] test rooms enabled');
     if (!trustedHostAllowed(scriptHost, scriptMode)) {
       lobby.trustedRuntime = null;
       await trustedRuntime?.close();

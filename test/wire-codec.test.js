@@ -18,14 +18,16 @@ const nameOf = (f) => typeof f === 'string' ? f : f[0];
 // Fields introduced after v1 was published use its existing extension slot. Keep this allowlist
 // explicit: adding a business field must not silently weaken coverage or renumber the fixed catalog.
 const V1_EXTENSIONS = Object.freeze({
-  'room.create': ['assetCache'], 'room.join': ['assetCache'],
-  'lobby.quickMatch': ['assetCache'], 'room.spectate': ['assetCache'],
+  'room.create': ['assetCache', 'test'], 'room.join': ['assetCache', 'testAck'],
+  'lobby.quickMatch': ['assetCache'], 'room.spectate': ['assetCache', 'testAck'],
   'b.result': ['cs'], // 0.3.0 content identity (DESIGN §8.4)
 });
 // Published v1 has no new numeric IDs: these post-v1 business types deliberately use its JSON fallback.
 const V1_JSON_FALLBACK = Object.freeze({
   c2s: ['room.chat', 'room.setMatchmaking', 'lobby.join', 'lobby.spectate', 'b.rehearsalResult',
-    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins'],
+    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins',
+    // 0.3.1 business types (skins / unequip rule / plugin offers / test console) — post-v1, JSON fallback
+    'room.skins', 'g.unequip', 'g.offer', 'g.offerRefresh', 'g.test'],
   s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel'],
 });
 

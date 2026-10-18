@@ -17,14 +17,14 @@ const PERSONAL_OFFER_SIZE = 3;
 
 export class MatchSpDraft {
   enterSpDraft() {
-    if (!this.alivePlayers().length) { this.enterPrep(); return; }
+    if (!this.alivePlayers().length) { this.beforePrepOffers(); return; }
     const groups = this.makeDraftGroups({ shuffle: false });
     const active = groups.filter((g) => g.order.length).map((g) => ({ id: g.id, playerIds: g.order.slice() }));
     const pages = generateGroupDrafts(this.gd, this.rngDraft, this.round, active, {
       stageId: this.stageId, bondAvailable: (bondId, group) => this.bondLive(bondId, group.playerIds[0]),
       itemAvailable: (id, group) => this.itemPoolFor(group.playerIds[0]).canGain(id),
     });
-    if (!pages || !pages.length) { this.enterPrep(); return; }
+    if (!pages || !pages.length) { this.beforePrepOffers(); return; }
     for (const g of groups) {
       const page = pages.find((p) => p.id === g.id);
       Object.assign(g, page || { cards: [] }, { taken: {} });
@@ -59,6 +59,7 @@ export class MatchSpDraft {
     if (this.phase !== PHASE.SP_DRAFT || !s || !group) return;
     const g = group;
     this.clearDraftGroupTimer(g);
+    if (this.test) this.setDeadline(0);
     // loop-cap: idx walks g.order once
     while (g.idx < g.order.length) {
       const ps = this.players.get(g.order[g.idx]);
@@ -86,14 +87,17 @@ export class MatchSpDraft {
       const ms = this.scaled(secs * 1000);
       g.turnSeconds = ms / 1000;
       g.turnDeadline = this.sched.gameNow() + ms;
-      g.timer = this.later(ms, () => {
+      const expire = () => {
         if (this.phase !== PHASE.SP_DRAFT || this.sp !== s || token !== g.token) return;
         const ps = this.players.get(g.order[g.idx]);
         if (!ps) return;
         const avail = g.cards.filter((c) => this.spCardAvailable(c, g)).map((c) => c.idx);
         if (!avail.length) { this.startSpTurn(g); return; }
         this._applyCard(ps, avail[Math.floor(this.rngDraft() * avail.length)]);
-      });
+      };
+      // Single-group test hold via setDeadline; parallel groups each keep a `_testDraftHolds` slot
+      // while timers are off so every group's turn can pause (armDraftTurnTimer).
+      this.armDraftTurnTimer(g, ms, expire, { singleGroupHold: this.test && s.groups.length === 1 });
     }
     this.syncDraftDeadline(s);
     const cur = this.players.get(g.order[g.idx]);
@@ -154,7 +158,7 @@ export class MatchSpDraft {
   finishSpDraft() {
     if (this.phase !== PHASE.SP_DRAFT) return;
     for (const g of this.sp.groups) this.clearDraftGroupTimer(g);
-    this.enterPrep();
+    this.beforePrepOffers();
   }
 
   /**
@@ -226,12 +230,14 @@ export class MatchSpDraft {
   /** Random item id: a choices.json server pool ({ pool }), a tier, or ≤ maxTier shop-eligible items.
    * `also` (pool_equip_kathe: 突变细胞) joins the draw even though it is shopExcluded. The shop item slot does not
    * read it. `pick` still drops ids that `canGain` refuses, so an empty shop item stays out and an uncapped `also`
-   * id can still be drawn. `player` selects that seat's group stock for private DIY-aware availability. */
-  rollItemId({ pool = null, tier = null, maxTier = 6, shopLevel = 6, player = null } = {}) {
+   * id can still be drawn. `player` selects that seat's group stock for private DIY-aware availability.
+   * `exclude` removes ids before sampling (Cathy's match-long allowance / distinct choices). */
+  rollItemId({ pool = null, tier = null, maxTier = 6, shopLevel = 6, player = null, exclude = [] } = {}) {
     const pools = this.gd.choices.pools && typeof this.gd.choices.pools === 'object' ? this.gd.choices.pools : {};
     const p = typeof pool === 'string' && Object.hasOwn(pools, pool) ? pools[pool] : null;
     const rng = this.rngMeta;
     const stock = this.itemPoolFor(player);
+    const pick = (ids, weights = null) => stock.pick(rng, ids.filter((id) => !exclude.includes(id)), weights);
     const tierList = (lo, hi) => { const out = []; for (let t = lo; t <= hi; t++) for (const id of this.gd.shopItemsByTier[t] || []) out.push(id); return out; };
     const also = p && Array.isArray(p.also) ? p.also.filter((id) => typeof id === 'string' && this.gd.item(id)) : [];
     const withAlso = (list) => {
@@ -243,19 +249,19 @@ export class MatchSpDraft {
       if (Array.isArray(p.weighted) && p.weighted.length) {
         const pairs = p.weighted.filter((x) => Array.isArray(x) && this.gd.item(x[0]) && stock.canGain(x[0]));
         for (const id of also) if (!pairs.some((x) => x[0] === id)) pairs.push([id, 1]);
-        return stock.pick(rng, pairs.map(x => x[0]), new Map(pairs));
+        return pick(pairs.map(x => x[0]), new Map(pairs));
       }
       if (Array.isArray(p.items) && p.items.length) {
         const items = p.items.filter((id) => this.gd.item(id));
-        return stock.pick(rng, withAlso(items));
+        return pick(withAlso(items));
       }
       let list;
       if (Array.isArray(p.tiers) && p.tiers.length) list = p.tiers.flatMap((t) => this.gd.shopItemsByTier[t] || []);
       else list = tierList(1, p.maxTier === 'shopLevel' ? Math.max(1, Math.min(6, shopLevel)) : 6);
-      return stock.pick(rng, withAlso(list));
+      return pick(withAlso(list));
     }
     const list = Number.isInteger(tier) ? tierList(tier, tier) : tierList(1, Math.max(1, Math.min(6, maxTier)));
-    return stock.pick(rng, list);
+    return pick(list);
   }
 
   /**
@@ -266,14 +272,14 @@ export class MatchSpDraft {
    * bonds (the player's data view: a slotted slot's operator) — 0.2.0 WE2.
    * @returns {{ kind: 'item'|'chess', id: string, golden?: boolean } | null}
    */
-  rollPool(poolId, { shopLevel = 6, extra = null, chessOf = null, player = null } = {}) {
+  rollPool(poolId, { shopLevel = 6, extra = null, chessOf = null, player = null, exclude = [] } = {}) {
     const pool = this.poolFor(player);
     const pools = this.gd.choices.pools && typeof this.gd.choices.pools === 'object' ? this.gd.choices.pools : {};
     const p = typeof poolId === 'string' && Object.hasOwn(pools, poolId) ? pools[poolId] : null;
     if (!p || typeof p !== 'object') return null;
     const lvl = Math.max(1, Math.min(6, Number.isInteger(shopLevel) ? shopLevel : 6));
     if (p.kind === 'equip') {
-      const id = this.rollItemId({ pool: poolId, shopLevel: lvl, player });
+      const id = this.rollItemId({ pool: poolId, shopLevel: lvl, player, exclude });
       return id ? { kind: 'item', id } : null;
     }
     if (p.kind !== 'chess') return null;

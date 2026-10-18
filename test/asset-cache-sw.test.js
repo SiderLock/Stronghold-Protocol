@@ -66,6 +66,7 @@ test('SW advertises its coordination protocol without activating automatically',
   const reply = await f.message('page', { type: 'ASSET_CACHE_CAPABILITIES' });
   assert.equal(reply.ok, true);
   assert.equal(reply.protocol, helpers.ASSET_CACHE_SW_PROTOCOL);
+  assert.equal(reply.imported, true);
   assert.equal(f.activations(), 0, 'capability probing must not replace the active worker');
 });
 
@@ -177,4 +178,34 @@ test('SW exact hash aliases reuse unchanged full-SHA contents after an explicit 
   assert.equal(f.network(), 2, 'another page retains its old catalog and does not borrow new aliases');
   assert.equal(await (await f.fetchFile('old')).text(), 'atlas bytes');
   assert.equal(f.network(), 2, 'the old plain-path pin continues to use its existing verified content');
+});
+
+test('the merged SW serves the title screen imported cache when no pinned catalog matches', async () => {
+  const f = await fixture(); f.addClient('page');
+  const importedUrl = `/assets/~0123456789abcdef/title.png`;
+  const imported = await f.storage.open(helpers.IMPORTED_ASSET_CACHE);
+  await imported.put(origin + importedUrl, new Response('title-bytes'));
+  assert.equal(await (await f.fetchFile('page', importedUrl)).text(), 'title-bytes');
+  assert.equal(f.network(), 0, 'the imported copy is served without the network');
+  // A Range request is left to the network: partial responses never come from that cache.
+  const ranged = await f.fetchFile('page', importedUrl, { Range: 'bytes=0-1' });
+  assert.equal(await ranged.text(), 'atlas bytes');
+  assert.equal(f.network(), 1, 'the fixture network body');
+});
+
+test('prune uses the SHA index and never enumerates a full pre-cache', async () => {
+  const f = await fixture(); f.addClient('page');
+  await f.message('page', { type: 'ASSET_CACHE_PIN', catalog });
+  const cache = await f.storage.open(helpers.ASSET_CACHE_NAME);
+  await cache.put(origin + helpers.assetContentKey(sha256), new Response(body, { headers: helpers.validatedCacheHeaders(entry) }));
+  const staleSha = 'c'.repeat(64);
+  await cache.put(origin + helpers.assetContentKey(staleSha), new Response('stale'));
+  await cache.put(origin + helpers.ASSET_CACHE_INDEX_URL, Response.json([sha256, staleSha]));
+  // A legacy/small cache would also answer keys(); break it to prove prune no longer calls it.
+  cache.keys = async () => { throw new DOMException('Operation too large.', 'AbortError'); };
+  const reply = await f.message('page', { type: 'ASSET_CACHE_PRUNE' });
+  assert.equal(reply.ok, true, 'a complete import must not become an error because keys() is too large');
+  assert.equal(await cache.match(origin + helpers.assetContentKey(sha256)) !== undefined, true);
+  assert.equal(await cache.match(origin + helpers.assetContentKey(staleSha)), undefined);
+  assert.deepEqual(await (await cache.match(origin + helpers.ASSET_CACHE_INDEX_URL)).json(), [sha256]);
 });

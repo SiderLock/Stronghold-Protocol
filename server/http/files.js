@@ -264,9 +264,10 @@ function ifRangeMatches(req, etag, lastModified) {
 
 function cacheControlFor(ext, mountName, segments, query) {
   if (ext === '.html' || ext === '.htm') return 'no-cache';
-  // `?v=<hash>` is a content-addressed cache-buster (assets/fonts manifests and the content set's
-  // plain /data/…?v= URLs): a new hash is a new URL, so the body can be immutable for a year.
-  if (/(^|&)v=/.test(query)
+  // `?v=<content hash>` is a content-addressed cache-buster (assets/fonts manifests and the content set's
+  // plain /data/…?v= URLs): a new hash is a new URL, so the body can be immutable for a year. Only a
+  // hex digest counts — `?v=unverified` is not a pin (runtime-http.test.js).
+  if (/(^|&)v=[a-f0-9]{16,64}(&|$)/.test(query)
     && ((mountName === 'public' && ['assets', 'fonts'].includes(segments[0])) || mountName === 'data')) {
     return IMMUTABLE_CACHE;
   }

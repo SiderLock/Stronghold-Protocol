@@ -242,7 +242,7 @@ export class AnnouncementStore {
       for (const key of this.bodies.keys()) if (key.startsWith(`${id}:`)) this.bodies.delete(key);
       try { fs.unlinkSync(path.join(this.dir, `${id}.md`)); }
       catch (e) {
-        if (e.code !== 'ENOENT') this.warn(`公告 ${id} 已从索引删除，但正文文件 ${id}.md 未能清理`, e);
+        if (e.code !== 'ENOENT') this.warn(`公告 ${id} 已从索引删除，但正文文件 ${id}.md 未能清理`, e); // i18n-ignore: operator log, not player-facing UI
       }
       return metadataOf(item);
     });

@@ -58,6 +58,8 @@ export function cacheErrorText(code) {
     case 'ASSET_CACHE_BUSY': return t('另一个页面正在管理素材缓存，请稍后重试。');
     case 'ASSET_CACHE_PLAYING': return t('对局期间暂停批量缓存，返回大厅后可继续。');
     case 'ASSET_CACHE_DOWNLOAD_FAILED': return t('下载中断，已完成文件保留，请稍后继续。');
+    case 'ASSET_CACHE_WORKER_UNAVAILABLE': return t('缓存组件未能启动，请关闭本站全部标签页后重新打开再试。');
+    case 'ASSET_CACHE_STORAGE_ERROR': return t('浏览器存储或缓存组件异常，请关闭本站全部游戏标签页后重新打开再试；若仍失败请改用导入素材包。');
     default: return t('缓存操作失败，已完成文件保留，请重试。');
   }
 }
