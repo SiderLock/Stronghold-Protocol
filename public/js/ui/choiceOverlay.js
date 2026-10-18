@@ -246,7 +246,7 @@ export function ChoiceView({ pub, sp, myId, solo, personal = false, busyIdx = nu
           <p class="spov__sub">${sp.done && grouped ? (readonly ? t('该组已完成选择') : t('本组已完成，等待其他组')) : timed ? (personal ? t('休整期结束时未选择将自动选定') : t('倒计时结束后仍未选定将自动分配')) : t('选择一项（无时间限制）')}${mine == null && myTurn ? t(' · 点击卡牌选中，再次点击确认') : ''}</p>
         </div>
         <div class="spov__turn">
-          <${MicroLabel} tone="mint">${personal ? t('教鞭选择') : t('CONTINGENCY // 机变阶段')}</${MicroLabel}>
+          <${MicroLabel} tone="mint">${personal ? t('教鞭选择') : t('机变阶段')}</${MicroLabel}>
           ${personal ? html`<span class="spov__turntxt is-mine">${t('从候选中选择一项战术特训')}</span>`
             : sp.done && grouped ? html`<span class="spov__turntxt is-done"><${Icon} name="check" />${readonly ? t('该组已完成选择') : t('本组已完成，等待其他组')}</span>`
             : mine != null ? html`<span class="spov__turntxt is-done"><${Icon} name="check" />${t('已完成选择')}</span>`

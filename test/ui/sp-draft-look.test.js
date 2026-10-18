@@ -1,7 +1,8 @@
 // The shared 机变 draft in the official 悬赏决策 look (the event's video 9:59 – 10:16; ui/choiceOverlay.js,
 // ui/teamPanel.js, css/screens/game-panels.css):
-//   - the pick order is no list in the overlay: the team panel's portraits carry it — ✓ who has picked, ••• who is
-//     deciding (spMarks); solo and the personal 教鞭 pick have none
+//   - the team panel's portraits carry ✓ who has picked, ••• who is deciding (spMarks); solo and the personal 教鞭
+//     pick have none. This fork also keeps the overlay's pick-order row (D012: fixed groups pick in parallel and each
+//     group's order must stay readable without opening the team panel).
 //   - the header names the player deciding over 正在决策… (or 当前轮到你决策 / 已完成选择) beside the countdown
 //   - the armed card's strip is ☑ 确认选择 · 再次点击
 //   - the match's top bar stays on screen during the draft (round, funds and timer stay readable)
@@ -58,11 +59,11 @@ test('spMarks: ✓ for who has picked, ••• for who is deciding, nothing fo
   assert.equal(spMarks(null, { solo: false }).size, 0);
 });
 
-test('ChoiceView: no order list in the overlay; the player deciding is named over 正在决策…', () => {
+test('ChoiceView: the pick order stays in the overlay (D012); the player deciding is named over 正在决策…', () => {
   const v = ChoiceView({ pub: { players, deadline: Date.now() + 9000 }, sp: sp({ turnPid: 'p3', pickOf: new Map([['p1', 0], ['me', 1]]) }),
     myId: 'p3x', solo: false });
   const nodes = [...walk(v)];
-  assert.ok(!nodes.some((n) => hasClass(n, 'spov__order')), 'the order lives on the team panel');
+  assert.ok(nodes.some((n) => hasClass(n, 'spov__order')), 'the pick-order row (D012 group drafts); team panel marks stay too');
   const who = nodes.find((n) => hasClass(n, 'spov__tw'));
   assert.ok(who, 'the deciding player beside the countdown');
   assert.equal(textOf(who), 'Kal\'tsit正在决策…');
