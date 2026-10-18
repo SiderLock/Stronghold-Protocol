@@ -5,9 +5,9 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-18 / 2026-10-18，Asia/Shanghai |
-| 状态 | 已完成：本地修复、定向 Node / 浏览器回归与文档；未推送、未部署、未重启服务器 |
+| 状态 | 已完成并部署：定向 Node / 浏览器回归；2026-10-18 18:07 更新线上代码并重启服务，线上冒烟通过；未推送 Git |
 | 类型 | 调查 / 修复 |
-| 分支与开始 HEAD | `feat/IncreasePlayerCapacity`，`7206c0dedaa5c95542a109c7a710646ef4d5b2e8` |
+| 分支与开始 HEAD | `feat/IncreasePlayerCapacity`，`7206c0dedaa5c95542a109c7a710646ef4d5b2e8`；部署提交 `a1e87ae91eeed88ca1982f4409897203a63c45da` |
 | 上游基线 | v0.3.1，沿用 [DEV-20261018-01](2026-10-18-01-upstream-v0.3.1.md) 的 `d905c146`；本次不拉取 |
 | 提交归属 | 代码、测试、文档同一功能提交，按本文路径的 Git 历史查询 |
 | 关联 | D016、D025、D038、[D039](../DECISIONS.md#d039)；[v0.3.1 合并](2026-10-18-01-upstream-v0.3.1.md)、[预缓存实现](2026-10-09-05-asset-precache.md)、[目录恢复](2026-10-14-03-asset-catalog-recovery.md) |
@@ -60,6 +60,13 @@
 | `node tools/i18n.mjs check --all --strict` | 四语言包 | 每包 2324/2324，0 缺失、0 错误 |
 | `node --test test/docs-consistency.test.js test/docs-paths.test.js` | 本次文档 | **32/32 通过**，约 56 秒 |
 | ESLint 本次改动文件；`node tools/check-imports.mjs`；`tsc --noEmit --checkJs` | 本次源码、测试、SW | 本次文件 0 错误；imports 仅保留既有 3 条 sim-node 提示；typecheck exit 0。全量 `npm run lint` 在未改动的 `server/match/match/phases.js:66` 有 1 个既有 `no-constant-binary-expression` 错误，本次不触碰 |
+| 部署前状态 | `https://101.201.232.183/`，`/healthz` | `humans=0`、`rooms=0`、`matches=0`；旧 `SOURCE_COMMIT=7206c0de`，备份并停服后覆盖 `a1e87ae9`，启动脚本提交钉扎同步；服务 active |
+| 线上冒烟：worker 与标题导入 | 无头 Chrome、新临时 profile | scope `/` 仅一个 registration，active `asset-cache-sw.js`；`CAPABILITIES {protocol:1, imported:true}`；标题页导入 1 个文件成功 |
+| 线上冒烟：目录与互认 | 同上 | 「在线获取完整目录」约 2 秒成功、版本匹配；导入后预缓存扫描把标题导入的 1 个文件计为已缓存（ready=1），无需重新下载 |
+| 线上冒烟：在线补齐 | 同上 | `downloadMissing()` 进入 `downloading`，ready 1→3，暂停后 `phase=paused`、error=null，页面/控制台无错误 |
+| 线上冒烟：大厅导入 | 同上，带完整 manifest + 1 个素材的小 ZIP | `phase=idle`，`importStats {imported:1, reused:0, invalid:0, unknown:0, absent:18368}`，ready 3→4，收尾 prune 无报错；刷新后目录和缓存保留 |
+| 线上冒烟：旧 `/sw.js` 迁移 | 同上；先手工注册旧经典 worker，刷新后确认 active=`/sw.js`、waiting=`asset-cache-sw.js`，再点「在线获取完整目录」 | 操作前等待 worker 被替换；目录获取成功，结束后 active=`asset-cache-sw.js`、waiting=null，目录匹配，无页面/控制台错误 |
+| 未复跑全量 801.6 MiB | 线上 | 为避免生产流量未重跑整包导入/补齐；修复前的全量导入与 code 20 已复现，修复后以小包、合成目录和实际在线补齐覆盖相同代码路径 |
 
 未运行：`npm run ci` 全量、golden、14 回合真人压测、真实 801.6 MiB 在线补齐复测。线上全量导入在修复前跑过一次；修复后不再向生产服务器重复拉 800 MB 级包，改以小 ZIP / 合成目录覆盖相同代码路径。
 
@@ -67,4 +74,4 @@
 
 - 实现结果：标题页导入与大厅预缓存共享一个 worker；预缓存动作不再先超时；全量目录不再调用 `Cache.keys()`；两套入口按完整 SHA 与目录别名互相识别，标题导入对预缓存已有文件只记复用。官方素材确认是 0.3.1。
 - 未确定或未完成：修复后的真实 801.6 MiB 在线补齐与真实浏览器普通 profile 未重跑，属于发布前验证；服务器 local 美术提取物过期（75/76 组、缺 `mesh/trap_110`，官方特效未提取）需重跑 `tools/setup.mjs --local` / 特效提取，可能改服务器数据，需用户另行同意。
-- 提交 / 远程 / 素材 / 线上：本地提交，**未推送、未部署、未重启服务**；没有修改服务器数据；测试生成的缓存均在临时浏览器配置中。
+- 提交 / 远程 / 素材 / 线上：代码提交 `a1e87ae9` 已用于部署；**未推送 Git**；2026-10-18 18:07 停服备份、覆盖代码、更新 `start.sh` 提交钉扎并重启，服务 active，旧代码备份在服务器 `backups/`。没有修改 `data/`、素材或 nginx 配置；线上冒烟使用独立无头浏览器临时 profile，未接触玩家浏览器数据。
