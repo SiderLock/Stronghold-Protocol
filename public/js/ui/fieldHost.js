@@ -99,8 +99,10 @@ export function hudBands(kind, size, opts) {
     safeTop = Math.max(0, (hud?.top || 0) - oy);
     if (folded) {
       if (hud && hud.bottom - oy > 0) safeBottom = Math.max(0, h - (hud.bottom - oy));
-      corner = cornerBand(h, oy);
     }
+    // Always measure the corner (交流 / ⚙ / 📖 / ⛶ / chat): with the shop open a taller chat corner can still
+    // clear the bench pads (issue5 fold-camera test).
+    corner = cornerBand(h, oy);
   } catch { /* ignore */ }
   const bottom = folded
     ? Math.max(safeBottom + rem * HUD_REM.shopTabTop + HUD_REM.shopTabBorderPx, corner || safeBottom + rem * HUD_REM.cornerTop)
