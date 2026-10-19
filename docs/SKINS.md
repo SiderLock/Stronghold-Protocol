@@ -18,7 +18,9 @@ plugins/<id>/plugin.json
                                  chars[<charId>].skins[<skinKey>] = { name, group, avatar, avatarE2,
                                                                       portrait, portraitE2, illust,
                                                                       spine: { front, back? },
-                                                                      tokens: { <tokenId>: { tokenSkinId?, spine } } }
+                                                                      tokens: { <tokenId>: { tokenSkinId?, spine } },
+                                                                      voice: { <slot>: file | [file…] },
+                                                                      voiceJp?, voiceEn?, voiceKr?, voiceNative? }
         │
         ├── the server checks the overlay (shared/plugins/visual.js, docs/PLUGINS.md §9) and serves it as a document:
         │   /vs/<vs16>/overlay.json — composed on the INSTALLATION's manifest, never on a copy of it
@@ -109,6 +111,35 @@ An outfit may also restyle the summons its operator's skills place (a 律动方�
   model: those views resolve an operator's skin and a token piece has no operator, so it changes when it deploys. A
   summon's **avatar** is not restyled either (`tokenAvatarUrl` takes no skin) — only its model is.
   设置「显示其他玩家的皮肤」 off hides another seat's summons along with its pieces, which falls out of the same switch.
+
+## 皮肤语音 (outfit voices)
+
+An outfit may carry its own lines: `skins[<key>].voice` (the Chinese tree) plus optional `voiceJp`, `voiceEn`,
+`voiceKr`, `voiceNative` — each a map from a slot name to one audio file or a list of 1–16, the same shape and the same
+slot names as the operator's own `audio.voice[<charId>]` (docs/PLUGINS.md §9).
+
+- **Which line plays.** The outfit's line in the language this player picked (设置 → 语音语言, `voiceLangFor`) first, then
+  the operator's dub, then the outfit's Chinese line, then the operator's own. A slot the outfit does not voice falls back
+  to the operator's, never to silence — and an operator with no voice bank of its own still speaks its outfit's line.
+- **A Chinese-only outfit does not outrank a dub the operator has.** With 中文 picked the outfit's line plays; with
+  日本語 picked and a Japanese dub installed, the operator's Japanese line plays even where the outfit ships Chinese for
+  that slot. The setting is about the language a player hears, and the operator's own trees already behave this way — an
+  outfit that wants to be heard in a foreign language ships that tree. That is what the five trees are for.
+- **Fallback inside a language is unchanged.** A picked line whose file will not load plays the same-named line of the
+  outfit's Chinese tree, else the operator's same-named Chinese line, else a drawn operator line — the existing
+  `_playVoice` contract (`public/js/audio.js`), identical to an installation with no outfit at all.
+- **Where it plays.** Battle lines (行动出发 / 行动开始 / 部署 / 作战中N) read the unit's own `UnitInfo.skin` (`_track`
+  keeps it; the three call sites pass it), the 选中 line the appearance the panel resolved, and the settlement line this
+  browser's own choice for the operator who speaks. Nothing else moves: no message, no wire field, no new setting. The
+  试听 dropdown still plays the operator's own trees (an outfit has no picker surface of its own).
+- **The outfit is found through the manifest, by skin id** (`skinRecordOf`: under the voice's own operator first, else one
+  scan of `chars[].skins`), because a stand-in's voice body and the outfit's operator can differ. It lives in `audio.js`
+  rather than reusing `assets.js`'s map because `main.js` loads this module and
+  `test/ui/plugins-client.test.js` pins that the asset store stays off the boot path.
+- **The schema and this runtime ship in one commit.** `shared/plugins/visual.js` (the five trees on a skin record),
+  `schemas/overlay.schema.json` (`$ref` to the operator tree's own definition) and the fixture change together: a field
+  the schema refuses would be dropped by the runtime with a warning, and a field the runtime does not know would be
+  silently ignored — the two halves of the upstream 语音槽 pull request that never merged.
 
 ## The switch model: the owner installs, each player switches on
 
@@ -211,6 +242,7 @@ exists) gets no section rather than an empty grid.
 | `server/match/player/views.js` | `pieceView` | `skin` on the prep board / hand / temp views |
 | `server/sim/units.js`, `server/sim/battle/players.js`, `server/sim/snapshot.js` | `Unit`, `_createAllyFromInput` / `_makeAlly`, `unitInfo` | carried to the client; `skin: u.skin ?? undefined`, so a piece without one adds no key to the wire. 召唤物换装 adds two reads of it in `players.js` only: `_makeAlly` inherits `extra.ownerUnit?.skin`, and the late link fills a token whose owner came later (`if (!t.skin) t.skin = owner.skin`) |
 | `public/js/assets.js` | `portraitUrl` / `illustUrl` (new) / `spineEntry` / `hasBackSpine` / `unitPictureUrl` / `skinsOf` / `skinHasModel`, and for 召唤物换装 `tokenSkinSpine` + the per-manifest `skinId → charId` map | every helper takes `opts.skin` (the skinId) and falls back to the operator's own art; `spineEntry` asks `tokenSkinSpine` first for a token id, so a summon wears its summoner's outfit's model when that skin names one |
+| `public/js/audio.js` | `voiceLine` (6th parameter `skin`), `skinRecordOf` (new), `voice`'s `o.skin`, `_track`'s stored `skin`, the three battle call sites | 皮肤语音: the outfit's line wins in the chosen language, then the operator's dub, then the outfit's Chinese line, then the operator's — and the outfit is resolved by id through the manifest, without importing the asset store (the boot-path pin in `test/ui/plugins-client.test.js`) |
 | `shared/plugins/visual.js` | `SKIN_RECORD` / `TOKEN_SKIN_RECORD` / `TOKEN_KEY` / `readFields`' `required` | a skin's `tokens` map (`{ tokenSkinId?, spine }`, `spine` required, at most 64) and the general "a record kind may name required fields" rule it needed |
 | `schemas/overlay.schema.json` | `skinRecord.properties.tokens`, `$defs.tokenSkinRecord` | the same contract for the author-side schema, `spine` a `$ref` to the one model definition (`tokens[].spine`) |
 | `server/plugins/pack.js` | `opContainer` (the `tokens` path segment wins over the container name) | a skeleton under `…skins.<key>.tokens.<id>.spine` is parsed with the token rules the asset pipeline uses (`skillIndices: [0]`), not an operator's three skill slots |
@@ -275,6 +307,9 @@ exists) gets no section rather than an empty grid.
 - **A summon keeps the look it was placed with**: its model is read once, when the unit is built with the battle input,
   so a change made mid-battle reaches the next battle (operators refresh immediately instead). A prep board's token
   piece keeps its own model until it deploys, and a summon's avatar is never restyled — see 召唤物换装 above.
+- **An outfit that ships only Chinese lines is heard only by 中文 players**: a player whose 语音语言 is Japanese keeps
+  the operator's Japanese lines even where the outfit has a Chinese take for that slot (see 皮肤语音 above). The 试听
+  dropdown does not preview outfit lines either.
 - **A 自选 slot's own record has `charId: null`**, so it wears its **pick's** operator's skin — the slot has no body of
   its own. The picker offers the appearance while picking that operator, and the choice is kept per operator, so
   changing the slot's operator changes the appearance with it.

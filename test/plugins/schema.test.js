@@ -125,6 +125,11 @@ const OVERLAYS = [
       spine: { skel: 't/front.skel', atlas: 't/front.atlas', textures: ['t/front.png'], anims: 'auto' } },
     ['t'.repeat(128)]: { spine: { skel: 't/x.skel' } },
   } } } } } }],
+  ['a skin with its own battle lines, one slot a list and a reference', { chars: { char_102_texas: { skins: { outfit: { name: 'Outfit',
+    voice: { select: 'v/sel.mp3', place: ['v/a.mp3', 'v/b.ogg'], start: { ref: 'char_112_siege' } },
+    voiceJp: { select: 'v/jp_sel.mp3' }, voiceEn: { start: 'v/en_start.mp3' }, voiceKr: { skill1: 'v/kr_s1.ogg' },
+    voiceNative: { faceEnemy: 'v/native.mp3' },
+  } } } } }],
   ['icons and interface pictures', { bonds: { yanShip: 'b.png' }, items: { trap_1: 'i.png' }, bands: { band_a: { ref: 'band_b' } }, skills: { s1: 's.png' }, modules: { 'PRI-X': 'm.png' }, ui: { 'battle/sprite_shadow': 'u.png' }, prof: { icon: { sniper: 'p.png' }, sub: { fortress: 'q.png' } } }],
   ['music', { audio: { bgm: { lobby: { intro: 'i.mp3', loop: 'l.ogg' }, boss: { ref: 'combat' } }, bossBgm: { boss_1: { loop: 'b.mp3' } } } }],
   ['voices', { audio: { voice: { char_102_texas: { select: ['a.mp3', 'b.mp3'], skill1: 's.ogg', place: { ref: 'char_112_siege' } } }, voiceJp: { char_102_texas: { ref: 'char_112_siege' } } } }],
@@ -160,6 +165,8 @@ const OVERLAYS = [
   ['a token id that is no entry key', { chars: { char_102_texas: { skins: { s: { tokens: { 'bad token!': { spine: { skel: 'm/t.skel' } } } } } } } }],
   ['a token skin id that is no text', { chars: { char_102_texas: { skins: { s: { tokens: { token_x: { tokenSkinId: 5, spine: { skel: 'm/t.skel' } } } } } } } }],
   ['sixty-five summons under one skin', { chars: { char_102_texas: { skins: { s: { tokens: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`token_${i}`, { spine: { skel: `m/t${i}.skel` } }])) } } } } }],
+  ['seventeen lines in a skin voice slot', { chars: { char_102_texas: { skins: { s: { voice: { select: Array.from({ length: 17 }, (_, i) => `v${i}.mp3`) } } } } } }],
+  ['a skin voice line that is a picture', { chars: { char_102_texas: { skins: { s: { voice: { select: 'a.png' } } } } } }],
   ['seventeen lines in one slot', { audio: { voice: { c: { select: Array.from({ length: 17 }, (_, i) => `v${i}.mp3`) } } } }],
   ['an empty list of lines', { audio: { voice: { c: { select: [] } } } }],
   // broken — a warning
@@ -171,6 +178,8 @@ const OVERLAYS = [
   ['an unknown field of a track', { audio: { bgm: { lobby: { loop: 'a.mp3', volume: 1 } } } }],
   ['an unknown field of a model', { chars: { char_102_texas: { spine: { front: { skel: 'm/t.skel', scale: 2 } } } } }],
   ['a field of a skin that does not exist', { chars: { char_102_texas: { skins: { sightseer_2: { skin: 'a.png' } } } } }],
+  ['a skin voice slot that is no slot name', { chars: { char_102_texas: { skins: { s: { voice: { '1bad': 'a.mp3' } } } } } }],
+  ['an unknown voice tree of a skin', { chars: { char_102_texas: { skins: { s: { voiceDe: { select: 'a.mp3' } } } } } }],
   ['an unknown field of a summon mapping', { chars: { char_102_texas: { skins: { s: { tokens: { token_x: { spine: { skel: 'm/t.skel' }, skin: 'a.png' } } } } } } }],
 ];
 

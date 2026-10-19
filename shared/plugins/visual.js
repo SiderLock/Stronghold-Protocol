@@ -13,7 +13,8 @@
 //   chars[charId]            { avatar, avatarE2, portrait, portraitE2, illust: image, spine: { front, back: Spine },
 //                              skins: { <skin id>: { name, group: text, avatar, avatarE2, portrait, portraitE2, illust:
 //                              image, spine: { front, back?: Spine }, tokens: { <token id>: { tokenSkinId?: text,
-//                              spine: Spine } } } } }
+//                              spine: Spine } }, voice / voiceJp / voiceEn / voiceKr / voiceNative:
+//                              { <slot>: audio or a list of 1–16 } } } } }
 //   enemies[key]             { icon: image, spine: Spine }          tokens[id]  { avatar: image, spine: Spine }
 //   bonds / items / bands / skills / modules / ui[key], prof.icon / large / battlecard / sub[key]     image
 //   audio.bgm[lobby|prep|combat|unite|boss], audio.bossBgm[bossId]     a track { loop, intro? }: replaced as a whole
@@ -31,7 +32,10 @@
 // token id — `{ tokenSkinId?: text, spine }`, where `spine` is ONE model (the same kind the manifest's
 // `tokens[<tokenId>].spine` is: skel / atlas / textures / anims — a summon has no Front/Back pair) — and that model is
 // REQUIRED (a mapping without one would change nothing); at most 64 per skin, and the token id is an entry key the
-// installation's `tokens` container can hold.
+// installation's `tokens` container can hold. A skin may also carry its own battle lines under the same five trees as the
+// operator (`voice` — Chinese —, `voiceJp`, `voiceEn`, `voiceKr`, `voiceNative`): each is a map of slots of the same
+// shape as `audio.voice[<charId>]` (a sound or a list of 1–16), the player's language asks the matching tree first, and
+// a slot the skin lacks falls back to the operator's own line (public/js/audio.js voiceLine).
 // A reference from a skin is resolved against the entry's own skin of the same key, so
 // it means something only once the installation's manifest carries `skins` itself (the committed data/assets.json of this
 // version has none); until then only the operator's own record can be referenced. A token mapping is never a reference:
@@ -154,6 +158,8 @@ const INDEX = /^\d{1,2}$/;
 const SKIN_KEY = /^[A-Za-z0-9_][A-Za-z0-9_@#+.-]{0,63}$/;
 /** A token id of a skin's `tokens` map: an entry key of the manifest's `tokens` container (letters, digits, _ . / -). */
 const TOKEN_KEY = /^[A-Za-z0-9_][A-Za-z0-9_./-]{0,127}$/;
+/** A voice tree: a free map of battle slots to a sound or a list of 1–16 (the operator's `audio.voice[<charId>]` shape). */
+const VOICE_TREE = { each: 'audioList', key: SLOT };
 /** The longest text a plugin writes into the manifest (a skin's name or its series). */
 const TEXT_MAX = 64;
 /** The most skins one operator's record takes (the overlay schema's maxProperties). */
@@ -171,7 +177,9 @@ const TOKEN_SKIN_RECORD = { required: ['spine'], fields: { tokenSkinId: 'text', 
 const SKIN_RECORD = { fields: { name: 'text', group: 'text', avatar: 'image', avatarE2: 'image', portrait: 'image',
   portraitE2: 'image', illust: 'image', spine: { fields: { front: 'spine', back: 'spine' } },
   tokens: { each: TOKEN_SKIN_RECORD, key: TOKEN_KEY, max: SKIN_TOKENS_MAX, keyProblem: true,
-    keyName: 'key (letters, digits, _ . / -, at most 128 characters)' } } };
+    keyName: 'key (letters, digits, _ . / -, at most 128 characters)' },
+  // the skin's own battle lines: the same five trees the operator's record uses (the Chinese one is `voice`)
+  voice: VOICE_TREE, voiceJp: VOICE_TREE, voiceEn: VOICE_TREE, voiceKr: VOICE_TREE, voiceNative: VOICE_TREE } };
 const SFX_UNIT = { fields: { attack: 'audio', hit: 'audio', skill: 'audio', die: 'audio', born: 'audio',
   skills: { each: 'audio', key: INDEX }, attacks: { each: 'audio', key: INDEX }, hits: { each: 'audio', key: INDEX } } };
 
@@ -186,12 +194,12 @@ export const ASSET_CONTAINERS = Object.freeze(/** @type {AssetContainer[]} */ ([
   // audio.bgm: the tracks by name — not combatAlts, a list of tracks the client reads by round
   { path: ['audio', 'bgm'], record: 'track', keys: ['lobby', 'prep', 'combat', 'unite', 'boss'] },
   { path: ['audio', 'bossBgm'], record: 'track' },
-  { path: ['audio', 'voice'], record: { each: 'audioList', key: SLOT } },
-  { path: ['audio', 'voiceJp'], record: { each: 'audioList', key: SLOT } },
+  { path: ['audio', 'voice'], record: VOICE_TREE },
+  { path: ['audio', 'voiceJp'], record: VOICE_TREE },
   // the other official dubs of round 40 (DESIGN §32.14.11): English, Korean, the operator's own-language dub
-  { path: ['audio', 'voiceEn'], record: { each: 'audioList', key: SLOT } },
-  { path: ['audio', 'voiceKr'], record: { each: 'audioList', key: SLOT } },
-  { path: ['audio', 'voiceNative'], record: { each: 'audioList', key: SLOT } },
+  { path: ['audio', 'voiceEn'], record: VOICE_TREE },
+  { path: ['audio', 'voiceKr'], record: VOICE_TREE },
+  { path: ['audio', 'voiceNative'], record: VOICE_TREE },
   { path: ['audio', 'sfx', 'ui'], record: 'audio' },
   { path: ['audio', 'sfx', 'battle'], record: 'audio' },
   { path: ['audio', 'sfx', 'units'], record: SFX_UNIT },

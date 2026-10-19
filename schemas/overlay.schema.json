@@ -732,6 +732,26 @@
           "additionalProperties": {
             "$ref": "#/$defs/tokenSkinRecord"
           }
+        },
+        "voice": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (Chinese dub) by slot, the same slots and values as audio.voice[<charId>]: worn, the skin's line plays for a slot it has and the operator's own line stands in for one it lacks."
+        },
+        "voiceJp": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (Japanese dub) by slot. A player whose language is Japanese is asked for this tree before the skin's Chinese lines."
+        },
+        "voiceEn": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (English dub) by slot."
+        },
+        "voiceKr": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (Korean dub) by slot."
+        },
+        "voiceNative": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines in the operator's own-language dub, by slot."
         }
       },
       "additionalProperties": false

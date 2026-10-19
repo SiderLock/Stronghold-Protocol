@@ -355,18 +355,54 @@ export const VOICE_TAP_SLOTS = Object.freeze(['select']);
  * @param {() => number} [random]
  * @returns {{ url: string, fallback: string|null } | null}
  */
-export function voiceLine(audio, charId, slot, lang = 'cn', random = Math.random) {
+export function voiceLine(audio, charId, slot, lang = 'cn', random = Math.random, skin = null) {
   const lines = (line) => (Array.isArray(line) ? line : [line]).filter((u) => typeof u === 'string' && u);
   const draw = (list) => (list.length ? list[Math.min(list.length - 1, Math.floor(random() * list.length))] : null);
+  const file = (u) => u.slice(u.lastIndexOf('/') + 1);
+  const sameName = (list, url) => list.find((u) => file(u) === file(url)) ?? null;
   const cn = lines(audio?.voice?.[charId]?.[slot]);
   const tree = VOICE_TREES[lang];
-  const dub = tree ? draw(lines(audio?.[tree]?.[charId]?.[slot])) : null;
-  if (dub) {
-    const file = (u) => u.slice(u.lastIndexOf('/') + 1);
-    return { url: dub, fallback: cn.find((u) => file(u) === file(dub)) ?? draw(cn) };
+  const dub = tree ? lines(audio?.[tree]?.[charId]?.[slot]) : [];
+  // 皮肤语音 (docs/SKINS.md): an outfit may carry its own lines. The outfit's line in the chosen language wins over the
+  // operator's dub, which wins over the outfit's Chinese line, which wins over the operator's own — a slot the outfit
+  // does not voice falls back to the operator's, never to silence, and `lang` still decides which tree is asked first.
+  // `skin` is the record itself: this module resolves it (`skinRecordOf`) because it must not import the asset store —
+  // main.js loads audio.js, and test/ui/plugins-client.test.js pins that public/js/assets.js stays off the boot path.
+  const skinCn = lines(skin?.voice?.[slot]);
+  const skinDub = tree ? lines(skin?.[tree]?.[slot]) : [];
+  const dubPick = draw(skinDub) ?? draw(dub);
+  if (dubPick) return { url: dubPick, fallback: sameName(skinCn, dubPick) ?? sameName(cn, dubPick) ?? draw(cn) };
+  const cnPick = draw(skinCn) ?? draw(cn);
+  if (!cnPick) return null;
+  // the outfit's own Chinese line: the operator's Chinese line of the same name is what plays if this file will not load
+  return { url: cnPick, fallback: skinCn.length ? sameName(cn, cnPick) : null };
+}
+
+/**
+ * The record of the skin a speaker wears, by id (`chars[<charId>].skins[<skinId>]`), or null.
+ *
+ * The direct lookup is the normal case — a unit's `voice` (its effective body) and its `skin` come from the same record,
+ * so the operator that owns the voice owns the outfit too. A stand-in whose body differs, or a 自选 slot, can make the
+ * two disagree, so a miss scans the composed manifest once and caches the result per manifest object (it is replaced
+ * whenever a layer changes). This deliberately does NOT reuse `assets.js`'s map: see voiceLine's note.
+ * @param {any} m the composed manifest (`data.get('assets')`)
+ * @param {string} charId the operator the voice belongs to @param {unknown} skinId
+ */
+const skinRecords = new WeakMap();
+export function skinRecordOf(m, charId, skinId) {
+  const s = typeof skinId === 'string' && skinId ? skinId : null;
+  if (!s || !m || typeof m !== 'object') return null;
+  const direct = m?.chars?.[charId]?.skins?.[s];
+  if (direct) return direct;
+  let map = skinRecords.get(m);
+  if (!map) {
+    map = new Map();
+    for (const rec of Object.values(m?.chars ?? {})) {
+      for (const [key, skin] of Object.entries(rec?.skins ?? {})) if (!map.has(key)) map.set(key, skin);
+    }
+    skinRecords.set(m, map);
   }
-  const url = draw(cn);
-  return url ? { url, fallback: null } : null;
+  return map.get(s) ?? null;
 }
 
 /**
@@ -1267,8 +1303,10 @@ export class AudioManager {
     try {
       if (!this.ctx || !this.voiceGain || this.volumes.muted || this.volumes.voice <= 0) return false;
       if (typeof charId !== 'string' || typeof slot !== 'string') return false;
-      // the chosen dub's line (settings 语音语言), with the Chinese file of the same name as its fallback (voiceLine)
-      const pick = () => voiceLine(this.getManifest()?.audio, charId, slot, this._voiceLangOf(charId));
+      // the chosen dub's line (settings 语音语言), with the Chinese file of the same name as its fallback (voiceLine);
+      // 皮肤语音: the outfit the speaker wears may voice the slot itself (o.skin, docs/SKINS.md)
+      const skin = skinRecordOf(this.getManifest(), charId, o.skin);
+      const pick = () => voiceLine(this.getManifest()?.audio, charId, slot, this._voiceLangOf(charId), Math.random, skin);
       const line = pick();
       if (!line) return false;
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -1402,7 +1440,8 @@ export class AudioManager {
     if (!u || typeof u !== 'object' || u.id == null) return;
     // UnitInfo.spine is the model id (charId / tokenId / enemyId) — the key of sfx.units; kind/defId pick the
     // official class sounds (operator vs summon vs device). `skillActive` follows the ['skill', id, 1] / 0 events.
-    this.units.set(u.id, { def: u.spine || u.defId, voice: u.voice || u.spine || u.defId, defId: u.defId ?? null, kind: u.kind ?? null, side: u.side, boss: !!u.boss,
+    // `skin` is the outfit this unit wears (UnitInfo.skin): its battle lines are the outfit's own where it voices them.
+    this.units.set(u.id, { def: u.spine || u.defId, voice: u.voice || u.spine || u.defId, skin: u.skin ?? null, defId: u.defId ?? null, kind: u.kind ?? null, side: u.side, boss: !!u.boss,
       skillIndex: Number.isInteger(u.skillIndex) ? u.skillIndex : null, skillActive: !!u.skillActive });
     // a cast that arrived before this unit was known (handleBattleEvents): it sounds now, once
     const held = this.pendingSkill.get(u.id);
@@ -1554,7 +1593,7 @@ export class AudioManager {
             // 作战中N: the equipped skill's own slot (0-based; 作战中4 is the fallback of a 4th slot)
             if (unitSoundClass(u) === 'char') {
               const n = Number.isInteger(u.skillIndex) ? Math.min(4, u.skillIndex + 1) : 1;
-              this.voice(u.voice, `skill${n}`, { unitKey: e[1] });
+              this.voice(u.voice, `skill${n}`, { unitKey: e[1], skin: u.skin });
             }
           } else {
             // The unit is not tracked yet. The sim emits the cast of a deployment that fires inside its own first tick
@@ -1573,7 +1612,7 @@ export class AudioManager {
         } else if (kind === 'engage') {
           // 行动开始: the first attack a unit makes on an enemy (the sim's ENGAGE, official ENCOUNTER_ENEMY, 3 s apart)
           const u = this.units.get(e[1]);
-          if (u && unitSoundClass(u) === 'char') this.voice(u.voice, 'faceEnemy', { unitKey: e[1] });
+          if (u && unitSoundClass(u) === 'char') this.voice(u.voice, 'faceEnemy', { unitKey: e[1], skin: u.skin });
         } else if (kind === 'die') {
           const u = this.units.get(e[1]);
           if (!u) continue;
@@ -1606,8 +1645,8 @@ export class AudioManager {
           if (unitSoundClass(u) === 'char') {
             if (!this.startVoiceDone) {
               this.startVoiceDone = true;
-              if (!this.voice(u.voice, 'start')) this.voice(u.voice, 'place', { unitKey: e[1] });
-            } else this.voice(u.voice, 'place', { unitKey: e[1] });
+              if (!this.voice(u.voice, 'start', { skin: u.skin })) this.voice(u.voice, 'place', { unitKey: e[1], skin: u.skin });
+            } else this.voice(u.voice, 'place', { unitKey: e[1], skin: u.skin });
           }
           if (!url) continue;
           const own = url === m?.audio?.sfx?.units?.[u.def]?.born;

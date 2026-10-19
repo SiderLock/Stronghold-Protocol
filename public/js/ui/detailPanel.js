@@ -865,8 +865,15 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
   // 0.2.0 补位: a chess fielded as its stand-in is spoken for by the stand-in (the operator on the field, whose model, name
   // and battle lines the card and audio.js show), never by the operator it replaces; a 自选 record is already the pick's
   const selectChar = voice && detail?.type === 'chess' ? detail.standIn?.assets?.voice || detail.standIn?.charId || detail.chess?.assets?.voice || detail.chess?.charId || null : null;
+  // P2 皮肤语音 (docs/SKINS.md): the outfit this seat wears, when the card knows it. `resolveDetail`'s `appearance`
+  // carries the skin of the seat the card belongs to — a battle / scouted unit's own (`UnitInfo.skin`), a teammate's
+  // member row's public choice; a shop / reward card or an own piece without a unit has none (null) and keeps the
+  // operator's own recordings. The skin is passed as its ID, not the record: `selectChar` below is the VOICE owner
+  // (a stand-in's / a DIY pick's bank), which may be a different operator than the one the skin is written under.
+  const selectSkin = detail?.type === 'chess' ? detail.skin || null : null;
   useEffect(() => {
-    if (selectKey && selectChar) audio.voice(selectChar, 'select');
+    if (selectKey && selectChar) audio.voice(selectChar, 'select', { skin: selectSkin });
+    // (the line belongs to the opening, so the effect follows the identifiers, not a later skin change)
   }, [selectKey, selectChar]);
   if (!detail) return null;
   let liveNow = null;

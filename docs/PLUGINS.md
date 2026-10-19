@@ -305,6 +305,7 @@ is a number of `data/enemies.json`), so a room's `cs` is the vanilla one whateve
 |---|---|
 | `chars[charId]` | `avatar`, `avatarE2`, `portrait`, `portraitE2`, `illust` (image), `spine.front`, `spine.back` (Spine), `skins` (one key per skin, below) |
 | a skin's `tokens[tokenId]` | `tokenSkinId` (text), `spine` (Spine, **required**) — the model the summon wears while its summoner wears that skin |
+| a skin's `voice`, `voiceJp`, `voiceEn`, `voiceKr`, `voiceNative` | `<slot>`: an audio file or a list of 1–16 — the outfit's own lines, the same slots as the operator's own trees ([SKINS.md](SKINS.md) 皮肤语音) |
 | `enemies[key]` | `icon` (image), `spine` (Spine) |
 | `tokens[id]` | `avatar` (image), `spine` (Spine) |
 | `bonds`, `items`, `bands`, `skills`, `modules`, `ui`, `prof.icon` / `large` / `battlecard` / `sub` `[key]` | an image |
@@ -366,7 +367,12 @@ other. **A skin may also restyle the operator's summons.** `skins[<key>].tokens[
 anims, because a summon has no Front / Back pair — and it is **required**, since a mapping without a model would change
 nothing; the pair form is refused for that reason, and `tokenSkinId` is metadata only. At most 64 mappings per skin, and
 `<tokenId>` is a key the installation's `tokens` container can hold. The model is what the summon wears while its
-summoner wears that skin; without a mapping it keeps its own model ([SKINS.md](SKINS.md) 召唤物换装). What a skin *is* —
+summoner wears that skin; without a mapping it keeps its own model ([SKINS.md](SKINS.md) 召唤物换装).
+**An outfit may also voice itself.** The same record takes `voice` (its Chinese tree) and optional `voiceJp`,
+`voiceEn`, `voiceKr`, `voiceNative`, each shaped exactly like the operator's own tree — a slot name to one audio file or
+a list of 1–16, the same slot names (`SLOT`, free slots rather than twelve enumerated ones). The outfit's line plays in
+the language the player picked, else the operator's dub, else the outfit's Chinese line, else the operator's own;
+a Chinese-only outfit does not replace a dub the operator has ([SKINS.md](SKINS.md) 皮肤语音). What a skin *is* —
 its name, its series, the picture a picker would show, the wearing of one — is this section's business; the key's shape is
 the overlay's own rule: the reader resolves every key into a path of the installation's manifest, so a key of the wrong
 shape is `PLUGIN_ASSET_KEY` (§15), as an entry key of the wrong shape is. The player picker

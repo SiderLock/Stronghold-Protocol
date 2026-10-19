@@ -87,6 +87,9 @@ import { BondStrip, BondPopup } from '../ui/bondStrip.js';
 import { TeamPanel } from '../ui/teamPanel.js';
 import { ShopBar } from '../ui/shopBar.js';
 import { DetailPanel, resolveDetail } from '../ui/detailPanel.js';
+// 皮肤语音 (docs/SKINS.md): the settlement line follows the outfit this seat wears. ui/skins.js is on the boot path
+// already (main.js → screens/loadout.js) and reads only store.js/data.js, so a screen may reach it without the asset store.
+import { skinFor } from '../ui/skins.js';
 import { RewardOverlay } from '../ui/rewardOverlay.js';
 import { FinalAssaultPlate, HiddenCorePlate, EndPlate, preloadBossPlateArt, bossPlateArtReady, finalPlateRows, endPlateOf } from '../ui/bossPlates.js';
 import { DownedPlate, downedDue, preloadDownedArt, downedArtReady } from '../ui/downedPlate.js';
@@ -700,13 +703,17 @@ function MatchScreen() {
         // voice, like its 选中 line) and a filled 自选 slot's operator (ownShown), else the chess record's charId
         const charId = resultSpeaker(mine, Math.random, (id) => ownShown(id)?.assets?.voice ?? ownShown(id)?.charId ?? null);
         if (!charId) return;
+        // 皮肤语音 (docs/SKINS.md): this battle is the viewer's own half, so the speaker's outfit is the LOCAL picker's
+        // choice for that operator (what `room.skins` sends). A voice-bank alias (`assets.voice`, e.g. an ILLUST outfit
+        // borrowing another operator's bank) has no selection of its own — it resolves to null and keeps its own lines.
+        const resultSkin = skinFor(charId) || null;
         audio.voice(charId, resultVoiceSlot({
           perfect: !!(mine?.perfect),
           leaked: Array.isArray(mine?.leaked) ? mine.leaked.length : 0,
           killed: mine?.killed ?? msg.result.killed,
           total: mine?.total ?? msg.result.total,
           hard: diff === 'HARD' || diff === 'ABYSS',
-        }));
+        }), { skin: resultSkin });
       } catch { /* ignore */ }
     };
     const offs = [net.on('m.field', onFieldMeta), net.on('b.snap', onSnap), net.on('b.ev', onEv)];

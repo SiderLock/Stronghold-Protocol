@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-19 / 2026-10-19，Asia/Shanghai |
-| 状态 | 进行中：**P0（上游 B6 图片时装整批移植）与 P1（召唤物换装）已完成并验证**（2026-10-19）；P2 起待做 |
+| 状态 | 进行中：**P0（上游 B6 图片时装整批移植）、P1（召唤物换装）、P2（皮肤语音）已完成并验证**（2026-10-19）；P4 起待做（P3 界面跟随皮肤已随 P0 的 B6 一并落地） |
 | 类型 | 功能（方案与实现记录） |
 | 分支与开始 HEAD | `feat/skin-enhance`，从 `feat/IncreasePlayerCapacity` 的 `4ab2c8a0` 开出 |
 | 上游基线 | v0.3.1 `d905c146`；皮肤层来自上游 master（`58206c0b`、`f8c1da7d`、`9cc6c97e`、`01847bfb`），本分支无 0.3.2 内容 |
@@ -212,6 +212,32 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 
 **未验证 / 不确定**：插件 lock 的二进制骨架端到端未跑（没有骨架 fixture，只钉了分类与角色选项的后果）；「去掉那两行则测试变红」的反向实验没做（共享工作区，避免影响同伴）；本分支 `data/assets.json` 里没有带皮肤的真实清单数据，所以只验证了字段传递，没有验证真实素材。
 
+### P2 · 已完成（2026-10-19）
+
+**皮肤自带语音槽**：穿某套时装时，该语音槽播时装的录音；缺槽回落干员原声。
+
+- **形状**：`skins[<key>].voice`（中文树）加可选 `voiceJp` / `voiceEn` / `voiceKr` / `voiceNative`，每个都是「槽名 → 一个音频文件或 1–16 条列表」，与干员自己的语音树**同名同构**（`audio.voice[<charId>]`）；槽名沿用自由槽（`SLOT`，不枚举 12 个）。
+- **取值链**（`voiceLine` 第六参）：**皮肤该语言槽 → 干员该语言槽 → 皮肤中文槽 → 干员中文槽**，都没有则静音。外语优先于皮肤中文行（照上游 #734 的规则），后果已写进文档：只带中文的皮肤语音对选外语的玩家不生效；要让外语玩家听到，插件得补对应语言树——这就是五棵树的意义。
+- **同语言内的回落**：所选行加载失败 → 皮肤中文树里同文件名的那条 → 干员中文树里同文件名的那条 → 抽一条干员行。沿用既有 `_playVoice` 契约，**没穿时装时行为逐字不变**（测试里单独钉了一条）。
+- **播放点**：战斗语音（行动出发 / 行动开始 / 部署 / 作战中N）读单位自己的 `UnitInfo.skin`（`_track` 保存、三处调用点传入）；「选中」语音用面板解析出的外观；结算语音用本机自己席位对说话干员的选择。请听（试听）下拉仍播干员原声——不做试听，因此**零新增界面文案**。
+- **解析位置**：`skinRecordOf(manifest, charId, skinId)` 先按语音归属干员直查，未命中再扫一遍 `chars[].skins`（替身/自选可能出现「语音归属」与「皮肤归属」不同一人）。它**故意不放在 assets.js**：`main.js` 会加载 `audio.js`，而 `test/ui/plugins-client.test.js` 钉住 assets.js 不在启动静态导入图里——这是本次差点踩到的 CI 坑，已写进代码注释与文档。
+- **overlay / schema 同批改**：`shared/plugins/visual.js` 新增 `VOICE_TREE` 常量（5 个树字段共用，同时去掉了 `ASSET_CONTAINERS` 里 5 处重复字面量）；`schemas/overlay.schema.json` 的 `skinRecord` 加这 5 个字段，一律 `$ref` 干员语音树自己的 `$defs.voiceRecord`（不新造枚举）；fixture 加 1 条正例 + 4 条反例（17 条列表、图片文件、坏槽名、未知语音树）。上游 #734 就是只改了运行时没改 schema 而无法合并，这次两边一起落。
+
+**已知缝隙（既有，不在本轮修）**：槽名 `constructor` 在运行时是 warning、schema 却接受——这在干员自己的 `audio.voice` 上今天就存在，皮肤语音沿用了同一套 `SLOT` / `$defs.voiceRecord`。最小修法是给 `$defs.voiceRecord.patternProperties` 的键正则加负前瞻（`__proto__|constructor|prototype`），同时收紧 10 棵树（5 干员 + 5 皮肤）；属共享定义，等用户决定再动。
+
+**P2 验证**（2026-10-19，分支 `feat/skin-enhance`）：
+
+| 命令 | 结果 |
+|---|---|
+| `node --test`（语音/皮肤/插件 10 个文件） | 136/136 通过 |
+| `node --test test/ui/audio.test.js`（含新增皮肤语音用例） | 37/37 通过 |
+| `npm run golden` | 288 场全匹配，无移动 |
+| `node tools/i18n.mjs check --all --strict` | 四包 2325 条，0 缺失（本次**没有**新增文案） |
+| `node --test test/docs-consistency.test.js test/docs-paths.test.js` | 32/32 通过 |
+| `npx eslint`（改动文件） | 0 error（5 条既有 warning） |
+
+**未验证**：详情面板「选中」与结算两处调用点是组件内部调用，没有单独的行为断言（靠 `audio.test.js` 的 `voiceLine` 用例与 `docs-consistency` 钉住的调用形状）；试听不含皮肤行是刻意取舍，未做浏览器验证。
+
 ## 真阻碍
 
 （不是「上游没做」，而是我们不做）
@@ -258,7 +284,7 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 ## 结果、遗留与接手
 
 - **方案结论**：P0–P6 全做，P7 逐项评估；真阻碍 5 条不做并给出替代。
-- **当前进度**：P0、P1 已完成并验证（见上「实施进度」）；P2 皮肤语音、P4 实时预览、P5 官方时装特效、P6 导出导入、P7 加分项待做。
+- **当前进度**：P0（含 P3 的界面跟随皮肤）、P1、P2 已完成并验证（见上「实施进度」）；P4 实时预览、P5 官方时装特效、P6 导出导入携带皮肤、P7 加分项待做。
 - **接手入口**：[皮肤规范](../../SKINS.md)、[插件规范](../../PLUGINS.md)、`shared/plugins/visual.js`、`schemas/overlay.schema.json`、`public/js/assets.js`、`test/skins.test.js`。
 
 ## 后续补充
