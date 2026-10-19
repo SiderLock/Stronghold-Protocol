@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-19 / 2026-10-19，Asia/Shanghai |
-| 状态 | 进行中：用户已确认范围与分支（2026-10-19），本记录随实现逐阶段更新；方案已定，代码从 P0 起做 |
+| 状态 | 进行中：**P0（上游 B6 图片时装整批移植）已完成并验证**（2026-10-19）；P1 起待做 |
 | 类型 | 功能（方案与实现记录） |
 | 分支与开始 HEAD | `feat/skin-enhance`，从 `feat/IncreasePlayerCapacity` 的 `4ab2c8a0` 开出 |
 | 上游基线 | v0.3.1 `d905c146`；皮肤层来自上游 master（`58206c0b`、`f8c1da7d`、`9cc6c97e`、`01847bfb`），本分支无 0.3.2 内容 |
@@ -147,6 +147,38 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 | AI 队友穿皮肤 | 现在 `setSkins` 直接拒绝 bot；可加「房主开关 + 按种子选择」，纯展示、所有人看到同一套 | 属产品口径，改动小；要写清与 `otherSkins` 的关系 |
 | 服主侧一键装官方时装 | ① 路线的便利性诉求，但**不能**做成任何客户端可触发的服务端下载 | 只做服主本机 CLI（不暴露协议接口）；或直接复用插件 ZIP 导入 |
 
+## 实施进度
+
+### P0 · 已完成（2026-10-19）
+
+移植上游 0.3.2 的 **B6「图片时装可穿戴」整批改动**（提交 `77b91081`，分支 dev）。这一批同时覆盖本文的 P0-1 与先前归在 P3 的「界面跟随皮肤」——上游把两件事一起做了。
+
+| 面 | 落地内容 |
+|---|---|
+| 目录与选择 | `public/js/ui/skins.js` 取上游 dev 版：`skinHasPictures`、`playable = 有模型或图片`、`pictureOnly`、`ownerSkin(...)`（按席位主人解析，含 `otherSkins` 与「清空优先于旧单位元数据」）；`public/js/ui/skinPicker.js` 增加「仅更换头像与立绘」标注 |
+| 图片解析 | `public/js/ui/assetUrls.js` 新增 `skinPicture()`，`chessAvatarUrl` / `chessPortraitUrl` 接受 `{ skin }`（精英二 → 普通 → 立绘回退）；`public/js/assets.js` 的 `spineEntry` / `hasBackSpine` 改为「没有 Front 的不完整 spine 沿用干员默认模型」 |
+| 界面 | 商店卡、干员详情（`resolveDetail` 带 `ownerId`/`skin`）、结算 `OpCard` 与阵容、结果页 `LineupThumb`、缩略图与整备（`OperatorImage` / `UnitThumb`）、2D 回退渲染器、禁用干员提示、Studio 预览卡：一律按席位主人取图 |
+| 偏好 | 新增 `public/js/ui/settingsStore.js`（读 `otherSkins` 等不必加载设置弹窗与音频），`settings.js` 改为从它再导出 |
+| 文案 | 四包新增「仅更换头像与立绘」；`node tools/i18n.mjs check --all --strict` 通过（2325 条 × 4 包） |
+| 文档 | `docs/SKINS.md`、`docs/PLUGINS.md` 取上游 dev 版；`docs/PLAYING.md`、`docs/design/client.md`、`docs/DESIGN.md` 按 B6 落点改写（去掉指向上游 0.3.2 历史文件的小节号） |
+| 测试 | 上游 B6 的新测试 `test/ui/picture-skins.test.js`、`test/helpers/pictureSkins.js`、`test/ui/picture-skins.e2e.test.js` 一并带入，并更新 `test/ui/skin-picker.test.js`、`test/ui/standin-ui.test.js`、`test/match/combat-metrics.test.js` |
+
+**P0-2（`illust` 契约）**：上游两处文档自相矛盾——`docs/PLUGINS.md` 说 `illust` 是「详情页显示的图」，`docs/SKINS.md` 说「默认瓦片是它唯一的展示处」。B6 之后**皮肤自己的 `illust`** 已成为各界面立绘的回退（`skinPicture`），但**干员级 `chars[charId].illust`**（插件只给图、不给时装）仍只在选择器的默认瓦片出现。按「文档跟随代码」，本轮只改 `docs/PLUGINS.md` 的表述，**不改行为**；若要让干员级立绘也出现在商店卡/详情，需要另立决定。
+
+**P0-3（上游 #739）**：核实后**本分支已有**该修复（`test/skins.test.js` 的守卫使用 `path.relative(...).split(path.sep).join('/')`），无需再摘。
+
+**P0 验证**（2026-10-19，本分支 `feat/skin-enhance`）：
+
+| 命令 | 结果 |
+|---|---|
+| `node --test`（皮肤定向 11 个文件） | 118/118 通过 |
+| `npm run golden` | 288 场全匹配（49/46/22/21/10/140），**无移动** |
+| `node tools/i18n.mjs check --all --strict` | 四包 2325 条，0 缺失、0 错误 |
+| `node --test test/docs-consistency.test.js test/docs-paths.test.js` | 32/32 通过 |
+| `npx eslint`（改动文件） | 0 error（7 条既有 warning） |
+
+**未验证**：浏览器 E2E（`SP_E2E=1` 下的 `test/ui/picture-skins.e2e.test.js` 等）未跑；商店卡与结算页的真实观感需要 Edge 手测。**数据面观察**：`server/match/results.js` 的阵容不带 `skin`，所以结算里 `u.skin` 实际是 undefined，靠 `OperatorImage → ownerSkin` 按 `m.public.players` 解析席位——要让**对局记录回看**也带皮肤，需要另给结果阵容补 `skin`（未列入本轮）。
+
 ## 真阻碍（不是「上游没做」，而是我们不做）
 
 | 项 | 为什么不做 | 便利性替代 |
@@ -191,7 +223,7 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 ## 结果、遗留与接手
 
 - **方案结论**：P0–P6 全做，P7 逐项评估；真阻碍 5 条不做并给出替代。
-- **当前进度**：方案完成、分支 `feat/skin-enhance` 已开（从 `4ab2c8a0`）；**代码实现从 P0 开始**，各阶段完成后在本记录追加实现与验证结果。
+- **当前进度**：P0 已完成并验证（见上「实施进度」）；P1 召唤物换装、P2 皮肤语音、P4 实时预览、P5 官方时装特效、P6 导出导入、P7 加分项待做。
 - **接手入口**：[皮肤规范](../../SKINS.md)、[插件规范](../../PLUGINS.md)、`shared/plugins/visual.js`、`schemas/overlay.schema.json`、`public/js/assets.js`、`test/skins.test.js`。
 
 ## 后续补充

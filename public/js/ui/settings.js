@@ -27,7 +27,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Modal, Button, Icon, MicroLabel, confirmDialog } from './components.js';
 import { GIcon } from './gameComponents.js';
-import { createStore, useStore, loadPref, savePref, store } from '../store.js';
+import { useStore, savePref, store } from '../store.js';
+import { settingsStore } from './settingsStore.js';
+export { settingsStore } from './settingsStore.js';
 import { sanitizeSettings, HOTKEY_ACTIONS, DEFAULT_HOTKEYS, hotkeyLabel, rebindHotkey, isDefaultHotkeys, captureHotkey, VOICE_LANGS, TEXT_SIZES } from './gameLogic.js';
 import { audio } from '../audio.js';
 import { openGuide } from './guide.js';
@@ -55,9 +57,6 @@ import { assetImport, pruneImportedAssets } from '../assetPack.js';
 import { cosmetics } from '../cosmetics.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
-
-/** Settings store: { bgm, sfx, voice, voiceLang, voiceNative, voiceOverrides, muted, damageNumbers, officialDamageNumbers, ammoEnergyCount, combatMetrics, prepDeployFold, quality, textSize, keys }. */
-export const settingsStore = createStore(sanitizeSettings(loadPref('settings', null)));
 
 /**
  * 设置 →「文字大小」: put the step on <html data-text> — css/theme.css turns it into the text root `--t`

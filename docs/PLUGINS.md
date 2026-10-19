@@ -339,7 +339,9 @@ operator the manifest has counts as one even when the write only adds a skin und
 record did not have (`illust`); a new operator is an `assets.add`. `theme` is not applied yet
 (a warning).
 
-**立绘 and the skins of one operator.** `illust` is the full illustration (立绘), the picture a detail view shows. The
+**立绘 and the skins of one operator.** `illust` is the full illustration (立绘) of an operator the plugin gives no
+skin at all; the picker's 默认 tile is the one place it is drawn (a skin's own `illust` is the portrait fallback on
+every surface that resolves that skin, [SKINS.md](SKINS.md)). The
 committed `data/assets.json` of this version carries no `illust` and no `skins` yet, so a plugin that writes one adds that field to the
 entry (as any other field of an entry the installation has, it takes `assets.override`). An operator's record may also
 carry several appearances under `skins`, one per key — the key `chars[<charId>].skins` is written under, and it is this
@@ -392,8 +394,17 @@ changes nothing a battle does, so it never enters `cs`) and published to teammat
 which is how a co-op partner's piece draws your skin. `public/js/assets.js` resolves it (`spineEntry`, `avatarUrl`,
 `portraitUrl`, `illustUrl` take `opts.skin`) and falls back to the operator's own model and pictures for a skin (or a
 skin's layer) that is not there, so a plugin that replaces only a model still draws a face. 设置「显示其他玩家的皮肤」
-(default on) is a pure client preference: off, this browser draws every OTHER seat's piece on the operator's own model
+(default on) is a pure client preference: off, this browser draws every OTHER seat's piece on the operator's own model and pictures
 while keeping its own player's — their screen keeps showing their skin.
+
+**Picture-only outfits (B6, 0.3.2).** Maintainer decision, 2026-10-18 option A: a skin with an avatar and/or
+portrait but no Spine is wearable. The picker marks it 「仅更换头像与立绘」; all owner-specific cards, panels and
+result rows use its pictures, while battle models use the effective operator's default Front / Back. Missing pictures
+fall back independently to that operator's normal / elite art. #686's per-seat choices, other-player visibility,
+stand-ins and DIY bodies stay in force; model outfits retain their model and image fallback behavior.
+[ASSUMED] The existing `avatarE2`, `portraitE2` and `illust` fields count too; metadata alone is not wearable.
+Official `skin_table.charSkins` separates operator identity, avatar, portrait, illustration and battle skin; the
+missing-plugin policy is the maintainer's choice. See [SKINS.md](SKINS.md#picture-only-outfits-032-b6) and §35.4.
 
 **Spine models and `plugin.lock.json`.** A model's clip roles, durations, events, hit times and bounds come from the
 skeleton itself: `node tools/plugin.mjs pack <dir>` parses it the way `tools/fetch-assets.mjs` parses the game's
