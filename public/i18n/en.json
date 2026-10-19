@@ -1013,6 +1013,7 @@
   "导入失败：{error}": "Import failed: {error}",
   "已导入 {n} 个自选名额": "Imported {n} Custom Squad {n|slot|slots}",
   "（另有 {n} 项不可用，未导入）": " ({n} unavailable {n|entry was|entries were} not imported)",
+  "（含 {n} 名干员的时装）": " (skins for {n} {n|operator|operators})",
   "已导入：全部名额为空": "Imported: every slot empty",
   "自选编队是局外设置：本局按开局时的设置进行，修改将在下一局生效": "The Custom Squad is set outside matches: this match keeps the picks it started with; changes apply from the next match",
   "局外设置，下一局生效 · 联机时只进入你自己的商店": "Set outside matches, applies from the next match · in team play only in your own shop",

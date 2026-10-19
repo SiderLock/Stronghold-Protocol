@@ -168,6 +168,25 @@ model ships, so an outfit can be judged the way a board shows it.
   the Begin → Loop → End sequence), the 试听 dropdown still plays the operator's own trees, and there is no token model
   preview — the frame is the piece the row belongs to.
 
+## 导出 / 导入 (the envelopes carry the choice)
+
+The 干员调配 screen's 导出 downloads a versioned envelope (`stronghold.loadout`), and its 自选编队 tab one of its own
+(`stronghold.diy`). Both may carry the appearance choices, always as the same per-operator map the picker writes
+(`{ [charId]: skinId }`, `sp.pref.skins` / `room.skins`):
+
+- **The roster envelope carries the map whole.** A payload from an installation without cosmetic layers — or from a
+  build before this one — has no `skins` field at all, and that is meaningful: an absent field leaves the importing
+  browser's choices alone. A pair that would make `room.skins` refuse the WHOLE message (a non-charId key, an empty or
+  non-string skin id, more than `SKIN_LIMITS.entries` pairs) is dropped at export and again at import, so a file can
+  never put the sync into `error` — the same rule `parseStoredSkins` applies to a stored map.
+- **The 自选编队 envelope carries its picks' operators only.** A slot wears its pick's operator's skin, so the slot id
+  never appears: the file names `{ [charId]: skinId }` for the operators it fields, and an appearance of an operator the
+  file does not field stays out of it.
+- **Importing merges, never replaces.** What the payload says is written over the current choices per operator; an
+  operator the file is silent about keeps what this browser had. That is what makes an older file harmless and two files
+  imported one after another coherent.
+- **The success toast counts them** (`（含 {n} 名干员的时装）`), so an import that changed appearances says so.
+
 ## The switch model: the owner installs, each player switches on
 
 | Who | What they do | Where it is stored |
@@ -252,6 +271,7 @@ exists) gets no section rather than an empty grid.
 | `test/sim/skins-token.test.js` | 召唤物换装 in the engine: a board token after and before its owner, a skill's summon, no skin (the token keeps its own model and the snapshot gains no key) and the same seeded battle twice |
 | `public/js/ui/skinPreview.js` | 小人预览: `previewEntry` (the model a row previews), `clipsOf` (the buttons), `SkinModelPreview` (one canvas, mounted and destroyed with the box; PIXI and the asset store loaded lazily) |
 | `test/ui/skin-preview.test.js` | The pure half: which model a row previews and which buttons a model offers (roles first, every remaining clip after, never the same clip twice) |
+| `test/ui/skin-envelope.test.js` | 导出 / 导入: which map each envelope carries (the roster whole, the 自选 one its picks' operators), that absent means "leave the current choices alone", and that a pair the wire would refuse never reaches the store from a file |
 | `public/dev/skin-preview.html` + `public/dev/skin-preview.js` | The browser harness the next row drives (a dev page: `public/dev/` is not shipped, `tools/package.mjs`) |
 | `test/render/skin-preview.browser.test.js` | The live half, in a real browser: the canvas appears for a model the machine has, a clip button re-points the same canvas instead of rebuilding it, and unmounting removes it |
 | `test/plugins/pack-token.test.js` | The pack's role parsing picks the token rules by the `tokens` path segment (`Skill_1` alone, no operator skill slots) |

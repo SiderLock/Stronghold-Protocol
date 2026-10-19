@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-19 / 2026-10-19，Asia/Shanghai |
-| 状态 | 进行中：**P0（上游 B6 图片时装整批移植，含 P3 界面跟随皮肤）、P1（召唤物换装）、P2（皮肤语音）、P4（小人实时预览）已完成并验证**（2026-10-19）；P5 起待做 |
+| 状态 | 进行中：**P0（B6 图片时装 + P3 界面跟随皮肤）、P1（召唤物换装）、P2（皮肤语音）、P4（小人实时预览）、P6（导出导入携带皮肤）已完成并验证**（2026-10-19）；P5（官方时装特效）需提取机、P7（加分项）待评估 |
 | 类型 | 功能（方案与实现记录） |
 | 分支与开始 HEAD | `feat/skin-enhance`，从 `feat/IncreasePlayerCapacity` 的 `4ab2c8a0` 开出 |
 | 上游基线 | v0.3.1 `d905c146`；皮肤层来自上游 master（`58206c0b`、`f8c1da7d`、`9cc6c97e`、`01847bfb`），本分支无 0.3.2 内容 |
@@ -270,6 +270,28 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 
 **未覆盖**：皮肤分支（本安装 `data/assets.json` 不含 `skins`，要插件 overlay）与 `SkinSection ↔ 预览` 的接线只有源码级钉子；窄屏布局未测。
 
+### P6 · 已完成（2026-10-19）
+
+**导出 / 导入携带皮肤**：干员调配与自选编队两个信封都能带时装选择，导入时**合并**而不是替换。
+
+- **形状**：与选择器写的是同一张按干员的表 `{ [charId]: skinId }`（`sp.pref.skins` / `room.skins`）。干员调配信封带**整张**；自选编队信封只带**它名额用到的干员**——槽位穿的是 pick 的干员的皮肤，所以从不出现槽位 id（这点与我们按干员存的整体设计一致，与 Misyra 那套按棋子的设计不同）。
+- **「没有」是有意义的**：不带 `skins` 字段 = 老版本导出 / 没装外观插件 = **不动**当前选择。这样旧文件、以及「先导入 A 再导入 B」都不会互相清空。
+- **校验**：凡是会让 `room.skins` 整条 BAD_MSG 的键值（非 charId、空或非字符串的 skinId、超过 `SKIN_LIMITS.entries` 条）在导出与导入两侧都被丢掉，所以文件不可能把同步打成 `error`（与 `parseStoredSkins` 同一条规则；`cleanSkins` 放在 `ui/loadoutModel.js`，自选编队模型直接引用，不重复造校验）。
+- **界面**：`screens/loadout.js` 两个导出都带上本机选择；导入后**逐干员合并**（`applySkinChoices`），成功 toast 追加「（含 {n} 名干员的时装）」（新增 1 条文案 ×4 包）。
+
+**P6 验证**（2026-10-19，分支 `feat/skin-enhance`）：
+
+| 命令 | 结果 |
+|---|---|
+| `node --test test/ui/skin-envelope.test.js`（新增，5 条） | 5/5 通过 |
+| `node --test`（信封 + 调配 + 皮肤定向 6 个文件） | 70/70 通过 |
+| `npm run golden` | 288 场全匹配，无移动 |
+| `node tools/i18n.mjs check --all --strict` | 四包 2330 条（新增 1 条），0 缺失 |
+| `node --test test/docs-consistency.test.js test/docs-paths.test.js` | 32/32 通过 |
+| `npx eslint`（改动文件） | 0 error（1 条既有 warning） |
+
+**未覆盖**：导入的界面路径（文件选择 / 剪贴板 / toast）只有模型层与源码级覆盖，没有浏览器 e2e；`loadout-ops-export.e2e.test.js` 属 `SP_E2E` 套件，默认关闭，未跑。
+
 ## 真阻碍
 
 （不是「上游没做」，而是我们不做）
@@ -316,7 +338,7 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 ## 结果、遗留与接手
 
 - **方案结论**：P0–P6 全做，P7 逐项评估；真阻碍 5 条不做并给出替代。
-- **当前进度**：P0（含 P3 的界面跟随皮肤）、P1、P2、P4 已完成并验证（见上「实施进度」）；P5 官方时装特效（需提取机）、P6 导出导入携带皮肤、P7 加分项待做。
+- **当前进度**：P0（含 P3 的界面跟随皮肤）、P1、P2、P4、P6 已完成并验证（见上「实施进度」）；P5 官方时装特效需要提取机（客户端素材路径待用户确认）、P7 加分项待评估。
 - **接手入口**：[皮肤规范](../../SKINS.md)、[插件规范](../../PLUGINS.md)、`shared/plugins/visual.js`、`schemas/overlay.schema.json`、`public/js/assets.js`、`test/skins.test.js`。
 
 ## 后续补充

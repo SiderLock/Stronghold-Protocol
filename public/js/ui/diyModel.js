@@ -14,6 +14,8 @@
 // match takes it. 导出 / 导入 use a versioned envelope like the 干员持有 list.
 
 import { DIY_LIMITS, checkDiyPicks } from '../../../shared/protocol.js';
+// the roster model owns the appearance shape too (cleanSkins): both envelopes carry `{ [charId]: skinId }`
+import { cleanSkins } from './loadoutModel.js';
 import { diySlotIds, diySlot, diyPool, isPrototypePick, lockedSelection, isDiyModule, diyRecord } from '../../../shared/diy.js';
 import { unitForm } from '../../../shared/standIn.js';
 import { N_ } from '../../../shared/i18n.js';
@@ -162,15 +164,23 @@ export function setPick(picks, slotId, pick) {
 
 // ---- export / import -------------------------------------------------------------------------------------------------
 
-/** Portable payload of a roster, as downloaded / copied by 导出. */
-export function exportDiy(picks, { now = Date.now() } = {}) {
+/**
+ * Portable payload of a roster, as downloaded / copied by 导出 — with the appearances of the operators it fields
+ * (`skins`, keyed by operator: a 自选 slot wears its pick's skin, so the slot's own id never appears here), omitted when
+ * there are none so a payload from an installation without cosmetic layers stays what it was.
+ * @param {Record<string, any>} picks @param {{ now?: number, skins?: Record<string, string> }} [o]
+ */
+export function exportDiy(picks, { now = Date.now(), skins = {} } = {}) {
   const clean = cleanPicks(picks);
+  const only = new Set(Object.values(clean).map((p) => p.charId));
+  const cleanSkin = cleanSkins(skins, only);
   return {
     kind: DIY_EXPORT_KIND,
     v: DIY_VERSION,
     exportedAt: new Date(Number.isFinite(now) ? now : Date.now()).toISOString(),
     count: Object.keys(clean).length,
     picks: clean,
+    ...(Object.keys(cleanSkin).length ? { skins: cleanSkin } : {}),
   };
 }
 
@@ -198,5 +208,10 @@ export function parseDiyImport(input) {
   const kind = typeof raw.kind === 'string' ? raw.kind : null;
   if (kind && kind !== DIY_EXPORT_KIND) return { ok: false, error: N_('这不是自选编队的数据') };
   if (!isObj(raw.picks)) return { ok: false, error: N_('里面没有自选编队的数据') };
-  return { ok: true, picks: cleanPicks(raw.picks) };
+  const picks = cleanPicks(raw.picks);
+  // 时装: the appearances of the operators this file fields (absent when the payload has none — an older export leaves
+  // the current choices alone, and the caller merges what it gets)
+  const only = new Set(Object.values(picks).map((p) => p.charId));
+  const skins = cleanSkins(raw.skins, only);
+  return Object.keys(skins).length ? { ok: true, picks, skins } : { ok: true, picks };
 }
