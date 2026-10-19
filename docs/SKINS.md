@@ -168,6 +168,69 @@ model ships, so an outfit can be judged the way a board shows it.
   the Begin → Loop → End sequence), the 试听 dropdown still plays the operator's own trees, and there is no token model
   preview — the frame is the piece the row belongs to.
 
+## 官方时装特效 (official skin effects)
+
+Some outfits change the operator's **effects**, not only the model: the client attaches a `CharacterSkinHooker` to every
+outfit prefab whose `_replaceEffectPairs` says "when this unit plays `from`, play `to` instead" — attack hits, trails,
+skill buffs, even the shared birth effect (`common_char_birth_01` → `kalts_birth_01_boc#6`). On the 2026-10 build that is
+**443 outfits, 6590 pairs**; the pairs are per operator outfit, so wearing `char_003_kalts@boc#6` changes Kal'tsit's
+hit / start / trail / skill-buff / birth effects and nothing else's.
+
+This one **cannot** come from a cosmetic plugin: the variants are official effect prefabs (particles, textures, meshes),
+which a plugin cannot legally or practically carry. It is therefore an extraction feature — off unless the owner
+extracts it — with the plugin-free fallback being what the game always did (the base effect).
+
+### The data (`index.json` → `skinFx`)
+
+`tools/local-extract/skinfx.py` reads the client's `skinpack/<charId>.ab` bundles, finds each hooker, names the outfit
+from the GameObject it hangs under (`<charId>_<stem>` → `<charId>@<stem>`, the official id) and writes:
+
+```json
+"skinFx": {
+  "char_003_kalts@boc#6": {
+    "replace": { "kalts_attack_01_hit": "kalts_attack_01_hit_boc#6", "common_char_birth_01": "kalts_birth_01_boc#6" },
+    "fakeProjectiles": [{ "originalProjectileKey": "projectile_chr_kalts", "graphicProjectileKey": "…_graphic",
+                          "logicProjectileKey": "…_logic", "muzzlePoint": 5 }]
+  }
+}
+```
+
+- It is an **optional section**: an index without it, or an outfit without an entry, plays the base effects, so older
+  extractions stay readable and the index's `version` does not move for it.
+- The replacement keys are **new** effect prefabs. `skinfx.py` prints them (and `--keys-out` saves them) for a
+  follow-up run that exports those prefabs into the same set:
+  `.venv/bin/python tools/local-extract/extract.py --only fx --fx-keys $(paste -sd, /tmp/k.txt)`. Without that step the
+  variants are missing and the runtime falls back — the traps both upstream attempts hit (「皮肤特效没有、原版也没有」).
+
+### The runtime (`render/vfx/wiring.js`)
+
+- `outfitOf(view)` is the outfit the view wears (`info.skin` — the id the cards, the portrait and the voice use). It is
+  **not** `skinOf`, which is the Spine model's own skin name used for mount points.
+- `playOn` maps the key through the outfit's `replace` before it plays anything; the ATTACKER's outfit decides effects
+  an attack puts on someone else (`o.skinFrom`, projectiles' hit rows), the view's own otherwise. A replacement the set
+  does not hold keeps the base key — never a silent drop.
+- `keysFor` preloads the variants of the outfits in the battle, so the first cast does not wait on a fetch.
+- `fakeProjectiles` are extracted but **not wired yet** (the client's projectile-graphic replacement); an outfit that
+  needs one plays its normal projectile.
+
+### Limits
+
+- The extraction is a machine-local feature: `public/assets/` is not in git, and a player without the extracted set
+  simply sees the base effects. Nothing about the skin choice, the sync, the sim, the golden results or the protocol
+  changes.
+- Every outfit the client marks is extracted, including ones this build never offers (an outfit record the catalogue
+  does not hold is unreachable by design).
+- Volume, measured on 4 outfits (Kal'tsit's two, Amiya's `test#1`, Swire the Elegant Wit's
+  `ambienceSynesthesia#4`): 53 pairs exported **76 prefabs, 215 textures, 54 meshes** in 127 s, and every one of the 53
+  pairs resolves with its prefab file on disk. The whole `public/assets/local/fx/` directory is 197 MB afterwards. The
+  client marks 443 outfits / 6376 distinct variant prefabs, so a whole-client extraction is measured in gigabytes —
+  `skinfx.py` is therefore a separate command, never part of the default extraction.
+- `fakeProjectiles` keys are **projectile** prefabs, not effect prefabs: a `--fx-keys` run on them answers "no such
+  effect prefab", so `skinfx.py` reports them separately instead of asking for them.
+- The client's replacement names may differ in case from the set's keys (`…ambienceSynesthesia#4` vs the index's
+  lower-case keys): both sides of a pair are lower-cased when written, because the runtime looks a pair up by the
+  lower-cased key it is about to play.
+
 ## 导出 / 导入 (the envelopes carry the choice)
 
 The 干员调配 screen's 导出 downloads a versioned envelope (`stronghold.loadout`), and its 自选编队 tab one of its own
@@ -273,6 +336,8 @@ exists) gets no section rather than an empty grid.
 | `test/ui/skin-preview.test.js` | The pure half: which model a row previews and which buttons a model offers (roles first, every remaining clip after, never the same clip twice) |
 | `test/ui/skin-envelope.test.js` | 导出 / 导入: which map each envelope carries (the roster whole, the 自选 one its picks' operators), that absent means "leave the current choices alone", and that a pair the wire would refuse never reaches the store from a file |
 | `test/studio/targets.test.js` | The studio's target index: an outfit is a target of its own under its operator's record, searchable by name / series / operator, and `skin:<key>` reads back although the key carries `@ # + .` |
+| `tools/local-extract/skinfx.py` | 官方时装特效's data: read every `skinpack/<charId>.ab`, name each hooker's outfit, write `index.json`'s optional `skinFx` section and print the variant keys a `--fx-keys` run must export |
+| `test/render/vfx-skinfx.test.js` | 官方时装特效's runtime: the outfit decides (not the target, for an attack's own effects), a variant the set does not hold falls back to the base key, an older index without the section plays everything as before, and preloading covers the outfits in the battle |
 | `public/dev/skin-preview.html` + `public/dev/skin-preview.js` | The browser harness the next row drives (a dev page: `public/dev/` is not shipped, `tools/package.mjs`) |
 | `test/render/skin-preview.browser.test.js` | The live half, in a real browser: the canvas appears for a model the machine has, a clip button re-points the same canvas instead of rebuilding it, and unmounting removes it |
 | `test/plugins/pack-token.test.js` | The pack's role parsing picks the token rules by the `tokens` path segment (`Skill_1` alone, no operator skill slots) |

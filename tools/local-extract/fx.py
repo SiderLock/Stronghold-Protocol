@@ -3200,7 +3200,11 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
     t0 = time.time()
     entries, textures, meshes, done = {}, {}, {}, set()
     todo, rounds = set(wanted), 0
-    with ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker, initargs=(tuple(eff),)) as pool:
+    # a one-process run does not build a pool at all: it would only be used for `jobs > 1`, and building one needs POSIX
+    # semaphores a restricted environment (a sandbox, a container without /dev/shm) refuses even though the work itself
+    # runs in this process
+    pool = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker, initargs=(tuple(eff),)) if jobs > 1 else None
+    try:
         while todo and rounds < 6:
             rounds += 1
             by_bundle = {}
@@ -3208,7 +3212,7 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
                 by_bundle.setdefault(eff[k], []).append(k)
             log(f'fx: pass {rounds}: exporting {len(todo)} prefabs from {len(by_bundle)} bundles ({jobs} processes)')
             work = [(str(ab_root), str(out_root), cabs, rel, ks) for rel, ks in sorted(by_bundle.items(), key=lambda kv: -len(kv[1]))]
-            results = list(pool.map(_export_worker, work)) if jobs > 1 and len(work) > 1 else [_export_worker(w, tuple(eff)) for w in work]
+            results = list(pool.map(_export_worker, work)) if pool and len(work) > 1 else [_export_worker(w, tuple(eff)) for w in work]
             done |= todo
             for e, tx, me, lines in results:
                 entries.update(e)
@@ -3218,6 +3222,9 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
                     log(line)
             named = {r for e in entries.values() for r in e.get('refs', [])}
             todo = {k for k in named if k in eff and k not in done}
+    finally:
+        if pool:
+            pool.shutdown()
     timings['prefabs'] = time.time() - t0
 
     summaries = {k: {f: v[f] for f in ('file', 'bundle', 'nodes', 'particleSystems', 'liveParticles', 'duration', 'looping', 'refs',

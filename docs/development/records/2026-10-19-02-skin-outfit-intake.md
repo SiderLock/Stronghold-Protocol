@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-19 / 2026-10-19，Asia/Shanghai |
-| 状态 | 进行中：**P0（B6 图片时装 + P3 界面跟随皮肤）、P1（召唤物换装）、P2（皮肤语音）、P4（小人预览）、P6（导出导入）、P7（加分项评估）已完成**（2026-10-19）；P5（官方时装特效）需客户端素材路径，可先写运行时与提取器、数据待提取机 |
+| 状态 | **全部完成（2026-10-19）**：P0（B6 图片时装 + P3 界面跟随皮肤）、P1（召唤物换装）、P2（皮肤语音）、P4（小人预览）、P5（官方时装特效，真实客户端数据验证）、P6（导出导入）、P7（Studio 找皮肤 + 两项定不做） |
 | 类型 | 功能（方案与实现记录） |
 | 分支与开始 HEAD | `feat/skin-enhance`，从 `feat/IncreasePlayerCapacity` 的 `4ab2c8a0` 开出 |
 | 上游基线 | v0.3.1 `d905c146`；皮肤层来自上游 master（`58206c0b`、`f8c1da7d`、`9cc6c97e`、`01847bfb`），本分支无 0.3.2 内容 |
@@ -304,6 +304,27 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 
 **P7 验证**（2026-10-19）：新增 `test/studio/targets.test.js` **4/4**（皮肤按名字/系列/干员都能搜到、`skin:<key>` 回读、路径与图标回落、无皮肤的安装为空）；`test/plugins/schema.test.js` 11/11；i18n 四包 2330 条（**无新增文案**：`时装` 词条已存在）；eslint 0 error；golden 288 场无移动（该改动只在 Studio 侧）。
 
+### P5 · 已完成（2026-10-19，真实客户端数据验证）
+
+**官方时装特效**：客户端给每套时装挂一个 `CharacterSkinHooker`，`_replaceEffectPairs` 就是「基础特效键 → 时装变体键」。本机客户端全量扫描：**443 套时装有 hooker、6590 条替换、6376 个目标变体键**（426 个 skinpack，108 秒，0 失败）。
+
+- **提取器**：新脚本 `tools/local-extract/skinfx.py` —— 扫 `skinpack/<charId>.ab`、按 hooker 所在 GameObject 名 `<charId>_<stem>` 推出官方皮肤 id `<charId>@<stem>`、写入 `index.json` 的**可选**顶层段 `skinFx`（`replace` + 可选 `fakeProjectiles`）。两侧键统一小写（客户端 `ambienceSynesthesia#4` 与索引的 lower-case 键对不上，运行时就永远命中不了）。变体键用 `--keys-out` 交给 `extract.py --only fx --fx-keys …` 导出——缺这一步就是上游两次尝试共同的坑「皮肤特效没有、原版也没有」。索引 `version` 不动：没有 `skinFx` 的老索引照常工作。
+- **运行时**（`render/vfx/wiring.js`）：`outfitOf`（取 `info.skin`，与挂点用的 `skinOf` 是两件事）+ `skinFxKey`（按时装替换；替换件不在库里就回落基础键，绝不静默丢特效）；`playOn` 前置替换，**打在别人身上的命中行用攻击者的时装**（`o.skinFrom`，投射物命中行已接线）；`keysFor` 预载在场时装的变体键。`fakeProjectiles` 已提取、未消费（需要它的时装照常播普通投射物）。
+- **顺带修的提取器问题**：`fx.py` 单进程运行也**无条件建** `ProcessPoolExecutor`，在禁止 POSIX 信号量的环境（沙箱 / 无 `/dev/shm` 的容器）直接崩。改成 `jobs > 1` 才建池、并 `finally` 关闭；`jobs > 1` 行为不变。没有这一改，本机连样本都跑不出来。
+
+**真实数据验证**（4 套：凯尔希 `boc#6`/`sale#14`、阿米娅 `test#1`、诗怀雅 `ambienceSynesthesia#4`）：
+
+| 步骤 | 结果 |
+|---|---|
+| `skinfx.py --only … --dry-run` | 4 套 / 53 条 / 53 个目标键，1.3 秒 |
+| `extract.py --only fx --fx-keys …` | 导出 76 个变体预制体、215 张贴图、54 个网格，127 秒；`public/assets/local/fx` 197 MB |
+| `skinfx.py --only … -out` | 写入 4 套；`notInIndex` 0（53 条目标全部在索引里） |
+| 端到端 node 校验 | 53/53 条 `skinFxKey` 解析成功、对应预制体文件全部存在 |
+
+**测试与检查**：新增 `test/render/vfx-skinfx.test.js` 6/6；i18n 无新增文案；docs 一致性；golden 288 场无移动（改动只在渲染侧）；eslint 0 error。
+
+**边界**：纯本机特性——`public/assets/` 不入 git，没提取的玩家看到的就是基础特效；皮肤选择、同步、sim、golden、协议零改动。全量提取按 4 套的实测外推是 GB 级，所以 `skinfx.py` 是独立命令，不进默认提取。
+
 ## 真阻碍
 
 （不是「上游没做」，而是我们不做）
@@ -350,7 +371,7 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 ## 结果、遗留与接手
 
 - **方案结论**：P0–P6 全做，P7 逐项评估；真阻碍 5 条不做并给出替代。
-- **当前进度**：P0（含 P3 的界面跟随皮肤）、P1、P2、P4、P6、P7 已完成（见上「实施进度」）；只剩 P5 官方时装特效——它需要一台装有《明日方舟》客户端的机器来提取 `CharacterSkinHooker`，运行时可先实现并用小样本数据验证。
+- **当前进度**：P0–P7 全部完成并验证（见上「实施进度」）；P5 的时装特效数据来自本机客户端提取（`tools/local-extract/skinfx.py`），玩家侧没提取时看基础特效，属设计内的降级。
 - **接手入口**：[皮肤规范](../../SKINS.md)、[插件规范](../../PLUGINS.md)、`shared/plugins/visual.js`、`schemas/overlay.schema.json`、`public/js/assets.js`、`test/skins.test.js`。
 
 ## 后续补充
