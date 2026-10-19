@@ -272,6 +272,7 @@ exists) gets no section rather than an empty grid.
 | `public/js/ui/skinPreview.js` | 小人预览: `previewEntry` (the model a row previews), `clipsOf` (the buttons), `SkinModelPreview` (one canvas, mounted and destroyed with the box; PIXI and the asset store loaded lazily) |
 | `test/ui/skin-preview.test.js` | The pure half: which model a row previews and which buttons a model offers (roles first, every remaining clip after, never the same clip twice) |
 | `test/ui/skin-envelope.test.js` | 导出 / 导入: which map each envelope carries (the roster whole, the 自选 one its picks' operators), that absent means "leave the current choices alone", and that a pair the wire would refuse never reaches the store from a file |
+| `test/studio/targets.test.js` | The studio's target index: an outfit is a target of its own under its operator's record, searchable by name / series / operator, and `skin:<key>` reads back although the key carries `@ # + .` |
 | `public/dev/skin-preview.html` + `public/dev/skin-preview.js` | The browser harness the next row drives (a dev page: `public/dev/` is not shipped, `tools/package.mjs`) |
 | `test/render/skin-preview.browser.test.js` | The live half, in a real browser: the canvas appears for a model the machine has, a clip button re-points the same canvas instead of rebuilding it, and unmounting removes it |
 | `test/plugins/pack-token.test.js` | The pack's role parsing picks the token rules by the `tokens` path segment (`Skill_1` alone, no operator skill slots) |
@@ -354,8 +355,10 @@ exists) gets no section rather than an empty grid.
 ## Known limitations
 
 - **Bots always wear the default model** (`PlayerState.setSkins` refuses a bot, as `setLoadout` does).
-- **The studio does not list skins.** It finds an operator, an enemy or an interface picture by its official name
-  (`server/studio/targets.js`), so a skin key is copied from the installation's manifest or written in the stem form.
+- **The studio lists the skins the manifest already has** (P7): the target picker finds one by the outfit's name, its
+  series or its operator, and `skin:<key>` names it — the key carries `@ # + .`, so it is copied from there rather than
+  typed (`server/studio/targets.js`). A skin the installation does not have yet is still written by hand or in the stem
+  form: the studio cannot invent an outfit.
 - **No skin effects and no operator voices** (a separate piece of work; docs/ASSETS.md).
 - **A summon keeps the look it was placed with**: its model is read once, when the unit is built with the battle input,
   so a change made mid-battle reaches the next battle (operators refresh immediately instead). A prep board's token
