@@ -35,7 +35,7 @@
 | 最近上游合并前的 HEAD | 任务开始为 `51eb14419c23e914027b35091334b88277b7a126`；基线记录 `c9516813`；既有标签不移动 |
 | 已合并的上游版本 | v0.3.1，`d905c1464f762a03d236c7ad6bc3ba31a74f4494`；保留完整历史，package 版本 0.3.1 |
 | 最近上游合并提交 | 与 [DEV-20261018-01](records/2026-10-18-01-upstream-v0.3.1.md) 同一合并提交 `01847bfb`；父提交为 `c9516813` 与 `d905c146`。前次 v0.3.0 见 [DEV-20261016-01](records/2026-10-16-01-upstream-v0.3.0.md) |
-| `origin` | 用户 fork：`LongQianChen/Stronghold-Protocol`，不是作者仓库 |
+| 远端与分支来源 | `origin` = `SiderLock/Stronghold-Protocol`（推送与开 PR 的主远端；`feat/IncreasePlayerCapacity` 的跟踪远端）；`pr` = `LongQianChen/Stronghold-Protocol`（工作分支的来源 fork：`feat/IncreasePlayerCapacity` 从该 fork 的同名分支分出）；`upstream` = `sganggs/Stronghold-Protocol`（作者仓库，本地 `master` 跟随它的上游原版） |
 | 现有功能 | 接纳 v0.3.0 / v0.3.1：插件系统、规则开关、交互窗口、皮肤层、测试模式、官方 UI 素材、音效池、官方特效修正等；本分支另移植上游 0.3.2 的图片时装（B6：没有模型的时装可穿、商店卡/详情/结算按席位取图，见 [DEV-20261019-02](records/2026-10-19-02-skin-outfit-intake.md)）；保留 20 人、固定分组卡池及并行轮选、至多五轮联防逐轮投票、领袖适配、队伍栏与表情、文件公告、素材目录与预缓存、服主严格准入、房间管理及局内聊天；D030 带宽保护，D032 游玩人数、公开匹配开关及目录观战 |
 | 当前领袖基准 | [D009](DECISIONS.md#d009)：基础血量 × 开战存活人数，独立模拟 ×1；退出保留百分比缩血，替代 D005。[D036](DECISIONS.md#d036)：全部参战席位按种子随机搭档，准备至开战稳定，隐藏首领保留完整搭档 |
 | 当前卡池规则 | [D010](DECISIONS.md#d010) 固定三/四/五人分组；[D028](DECISIONS.md#d028) 采用 v0.2.4 完整联机基准，三/四人通用 24/28/36/32/16/10，五人 30/35/45/40/20/13；私有自选不扩容 |
