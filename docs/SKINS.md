@@ -17,7 +17,8 @@ plugins/<id>/plugin.json
   └── assets (or a .json file):  chars[<charId>].illust ……     the operator's own 立绘 (one picture)
                                  chars[<charId>].skins[<skinKey>] = { name, group, avatar, avatarE2,
                                                                       portrait, portraitE2, illust,
-                                                                      spine: { front, back? } }
+                                                                      spine: { front, back? },
+                                                                      tokens: { <tokenId>: { tokenSkinId?, spine } } }
         │
         ├── the server checks the overlay (shared/plugins/visual.js, docs/PLUGINS.md §9) and serves it as a document:
         │   /vs/<vs16>/overlay.json — composed on the INSTALLATION's manifest, never on a copy of it
@@ -27,7 +28,9 @@ plugins/<id>/plugin.json
                  └── data.get('assets') — what every screen reads (public/js/data.js setView)
                           │
                           ├── chars[<charId>].skins[<skinKey>]  →  the picker's rows (public/js/ui/skins.js availableSkins)
-                          └── chars[<charId>].skins[<skinKey>].spine  →  the model (public/js/assets.js spineEntry { skin })
+                          ├── chars[<charId>].skins[<skinKey>].spine  →  the model (public/js/assets.js spineEntry { skin })
+                          └── chars[<charId>].skins[<skinKey>].tokens[<tokenId>].spine  →  a summon's model
+                              (assets.js tokenSkinSpine, found from the skin its summoner wears)
 ```
 
 Three properties are load-bearing:
@@ -71,6 +74,41 @@ The existing portrait → illustration preference is retained; an illustration n
 map, or its unit's skin when the seat is unavailable, never the viewer's map. Unowned catalogue/statistics art stays
 unowned. `OperatorImage` subscribes to choices, visibility and the composed manifest, so open cards refresh on changes.
 Effective stand-in / DIY bodies are resolved before that lookup, preserving §34.23 and #686.
+
+## 召唤物换装 (summon skins)
+
+An outfit may also restyle the summons its operator's skills place (a 律动方格, a shield, a trap): the skin's
+`tokens` map names, per token id, the model that summon wears while its summoner wears that skin.
+
+- **The mapping lives under the OPERATOR; the id arrives with the summon.** `room.skins` and `UnitInfo.skin` carry the
+  skin id, while `chars[<charId>].skins[<skinId>].tokens[<tokenId>]` is where the model is written. `public/js/assets.js`
+  `tokenSkinSpine(m, tokenId, skinId)` resolves the operator through a `skinId → charId` map built once per composed
+  manifest (a plugin may reuse one key under two operators, so every candidate is tried in order), and `spineEntry`
+  asks it first for a token id. Without a mapping the summon draws the model it always drew (its local-client one, else
+  the web one), so an outfit that restyles nothing keeps today's behavior exactly.
+- **There is deliberately no `owner` field.** The manifest groups skins by operator already, so the summoner's own
+  record answers the question; the install-channel design needed `tokens[].owner` because it wrote its own manifest
+  (`data/assets.json`), and in practice most of a committed manifest's tokens have none. Our overlay can therefore not
+  have one, and a plugin never writes one.
+- **One model per token, and `spine` is REQUIRED.** A summon has no Front / Back pair: the record is
+  `{ tokenSkinId?, spine }`, where `spine` is the same single-model kind `tokens[<tokenId>].spine` is (skel / atlas /
+  textures / anims). A mapping without one is refused by the overlay schema (`shared/plugins/visual.js`
+  `TOKEN_SKIN_RECORD`, `schemas/overlay.schema.json` `$defs.tokenSkinRecord`) because it would change nothing — and the
+  pair form (`{ front, back? }`, correct for a skin itself) is refused too, which is the one mistake this shape invites.
+  At most 64 mappings per skin; the token id is the key the installation's `tokens` container holds.
+- **The sim only carries the id.** `server/sim/battle/players.js` inherits it: `_makeAlly` takes the summoner's `skin`
+  when it creates a token, and the late link (a board token listed before its owner, board order being top→bottom)
+  fills it in once the owner exists. Nothing in `server/sim/` reads it beyond carrying it, `snapshot.unitInfo.skin`
+  stays `undefined` without one (so the wire is byte-identical), and `test/golden/*.json` does not move.
+- **When it takes effect.** The choice is published the moment it is made, but a summon's model is taken from the unit
+  it inherits, which is built with the battle input: summons placed in the battle running when the choice changed keep
+  the old look, and **the next battle uses the new one**. That differs from operators, whose on-screen appearance the
+  public selection refreshes immediately (`render/app.js` `setSkins`) — an operator has an owner seat and a public map
+  to read, a summon has neither.
+- **What does not follow.** A **prep** board's token piece (the hand, the 临时整备区, a scouted bench) keeps its own
+  model: those views resolve an operator's skin and a token piece has no operator, so it changes when it deploys. A
+  summon's **avatar** is not restyled either (`tokenAvatarUrl` takes no skin) — only its model is.
+  设置「显示其他玩家的皮肤」 off hides another seat's summons along with its pieces, which falls out of the same switch.
 
 ## The switch model: the owner installs, each player switches on
 
@@ -153,6 +191,8 @@ exists) gets no section rather than an empty grid.
 | `test/skins.test.js` | The wire shape (`isSkinId` / `isSkinSelection`), the lobby → Match → PlayerState chain, the public view, reconnect, the sim's UnitInfo, the client's fallbacks, and the absence of the install channel |
 | `test/lobby-skins.test.js` | `room.skins` over WebSocket: validation, session and seat storage, the seats handed to the Match, bots, the change made mid-match |
 | `test/ui/skin-picker.test.js` | The picker's rules against a composed manifest: the rows, `playable`, the art fallbacks, the global `hasAnySkinChoices` and the per-operator `hasSkinChoices`, `chosenSkin`, and that the section's gate is the global one |
+| `test/sim/skins-token.test.js` | 召唤物换装 in the engine: a board token after and before its owner, a skill's summon, no skin (the token keeps its own model and the snapshot gains no key) and the same seeded battle twice |
+| `test/plugins/pack-token.test.js` | The pack's role parsing picks the token rules by the `tokens` path segment (`Skill_1` alone, no operator skill slots) |
 | `docs/SKINS.md` | This document |
 
 ## Edits to existing files
@@ -169,8 +209,11 @@ exists) gets no section rather than an empty grid.
 | `server/match/match/views.js` | `publicView().players[]`, `_prepBoardUnits`, the scouted bench | `skins` (omitted when empty), and `skin` on every unit the player owns |
 | `server/match/player/round.js` | `battleInput` | the unit's `skin`, from the player's own selection and the piece's operator (a 自选 slot follows its pick) |
 | `server/match/player/views.js` | `pieceView` | `skin` on the prep board / hand / temp views |
-| `server/sim/units.js`, `server/sim/battle/players.js`, `server/sim/snapshot.js` | `Unit`, `_createAllyFromInput` / `_makeAlly`, `unitInfo` | carried to the client; `skin: u.skin ?? undefined`, so a piece without one adds no key to the wire |
-| `public/js/assets.js` | `portraitUrl` / `illustUrl` (new) / `spineEntry` / `hasBackSpine` / `unitPictureUrl` / `skinsOf` / `skinHasModel` | every helper takes `opts.skin` (the skinId) and falls back to the operator's own art |
+| `server/sim/units.js`, `server/sim/battle/players.js`, `server/sim/snapshot.js` | `Unit`, `_createAllyFromInput` / `_makeAlly`, `unitInfo` | carried to the client; `skin: u.skin ?? undefined`, so a piece without one adds no key to the wire. 召唤物换装 adds two reads of it in `players.js` only: `_makeAlly` inherits `extra.ownerUnit?.skin`, and the late link fills a token whose owner came later (`if (!t.skin) t.skin = owner.skin`) |
+| `public/js/assets.js` | `portraitUrl` / `illustUrl` (new) / `spineEntry` / `hasBackSpine` / `unitPictureUrl` / `skinsOf` / `skinHasModel`, and for 召唤物换装 `tokenSkinSpine` + the per-manifest `skinId → charId` map | every helper takes `opts.skin` (the skinId) and falls back to the operator's own art; `spineEntry` asks `tokenSkinSpine` first for a token id, so a summon wears its summoner's outfit's model when that skin names one |
+| `shared/plugins/visual.js` | `SKIN_RECORD` / `TOKEN_SKIN_RECORD` / `TOKEN_KEY` / `readFields`' `required` | a skin's `tokens` map (`{ tokenSkinId?, spine }`, `spine` required, at most 64) and the general "a record kind may name required fields" rule it needed |
+| `schemas/overlay.schema.json` | `skinRecord.properties.tokens`, `$defs.tokenSkinRecord` | the same contract for the author-side schema, `spine` a `$ref` to the one model definition (`tokens[].spine`) |
+| `server/plugins/pack.js` | `opContainer` (the `tokens` path segment wins over the container name) | a skeleton under `…skins.<key>.tokens.<id>.spine` is parsed with the token rules the asset pipeline uses (`skillIndices: [0]`), not an operator's three skill slots |
 | `public/js/render/units.js` | `_pictureUrl`, `_modelEntry`, `_wantsBack`, `_loadPicture` | `info.skin` reaches the Spine entry, the diamond and the Front/Back question; the picture's cache key carries the skinId |
 | `public/js/render/app.js` | `otherSkins` setting, `ctx.myPlayerId`, `applyInfo`, `refreshSkins`, `setSettings`, `setMe`, `setSkins`, `pieceInfo` | received `sourceSkin` is retained while displayed `skin` follows the switch and latest public selection; a changed appearance drops the view; read-only prep pieces refresh too |
 | `public/js/render/app/info.js` | `renderInfo` | `skin` |
@@ -229,6 +272,9 @@ exists) gets no section rather than an empty grid.
 - **The studio does not list skins.** It finds an operator, an enemy or an interface picture by its official name
   (`server/studio/targets.js`), so a skin key is copied from the installation's manifest or written in the stem form.
 - **No skin effects and no operator voices** (a separate piece of work; docs/ASSETS.md).
+- **A summon keeps the look it was placed with**: its model is read once, when the unit is built with the battle input,
+  so a change made mid-battle reaches the next battle (operators refresh immediately instead). A prep board's token
+  piece keeps its own model until it deploys, and a summon's avatar is never restyled — see 召唤物换装 above.
 - **A 自选 slot's own record has `charId: null`**, so it wears its **pick's** operator's skin — the slot has no body of
   its own. The picker offers the appearance while picking that operator, and the choice is kept per operator, so
   changing the slot's operator changes the appearance with it.

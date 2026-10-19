@@ -61,6 +61,9 @@ export class BattlePlayers {
       const owner = ps.units.find((x) => x.kind === 'op' && x.uid === inp.ownerUid);
       if (!owner) continue;
       t.ownerUnit = owner;
+      // 召唤物换装 (P1): the token was built before its owner (a board lists top→bottom), so `_makeAlly` had no owner to
+      // inherit the outfit from — take it now. A skin the piece carried itself still wins (none does today).
+      if (!t.skin) t.skin = owner.skin;
       const def = inp.def ? null : this._tokenDef(inp.tokenId ?? inp.chessId, owner, null);
       if (!def || def === t.def) continue;
       const st = def.stats;
@@ -184,10 +187,12 @@ export class BattlePlayers {
   }
 
   _makeAlly(ps, def, kind, r, c, extra = {}) {
+    // 召唤物换装 (P1): a token created with its owner in hand — a board piece after its operator, or any skill summon
+    // (`summons.js spawnToken`) — wears the owner's outfit too. `extra.skin` (an operator's own choice) still wins.
     const st = def.stats;
     const u = new Unit({
       id: ++this._idSeq, side: 'ally', kind, def, defId: def.id, name: def.name, ownerId: ps ? ps.playerId : null,
-      uid: extra.uid ?? null, ownerUnit: extra.ownerUnit ?? null, skin: extra.skin ?? null, x: c, y: r, tileR: r, tileC: c,
+      uid: extra.uid ?? null, ownerUnit: extra.ownerUnit ?? null, skin: extra.skin ?? extra.ownerUnit?.skin ?? null, x: c, y: r, tileR: r, tileC: c,
       dir: extra.dir != null ? normDir(extra.dir) : extra.facing != null ? normDir(extra.facing) : ps ? ps.dir : 'RIGHT',
       base: {
         maxHp: st.maxHp, atk: st.atk, def: st.def, res: st.res, aspd: st.aspd, bat: st.bat, blockCnt: st.blockCnt,

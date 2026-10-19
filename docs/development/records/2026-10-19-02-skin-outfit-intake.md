@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-19 / 2026-10-19，Asia/Shanghai |
-| 状态 | 进行中：**P0（上游 B6 图片时装整批移植）已完成并验证**（2026-10-19）；P1 起待做 |
+| 状态 | 进行中：**P0（上游 B6 图片时装整批移植）与 P1（召唤物换装）已完成并验证**（2026-10-19）；P2 起待做 |
 | 类型 | 功能（方案与实现记录） |
 | 分支与开始 HEAD | `feat/skin-enhance`，从 `feat/IncreasePlayerCapacity` 的 `4ab2c8a0` 开出 |
 | 上游基线 | v0.3.1 `d905c146`；皮肤层来自上游 master（`58206c0b`、`f8c1da7d`、`9cc6c97e`、`01847bfb`），本分支无 0.3.2 内容 |
@@ -179,7 +179,42 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 
 **未验证**：浏览器 E2E（`SP_E2E=1` 下的 `test/ui/picture-skins.e2e.test.js` 等）未跑；商店卡与结算页的真实观感需要 Edge 手测。**数据面观察**：`server/match/results.js` 的阵容不带 `skin`，所以结算里 `u.skin` 实际是 undefined，靠 `OperatorImage → ownerSkin` 按 `m.public.players` 解析席位——要让**对局记录回看**也带皮肤，需要另给结果阵容补 `skin`（未列入本轮）。
 
-## 真阻碍（不是「上游没做」，而是我们不做）
+### P1 · 已完成（2026-10-19）
+
+**召唤物换装**：主人穿某套时装时，他召唤出来的 token（瓶子、装置等）换成该皮肤下的模型；皮肤没给这个 token 模型时，token 照旧画自己的。
+
+- **数据形状**：`chars[<charId>].skins[<skinKey>].tokens[<tokenId>] = { tokenSkinId?, spine }`。`spine` **必填**，而且**是一个模型**（与 manifest 里 `tokens[<tokenId>].spine` 同一种：skel / atlas / textures / anims）——召唤物没有 Front / Back 方向模型，写成 `{ front, back? }` 会被判非法（这条正好是这套形状最容易写错的地方，已用反例钉住）。每套皮肤最多 64 条；路径深度 7 段，留了 `locateAssetPath` 的 8 段余量。
+- **overlay / schema**：`shared/plugins/visual.js` 新增 `TOKEN_SKIN_RECORD`、`TOKEN_KEY`、`SKIN_TOKENS_MAX`，并加了一条通用最小机制 `readFields` 的 `required`（记录缺必填字段整条拒，字段级 `{ref}` 仍允许）；`schemas/overlay.schema.json` 的 `skinRecord` 加 `tokens` 与 `$defs.tokenSkinRecord`（`spine` 复用 `tokens[].spine` 那一份定义）；`test/plugins/schema.test.js` 加 1 条正例（含 128 字符 token 键边界）与 7 条反例（缺 `spine`、只有 `ref`、写成 front/back 对、坏键、`tokenSkinId` 非文本、65 条、未知字段）。
+- **客户端**：`public/js/assets.js` 新增按 manifest 缓存的 `skinId → charId` 反查（一个键可能被两套干员记录复用，按顺序全试）与 `tokenSkinSpine()`；`spineEntry` 对 token id 先问皮肤变体、命中且 `validSpine` 通过就用它，否则落回 token 自己的模型（本地提取优先，其次上游）。**不需要 owner 字段**：overlay 的分组本来就是按干员。
+- **sim**：`server/sim/battle/players.js` 两处——`_makeAlly` 的 `skin` 继承 `extra.ownerUnit?.skin`（覆盖棋盘 token 与技能召唤两条），late 链接补 `if (!t.skin) t.skin = owner.skin`（棋盘顺序「先 token 后主人」）。`Unit.skin` 仍是纯展示：没有皮肤时 `snapshot.unitInfo.skin` 仍是 `undefined`，线格式逐字节不变。
+- **打包**：`server/plugins/pack.js` 新增 `opContainer()`——路径含 `tokens` 段时按 **token 规则**解析角色（口径取自既有管线 `tools/assets/plan.mjs` 给 token 模型的 `skillIndices: [0]`），否则维持 `at[0]` 的老口径。
+- **文档**：`docs/SKINS.md` 新增「召唤物换装」一节（含数据图、New files、Edits 表、Known limitations），`docs/PLUGINS.md` 容器表加一行并在 §9 补一段。
+
+**语义（已写进文档）**：
+
+| 场景 | 行为 |
+|---|---|
+| 选择何时生效 | 选择立即广播；但**召唤物的模型在战斗输入构建时取一次**——本场已放下的、以及本场新召唤的都保持旧外观，**下一场战斗用新的**。干员本体可以当场刷新（它有 owner 席位、渲染读公开选择），召唤物两边都没有 |
+| 备战区 / 手牌里的 token 棋子 | 不穿（那几处解析的是干员的皮肤，token 棋子没有干员），部署进战斗才换 |
+| token 头像 | 不换（`tokenAvatarUrl` 不接受 skin） |
+| 「显示其他玩家的皮肤」关闭 | 队友的召唤物随其棋子一并回落，符合该开关的语义 |
+
+**P1 验证**（2026-10-19，分支 `feat/skin-enhance`）：
+
+| 命令 | 结果 |
+|---|---|
+| `node --test`（皮肤/插件/sim 定向 12 个文件） | 125/125 通过 |
+| `node --test test/sim/skins-token.test.js test/plugins/pack-token.test.js`（新增用例） | 7/7 通过 |
+| `npm run golden` | 288 场全匹配，**无移动**（语料里没有皮肤场景，且该字段无规则读取） |
+| `node tools/i18n.mjs check --all --strict` | 四包 2325 条，0 缺失 |
+| `node --test test/docs-consistency.test.js test/docs-paths.test.js` | 32/32 通过 |
+| `npx eslint`（改动文件） | 0 error |
+
+**未验证 / 不确定**：插件 lock 的二进制骨架端到端未跑（没有骨架 fixture，只钉了分类与角色选项的后果）；「去掉那两行则测试变红」的反向实验没做（共享工作区，避免影响同伴）；本分支 `data/assets.json` 里没有带皮肤的真实清单数据，所以只验证了字段传递，没有验证真实素材。
+
+## 真阻碍
+
+（不是「上游没做」，而是我们不做）
 
 | 项 | 为什么不做 | 便利性替代 |
 |---|---|---|
@@ -223,7 +258,7 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 ## 结果、遗留与接手
 
 - **方案结论**：P0–P6 全做，P7 逐项评估；真阻碍 5 条不做并给出替代。
-- **当前进度**：P0 已完成并验证（见上「实施进度」）；P1 召唤物换装、P2 皮肤语音、P4 实时预览、P5 官方时装特效、P6 导出导入、P7 加分项待做。
+- **当前进度**：P0、P1 已完成并验证（见上「实施进度」）；P2 皮肤语音、P4 实时预览、P5 官方时装特效、P6 导出导入、P7 加分项待做。
 - **接手入口**：[皮肤规范](../../SKINS.md)、[插件规范](../../PLUGINS.md)、`shared/plugins/visual.js`、`schemas/overlay.schema.json`、`public/js/assets.js`、`test/skins.test.js`。
 
 ## 后续补充

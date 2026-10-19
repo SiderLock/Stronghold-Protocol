@@ -169,6 +169,53 @@ export function skinsOf(m, charId) {
   return rec && isObj(rec.skins) ? rec.skins : EMPTY_SKINS;
 }
 
+/**
+ * The operator ids whose record holds a skin key, from one composed manifest (`skinId → charId[]`).
+ *
+ * 召唤物换装 (docs/SKINS.md) needs the reverse of the manifest's own grouping: a summoned token arrives with the SKIN
+ * its summoner wears, and the mapping that says which model that skin gives the token lives under the OPERATOR
+ * (`chars[<charId>].skins[<skinId>].tokens`). A plugin may reuse one key under two operators, so every candidate is
+ * kept and tried in order. Built once per manifest object; the composed manifest is replaced whenever a layer changes.
+ */
+const skinOwners = new WeakMap();
+function skinOwnerMap(m) {
+  let map = skinOwners.get(m);
+  if (map) return map;
+  map = new Map();
+  const chars = get(m, 'chars');
+  if (isObj(chars)) {
+    for (const [charId, rec] of Object.entries(chars)) {
+      const skins = get(rec, 'skins');
+      if (!isObj(skins)) continue;
+      for (const skinId of Object.keys(skins)) {
+        const list = map.get(skinId);
+        if (list) list.push(charId); else map.set(skinId, [charId]);
+      }
+    }
+  }
+  skinOwners.set(m, map);
+  return map;
+}
+
+/**
+ * The model a skin gives a summoned token — `chars[<charId>].skins[<skinId>].tokens[<tokenId>].spine` — or null when
+ * that skin brings no model for this token, in which case the token draws its own (docs/SKINS.md 召唤物换装). The
+ * model is a spine op like `tokens[<tokenId>].spine` itself: a token has no Front / Back pair. The overlay schema
+ * requires it, so an entry without one is not a mapping at all.
+ * @returns {any | null} the skin's model for this token, or null
+ */
+export function tokenSkinSpine(m, tokenId, skinId) {
+  const t = str(tokenId), s = str(skinId);
+  if (!t || !s) return null;
+  for (const charId of skinOwnerMap(m).get(s) || []) {
+    const rec = get(get(m, 'chars'), charId);
+    const skin = get(get(rec, 'skins'), s);
+    const spine = get(get(get(skin, 'tokens'), t), 'spine');
+    if (isObj(spine)) return spine;
+  }
+  return null;
+}
+
 /** Whether a skin record names a Spine model (picture-only outfits are wearable too) (docs/SKINS.md). */
 export const skinHasModel = (skin) => !!skin && isObj(skin.spine) && typeof skin.spine.front === 'object' && skin.spine.front !== null && typeof skin.spine.front.skel === 'string';
 
@@ -238,6 +285,13 @@ export function spineEntry(m, id, opts) {
   }
   const tk = get(get(m, 'tokens'), s);
   if (tk) {
+    // 召唤物换装 (docs/SKINS.md): the summoner's skin may bring its own model for this token; a skin that has none (or
+    // none for this token) leaves the token on the model it always drew. A token's model has no Front / Back pair.
+    const wanted = opts && str(opts.skin) ? String(opts.skin) : null;
+    if (wanted) {
+      const skinSpine = tokenSkinSpine(m, s, wanted);
+      if (validSpine(skinSpine)) return skinSpine;
+    }
     const web = validSpine(tk.spine) ? tk.spine : null;
     return (opts && opts.local && localSpineEntry(tk.spineLocal, opts.local, web)) || web;
   }

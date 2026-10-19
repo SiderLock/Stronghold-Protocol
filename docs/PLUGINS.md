@@ -304,6 +304,7 @@ is a number of `data/enemies.json`), so a room's `cs` is the vanilla one whateve
 | Container | A record |
 |---|---|
 | `chars[charId]` | `avatar`, `avatarE2`, `portrait`, `portraitE2`, `illust` (image), `spine.front`, `spine.back` (Spine), `skins` (one key per skin, below) |
+| a skin's `tokens[tokenId]` | `tokenSkinId` (text), `spine` (Spine, **required**) — the model the summon wears while its summoner wears that skin |
 | `enemies[key]` | `icon` (image), `spine` (Spine) |
 | `tokens[id]` | `avatar` (image), `spine` (Spine) |
 | `bonds`, `items`, `bands`, `skills`, `modules`, `ui`, `prof.icon` / `large` / `battlecard` / `sub` `[key]` | an image |
@@ -360,7 +361,12 @@ key is data, never a path or a URL by itself: a plugin's files are named by path
 `%23` and never the start of a fragment. One record takes at most 64 skins. A key outside that character set, a field a
 skin has not, a text that is not 1–64 characters (0–64 for `group`), and a file a skin names that the folder lacks are
 reported as the same fault of the operator's own record would be; a skin's model goes into `plugin.lock.json` like any
-other. What a skin *is* —
+other. **A skin may also restyle the operator's summons.** `skins[<key>].tokens[<tokenId>]` holds
+`{ tokenSkinId?, spine }`: `spine` is ONE model — the same kind `tokens[<tokenId>].spine` is, skel / atlas / textures /
+anims, because a summon has no Front / Back pair — and it is **required**, since a mapping without a model would change
+nothing; the pair form is refused for that reason, and `tokenSkinId` is metadata only. At most 64 mappings per skin, and
+`<tokenId>` is a key the installation's `tokens` container can hold. The model is what the summon wears while its
+summoner wears that skin; without a mapping it keeps its own model ([SKINS.md](SKINS.md) 召唤物换装). What a skin *is* —
 its name, its series, the picture a picker would show, the wearing of one — is this section's business; the key's shape is
 the overlay's own rule: the reader resolves every key into a path of the installation's manifest, so a key of the wrong
 shape is `PLUGIN_ASSET_KEY` (§15), as an entry key of the wrong shape is. The player picker
