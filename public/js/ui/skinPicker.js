@@ -23,8 +23,9 @@
 import { useState } from '../../vendor/hooks.module.js';
 import { html, MicroLabel, Modal } from './components.js';
 import { useStore } from '../store.js';
-import { useData } from '../data.js';
+import { data, useData } from '../data.js';
 import { skinsStore, availableSkins, chosenSkin, hasAnySkinChoices, setSkin, clearSkin, SKINS_KEY } from './skins.js';
+import { SkinModelPreview, previewEntry } from './skinPreview.js';
 import { t } from '../../../shared/i18n.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
@@ -113,6 +114,10 @@ export function SkinSection({ charId }) {
   const shown = rows.map((row) => ({ ...row, art: row.portrait || row.avatar || null, face: row.avatar || null }));
   const previewRow = preview ? rows.find((x) => !x.own && x.id === preview) || null : null;
   const previewArt = previewRow ? (previewRow.illust || previewRow.portrait || previewRow.avatar) : null;
+  // 小人预览 (docs/SKINS.md): a row whose operator (or skin) has a model is played live; a picture-only appearance keeps
+  // the enlarged 立绘 it had before — the same choice the battle renderer would make for that row, decided here so the
+  // modal draws one of the two and never both.
+  const previewHasModel = !!previewEntry(data.get('assets'), id, previewRow ? previewRow.id : null);
 
   return html`<section class="lo-sec lo-sec--skin" data-testid="skin-section">
     <header class="lo-sec__head">
@@ -128,7 +133,9 @@ export function SkinSection({ charId }) {
     </div>
     <${Modal} open=${!!previewRow} title=${previewRow ? previewRow.name : t('外观预览')} micro="SKIN PREVIEW"
       onClose=${() => setPreview(null)} width="min(92vw, 900px)">
-      <${SkinPreview} art=${previewArt} name=${previewRow ? previewRow.name : ''} />
+      ${previewHasModel
+        ? html`<${SkinModelPreview} charId=${id} skinId=${previewRow ? previewRow.id : null} art=${previewArt} name=${previewRow ? previewRow.name : ''} />`
+        : html`<${SkinPreview} art=${previewArt} name=${previewRow ? previewRow.name : ''} />`}
     <//>
   </section>`;
 }

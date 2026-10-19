@@ -141,6 +141,33 @@ slot names as the operator's own `audio.voice[<charId>]` (docs/PLUGINS.md §9).
   the schema refuses would be dropped by the runtime with a warning, and a field the runtime does not know would be
   silently ignored — the two halves of the upstream 语音槽 pull request that never merged.
 
+## 小人预览 (model preview)
+
+The picker's enlarged view plays the row's **real skeleton**: it opens on 待机 and offers a button per animation the
+model ships, so an outfit can be judged the way a board shows it.
+
+- **Live, not a picture.** The frames come from the same `assets.spine.acquire` path a battle unit uses, so what the
+  frame shows is what a deploy shows, at no extra bytes — the model files are already in the HTTP cache after a battle.
+  A pre-rendered clip would be one new file per skin: a 256 px GIF of a single clip measured ≈ 360 KB (≈ 190 MB over a
+  catalogue) at a worse frame rate.
+- **The buttons follow the model, not a list** (`clipsOf`): the entry's own `anims` roles give 部署 / 待机 / 攻击 / 技能,
+  and **every remaining clip** of its `animations` gets a button labelled with the clip's own name, so nothing a skeleton
+  ships is unreachable. Three or more extras fold behind 更多动画; two or fewer stay inline, where the toggle would be
+  taller than the buttons it hides.
+- **One canvas, owned by the box.** The preview mounts its own canvas and destroys it on unmount, so a model that
+  finishes loading after the modal closed can never attach itself to a node that is gone. The box keeps a constant vdom
+  shape (an art layer plus a mount layer) so a re-render cannot diff the canvas away, and the model is measured
+  **after** its first update: `getLocalBounds()` on a freshly built skeleton returns 0×0 and the manifest's union bounds
+  (≈1200 px for a 300 px idle pose) would shrink it to a speck.
+- **A row with no model** — a picture-only outfit — keeps the enlarged 立绘 it always had, and a model that cannot load
+  keeps the static art with the caption 模型不可用, so the picker is never blocked by a broken file or a machine without
+  WebGL.
+- **PIXI and the asset store load lazily**, inside the effect: `ui/skinPicker.js` is reachable from
+  `screens/loadout.js`, and `test/ui/plugins-client.test.js` pins that `public/js/assets.js` stays off the boot graph.
+- **What this first version does not do**: a button plays its group's first clip (an attack plays its loop rather than
+  the Begin → Loop → End sequence), the 试听 dropdown still plays the operator's own trees, and there is no token model
+  preview — the frame is the piece the row belongs to.
+
 ## The switch model: the owner installs, each player switches on
 
 | Who | What they do | Where it is stored |
@@ -223,6 +250,10 @@ exists) gets no section rather than an empty grid.
 | `test/lobby-skins.test.js` | `room.skins` over WebSocket: validation, session and seat storage, the seats handed to the Match, bots, the change made mid-match |
 | `test/ui/skin-picker.test.js` | The picker's rules against a composed manifest: the rows, `playable`, the art fallbacks, the global `hasAnySkinChoices` and the per-operator `hasSkinChoices`, `chosenSkin`, and that the section's gate is the global one |
 | `test/sim/skins-token.test.js` | 召唤物换装 in the engine: a board token after and before its owner, a skill's summon, no skin (the token keeps its own model and the snapshot gains no key) and the same seeded battle twice |
+| `public/js/ui/skinPreview.js` | 小人预览: `previewEntry` (the model a row previews), `clipsOf` (the buttons), `SkinModelPreview` (one canvas, mounted and destroyed with the box; PIXI and the asset store loaded lazily) |
+| `test/ui/skin-preview.test.js` | The pure half: which model a row previews and which buttons a model offers (roles first, every remaining clip after, never the same clip twice) |
+| `public/dev/skin-preview.html` + `public/dev/skin-preview.js` | The browser harness the next row drives (a dev page: `public/dev/` is not shipped, `tools/package.mjs`) |
+| `test/render/skin-preview.browser.test.js` | The live half, in a real browser: the canvas appears for a model the machine has, a clip button re-points the same canvas instead of rebuilding it, and unmounting removes it |
 | `test/plugins/pack-token.test.js` | The pack's role parsing picks the token rules by the `tokens` path segment (`Skill_1` alone, no operator skill slots) |
 | `docs/SKINS.md` | This document |
 
@@ -243,6 +274,8 @@ exists) gets no section rather than an empty grid.
 | `server/sim/units.js`, `server/sim/battle/players.js`, `server/sim/snapshot.js` | `Unit`, `_createAllyFromInput` / `_makeAlly`, `unitInfo` | carried to the client; `skin: u.skin ?? undefined`, so a piece without one adds no key to the wire. 召唤物换装 adds two reads of it in `players.js` only: `_makeAlly` inherits `extra.ownerUnit?.skin`, and the late link fills a token whose owner came later (`if (!t.skin) t.skin = owner.skin`) |
 | `public/js/assets.js` | `portraitUrl` / `illustUrl` (new) / `spineEntry` / `hasBackSpine` / `unitPictureUrl` / `skinsOf` / `skinHasModel`, and for 召唤物换装 `tokenSkinSpine` + the per-manifest `skinId → charId` map | every helper takes `opts.skin` (the skinId) and falls back to the operator's own art; `spineEntry` asks `tokenSkinSpine` first for a token id, so a summon wears its summoner's outfit's model when that skin names one |
 | `public/js/audio.js` | `voiceLine` (6th parameter `skin`), `skinRecordOf` (new), `voice`'s `o.skin`, `_track`'s stored `skin`, the three battle call sites | 皮肤语音: the outfit's line wins in the chosen language, then the operator's dub, then the outfit's Chinese line, then the operator's — and the outfit is resolved by id through the manifest, without importing the asset store (the boot-path pin in `test/ui/plugins-client.test.js`) |
+| `public/js/ui/skinPicker.js` | the modal body | 小人预览: `previewEntry` decides it — a row with a model gets `SkinModelPreview`, a picture-only row keeps `SkinPreview` (the enlarged 立绘) |
+| `public/css/screens/loadout.css` | end of the picker block | `.lo-spine*`: the constant-shape frame (art layer + mount layer), the clip row and its buttons |
 | `shared/plugins/visual.js` | `SKIN_RECORD` / `TOKEN_SKIN_RECORD` / `TOKEN_KEY` / `readFields`' `required` | a skin's `tokens` map (`{ tokenSkinId?, spine }`, `spine` required, at most 64) and the general "a record kind may name required fields" rule it needed |
 | `schemas/overlay.schema.json` | `skinRecord.properties.tokens`, `$defs.tokenSkinRecord` | the same contract for the author-side schema, `spine` a `$ref` to the one model definition (`tokens[].spine`) |
 | `server/plugins/pack.js` | `opContainer` (the `tokens` path segment wins over the container name) | a skeleton under `…skins.<key>.tokens.<id>.spine` is parsed with the token rules the asset pipeline uses (`skillIndices: [0]`), not an operator's three skill slots |

@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-10-19 / 2026-10-19，Asia/Shanghai |
-| 状态 | 进行中：**P0（上游 B6 图片时装整批移植）、P1（召唤物换装）、P2（皮肤语音）已完成并验证**（2026-10-19）；P4 起待做（P3 界面跟随皮肤已随 P0 的 B6 一并落地） |
+| 状态 | 进行中：**P0（上游 B6 图片时装整批移植，含 P3 界面跟随皮肤）、P1（召唤物换装）、P2（皮肤语音）、P4（小人实时预览）已完成并验证**（2026-10-19）；P5 起待做 |
 | 类型 | 功能（方案与实现记录） |
 | 分支与开始 HEAD | `feat/skin-enhance`，从 `feat/IncreasePlayerCapacity` 的 `4ab2c8a0` 开出 |
 | 上游基线 | v0.3.1 `d905c146`；皮肤层来自上游 master（`58206c0b`、`f8c1da7d`、`9cc6c97e`、`01847bfb`），本分支无 0.3.2 内容 |
@@ -238,6 +238,38 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 
 **未验证**：详情面板「选中」与结算两处调用点是组件内部调用，没有单独的行为断言（靠 `audio.test.js` 的 `voiceLine` 用例与 `docs-consistency` 钉住的调用形状）；试听不含皮肤行是刻意取舍，未做浏览器验证。
 
+### P4 · 已完成（2026-10-19）
+
+**小人预览**：选择器的放大视图里把该行的**真实骨骼**播起来——默认 待机，按钮按模型自带的动画生成。
+
+- **三个部件**（`public/js/ui/skinPreview.js`）：`previewEntry`（这一行预览哪个模型：皮肤自己的 front，否则干员的 front，都没有就 null）、`clipsOf`（按钮：`anims` 的角色 部署/待机/攻击/技能，加上 `animations` 里没被认领的每个剪辑各一个按钮、标签用剪辑名——骨骼里有的动画都摸得到；≥3 个折叠进「更多动画」）、`SkinModelPreview`（一块**自己的 canvas**，随组件挂载与销毁）。
+- **为什么实时而不是 GIF**：走的是战场上同一条 `assets.spine.acquire`，部署时看到的就是它，且 0 额外字节（模型本就在 HTTP 缓存里）；预渲染则每套皮肤多一个文件——单剪辑 256px GIF 实测 ≈ 360 KB，全目录 ≈ 190 MB，帧率还更差。
+- **三条坑**（写进注释与文档）：**一块 canvas 归组件所有**（晚到的加载不许挂到已经消失的节点）、**帧盒保持恒定 vdom 形状**（art 层 + mount 层，`img ↔ null` 翻转会让 Preact 重建子节点、把 canvas 冲掉）、**测量放在第一次 update 之后**（新建骨架的 `getLocalBounds()` 是 0×0，会退到清单的并集包围盒，模型缩成一点）。
+- **懒加载**：PIXI 与 assets 都在 effect 里动态 import——`ui/skinPicker.js` 在 `screens/loadout.js` 的导入链上，而 `test/ui/plugins-client.test.js` 钉住 `assets.js` 不在启动静态图里（照旧通过）。
+- **降级**：只有图没有模型的时装仍显示原来的放大立绘；模型加载失败（无 WebGL、坏文件）保留静态图并标注「模型不可用」，绝不挡住选择器。
+- **配套**：开发页 `public/dev/skin-preview.html` + `.js`（`public/dev/` 不进玩家包，`tools/package.mjs` 已排除）、浏览器测试 `test/render/skin-preview.browser.test.js`（`RENDER_E2E=1` 才跑，默认 SKIP）。
+- **文案**：新增 小人预览 / 更多动画 / 收起动画 / 模型不可用（四包）。
+
+**过程中发现并修掉的 bug**：`clipsOf` 的待机回落写成 `[roles.idle] || clips.filter(…)`，`[undefined]` 也是真值 → 没有 `anims`、只在 `animations` 里有 `Idle` 的骨架拿不到「待机」按钮。单元测试先抓到（同伴按规格断言、没有绕过），改为 `roles.idle ? [roles.idle] : …` 后转绿；对应测试的 raw 期望同步改成「primary 没认领的才进 extra」，并加了一条「同一剪辑不被两个按钮重复提供」。
+
+**P4 验证**（2026-10-19，分支 `feat/skin-enhance`）：
+
+| 命令 | 结果 |
+|---|---|
+| `node --test`（皮肤/预览/插件 6 个文件） | 116/116 通过 |
+| `node --test test/ui/skin-preview.test.js`（新增，15 条） | 15/15 通过 |
+| `RENDER_E2E=1 CHROME_PATH=/usr/bin/google-chrome node --test test/render/skin-preview.browser.test.js` | **6/6 通过**（真实 Chrome） |
+| `npm run golden` | 288 场全匹配，无移动 |
+| `node tools/i18n.mjs check --all --strict` | 四包 2329 条（新增 4 条），0 缺失 |
+| `node --test test/docs-consistency.test.js test/docs-paths.test.js` | 32/32 通过 |
+| `npx eslint`（改动文件） | 0 error（`public/dev/` 被忽略，符合预期） |
+
+**浏览器验证证明了什么**（不止「canvas 出现」）：`.lo-spine__art[hidden]` 只在 `status === 'ready'` 时为真（区分真模型与静态回退）、`assets.spine.peek(entry)` 证明模型进了战场同款 LRU、**相隔 700 ms 两张截图像素不同**（`autoUpdate=false` 且 ticker 没接上时骨架会冻结，能骗过所有 DOM 断言）。页面自身的 pageerror / console error / 资源 ≥400 也计入失败。
+
+**两个环境坑（已写进测试）**：CSP 的 `script-src 'self'` 拒绝内联 module（开发页必须配 `.js`）；headless Chrome 151 需要 `--enable-unsafe-swiftshader`（否则没有 WebGL、页面会正确地显示「模型不可用」，容易误判成功能坏了）与 `--no-sandbox`。
+
+**未覆盖**：皮肤分支（本安装 `data/assets.json` 不含 `skins`，要插件 overlay）与 `SkinSection ↔ 预览` 的接线只有源码级钉子；窄屏布局未测。
+
 ## 真阻碍
 
 （不是「上游没做」，而是我们不做）
@@ -284,7 +316,7 @@ chars["char_1033_swire2"].skins["char_1033_swire2@ambienceSynesthesia#4"] = {
 ## 结果、遗留与接手
 
 - **方案结论**：P0–P6 全做，P7 逐项评估；真阻碍 5 条不做并给出替代。
-- **当前进度**：P0（含 P3 的界面跟随皮肤）、P1、P2 已完成并验证（见上「实施进度」）；P4 实时预览、P5 官方时装特效、P6 导出导入携带皮肤、P7 加分项待做。
+- **当前进度**：P0（含 P3 的界面跟随皮肤）、P1、P2、P4 已完成并验证（见上「实施进度」）；P5 官方时装特效（需提取机）、P6 导出导入携带皮肤、P7 加分项待做。
 - **接手入口**：[皮肤规范](../../SKINS.md)、[插件规范](../../PLUGINS.md)、`shared/plugins/visual.js`、`schemas/overlay.schema.json`、`public/js/assets.js`、`test/skins.test.js`。
 
 ## 后续补充

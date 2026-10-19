@@ -203,4 +203,16 @@ describe('皮肤 picker: the enlarged preview', () => {
   test('no art at all renders nothing (a skin with no illustration uses the tile art, so this is the empty case)', () => {
     assert.equal(SkinPreview({ art: null }), null);
   });
+
+  test('the modal plays the row\'s model when it has one, and keeps the enlarged 立绘 when it does not (P4)', () => {
+    // The choice comes from the composed manifest — the same lookup a battle unit makes (previewEntry) — and the modal
+    // draws ONE of the two: 小人预览 for a row with a model, the 立绘 for a picture-only appearance.
+    const src = readFileSync(new URL('../../public/js/ui/skinPicker.js', import.meta.url), 'utf8');
+    assert.match(src, /const previewHasModel = !!previewEntry\(data\.get\('assets'\), id, previewRow \? previewRow\.id : null\)/,
+      'the branch must ask previewEntry about this row, not about a hand-kept flag');
+    assert.match(src, /previewHasModel[\s\S]{0,140}SkinModelPreview/,
+      'a row with a model gets the live frame');
+    assert.match(src, /: html`<\$\{SkinPreview\} art=\$\{previewArt\}/,
+      'a picture-only row keeps the enlarged 立绘 it always had');
+  });
 });

@@ -697,6 +697,20 @@
 /* the enlarged view: the 立绘 (whole, not the cropped tile), as large as the modal allows */
 .lo-skin-preview { display: flex; align-items: center; justify-content: center; }
 .lo-skin-preview img { display: block; max-width: 100%; max-height: 65dvh; object-fit: contain; }
+/* 小人预览 (docs/SKINS.md): the row's real skeleton, played live in the modal. The frame keeps a constant shape — an
+   art layer (the static picture, hidden once the model plays) under a mount layer (the canvas) — so a re-render can
+   never diff the canvas away; the width/height come from the component (320×340 CSS px). */
+.lo-spine { display: flex; flex-direction: column; align-items: center; gap: .06rem; }
+.lo-spine__frame { position: relative; background: radial-gradient(60% 60% at 50% 40%, rgba(255,255,255,.045), transparent 70%); border-radius: 6px; }
+.lo-spine__art, .lo-spine__mount { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+.lo-spine__art img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.lo-spine__mount canvas { display: block; }
+.lo-spine__clips { display: flex; flex-wrap: wrap; justify-content: center; gap: .04rem; max-width: 22rem; }
+.lo-spine__btn { font: inherit; font-size: max(.12rem, 10px); line-height: 1.4; padding: .02rem .07rem; border-radius: 4px;
+  border: 1px solid var(--line, rgba(255,255,255,.16)); background: transparent; color: var(--text-dim); cursor: pointer; }
+.lo-spine__btn.is-on { color: var(--text); border-color: var(--accent, #d8b26a); }
+.lo-spine__btn--more { opacity: .8; }
+.lo-spine__note { margin: 0; font-size: max(.12rem, 9px); color: var(--text-dim); }
 @media (max-width: 900px) { .lo-skins { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 /* phones in landscape (a narrow viewport that is also short: the detail panel is the whole width and ~200 px tall): the
    1:2 tile is taller than that panel, so the five-to-a-row 1:1 avatar takes over — `min-height: 0` because the panel,
