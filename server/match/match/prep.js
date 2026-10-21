@@ -92,6 +92,30 @@ export class MatchPrep {
     };
     /** The rehearsal's slices, once the job simulates locally (nobody answered, or the server took it over). */
     const runJob = (job) => {
+      if (this.rehearsalPool && !sliceCtl && !job.workerTried) {
+        job.workerTried = true;
+        const task = this.rehearsalPool.submit({ inputs: job.inputs, cap: job.cap,
+          playerId: ps.playerId, content: this.battleContent, rules: this.rules });
+        if (task) {
+          this._workerRehearsals.add(task);
+          task.promise.then((index) => {
+            this._workerRehearsals.delete(task);
+            if (!valid()) return;
+            this.later(0, () => {
+              if (!valid()) return;
+              job.best = job.plans[index] || job.best;
+              job.done = true;
+              finish(job);
+            });
+          }, (error) => {
+            this._workerRehearsals.delete(task);
+            if (!valid()) return;
+            this.log.warn?.(`[match ${this.roomCode}] bot rehearsal fallback: ${error.message}`);
+            this.later(0, () => { if (valid()) runJob(job); });
+          });
+          return;
+        }
+      }
       const slice = () => {
         if (!valid()) return;
         let done = true;

@@ -252,6 +252,14 @@ The rest of this section is the legacy server-run mode
 另一组队友的战场情况" → `BAD_TARGET 'other group hidden'`); eliminated / departed players spectate any field.
 
 ### 1.5 AI player (bot.js)
+
+Capacity fork performance maintenance: real vanilla matches may execute detached layout rehearsals in the bounded
+`rehearsalPool` child processes (see [server settings](SERVER_SETTINGS.md#计算进程)). The existing heuristic, seeds,
+candidate comparison and preparation continuation are preserved; the parent applies an answer only while that seat's
+same prep job is still valid. Ending prep/disposal cancels queued/running work. Worker failure resumes the original
+sliced job. Previews omit unused render events, and early-stop comparisons read live leak counters rather than
+building provisional full reports. Virtual/test/plugin matches retain the original path.
+
 **Strategy** (`botPickBand`): weighted by starting LP among the offered bands (alone, 老鲤's withheld first-round funds
 × 0.02); a band whose mechanic rides on a bond the mode switches off weighs 0 — `GameData.bandBondIds` (bands.json
 `bondIds`, built by shared/bandBonds.js: the bond names in <…> of its text, the bond ids / bond pools of its blackboards)

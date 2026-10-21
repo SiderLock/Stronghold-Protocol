@@ -231,6 +231,112 @@ from the GameObject it hangs under (`<charId>_<stem>` → `<charId>@<stem>`, the
   lower-case keys): both sides of a pair are lower-cased when written, because the runtime looks a pair up by the
   lower-cased key it is about to play.
 
+## 本机提取的官方时装 (installation outfits)
+
+A cosmetic plugin may never carry files of the official game (docs/PLUGINS.md §9 — plugins get shared), while the
+official outfits *are* official files. They therefore live where the rest of the official art lives: under
+`public/assets/local/` (git-ignored, extracted from the player's own client), with one metadata sidecar the server
+merges into the manifest it serves. Nothing about the choice, the sync, the sim, the protocol or the golden results
+changes — the picker simply finds them, exactly like a plugin's outfits.
+
+    tools/local-extract/skins.py            skinpack/<charId>.ab → models, 立绘, 半身像 + data/local-skins.json
+      ↓
+    public/assets/local/skins/<charId>/<skin>/…   front/back .skel .atlas pages, portrait.png, illust.png
+    data/local-skins.json                          { version, skins: { <official skin id>: { charId, name, group, spine, portrait, illust } } }
+      ↓
+    server/http/assetViews.js `mergeLocalSkins`   merged into the served /data/assets.json (`chars[].skins`)
+
+- **The data** comes from the client's `skinpack/<charId>.ab`: the battle prefab at
+  `dyn/battle/prefabs/skins/character/<charId>/<stem>.prefab` binds its `Front` and `Back` renderers to their
+  `skeletonDataAsset` references. Follow those references using `extract.py prefab_spine_nodes`, as the default
+  operator extractor already does. Container paths compare without case (Unity lower-cases them, while official
+  stems can contain `ambienceSynesthesia`). A missing/external reference stays missing; the building prefab is never
+  a fallback. The `<stem>b` Sprite supplies the 半身像 (`portrait`), and `<stem>` the full 立绘 (`illust`).
+- **Front and Back may have the same skeleton filename.** 惊蛰「遗迹游学者」 binds two distinct TextAssets both named
+  `char_306_leizi_game#3.skel`. The old name scan took the first one, which happened to be Back. Its Front was therefore
+  a second Back; mirroring LEFT could not repair it. The earlier claim that the client ships no outfit Back was wrong.
+  Local re-extraction supplies the faces actually referenced by the prefab; single-model outfits stay Front-only.
+  `skin-backs.mjs` remains a legacy fallback for a missing Back only; it cannot correct a wrong Front.
+- **Repair an existing installation** with Windows-native Python where the client lives, then regenerate metadata:
+
+  ```powershell
+  .venv-extract-win/Scripts/python.exe tools/local-extract/skins.py --game "D:\…\StreamingAssets\AB\Windows" --models-only
+  node tools/local-extract/skin-meta.mjs --json
+  ```
+
+  `--models-only` restricts the run to installed outfits, skips picture/avatar scans and replaces only each successful
+  record's `spine`; it preserves pictures, names, voices and unrelated outfits. A failed outfit retains its old record
+  and is reported. `--only <charId>` narrows a pilot run. Back up the installation art and sidecar before replacement;
+  deploying source alone does not repair files already extracted on a server. Rebuild the served asset index/catalog
+  after installing the repaired files, so new hashes replace the old content identities. Old cached bytes may remain
+  stored, but must never answer requests for a different hash.
+- **A model entry is not three paths.** `public/js/assets.js` `validSpine` requires `{ skel, atlas, anims }`, and the
+  renderer drives the model from `anims` (idle / deploy / attack / skill / die) with `bounds` and `hits` placing it and
+  timing its effects. `tools/local-extract/skin-meta.mjs` derives all of it from the skeleton with the same parser and
+  role resolver a cosmetic plugin's model goes through (`tools/assets/skel.mjs`, `tools/assets/anim-roles.mjs`) and writes
+  it into the sidecar; without it the client refuses the entry ("no spine entry") and the unit silently falls back to the
+  operator's own model.
+- **The launcher's downloads are an overlay**: content fetched after the install lands under
+  `Arknights_Data/PersistentData/Bundles` with the same relative paths, and it wins over the install. `skins.py` reads
+  that layer first (`--extra`, default: the client's `PersistentData/Bundles`), so an outfit the launcher downloaded
+  after the install is extracted too — three of the 523 on the 2026-10 client exist only there.
+  Names, series and ids are the official ones from `skin_table.json` (`displaySkin.skinName`,
+  `displaySkin.skinGroupName`, `battleSkin.skinOrPrefabId`), fetched from the Kengxxiao mirror on jsDelivr and cached
+  in `.cache/gamedata/excel/` (`--refresh` re-downloads it). An outfit the table names without a battle model is
+  skipped, and a file named with `@ # + .` gets a URL-safe directory (`char_003_kalts@boc#6` →
+  `char_003_kalts_boc_6` — a `#` in a path is a URL fragment, the page would request only what is before it).
+- **The server merges, the client needs nothing**: `mergeLocalSkins` adds each outfit under its operator in the served
+  copy of `data/assets.json`, leaving everything else in that document alone (the committed file is never written). An
+  outfit the manifest already describes — a bundled record, another sidecar — is kept, and a cosmetic plugin's overlay
+  is applied later *on the client*, so a plugin can still override or extend any of it. An operator this build does
+  not have (a sidecar from a newer client) is skipped; a record with no model and no picture is dropped; a broken
+  model costs the model only, the pictures still play.
+- **Run it with the Windows interpreter when the client is on a Windows drive**: `.venv-extract-win/Scripts/python.exe
+  tools/local-extract/skins.py --game "D:\…\StreamingAssets\AB\Windows"` — reading the client and writing the pages
+  through WSL's `/mnt/…` mount is an order of magnitude slower (the same 4 outfits took ~5 s there against minutes).
+  The file names are Windows paths; run it from PowerShell if `python.exe` is not reachable from the shell you use.
+- **The in-match shop slot is an avatar slot** (`css/screens/game-shop.css` `.scard__art`): the official shop card draws
+  the operator's 180×180 avatar, so that card asks for the avatar and never for the 立绘. The art is sized by the card's
+  WIDTH (62%, square, top right, fading into the name strip) — sizing it by the card's height, which a 1:2 portrait could
+  afford, made a square avatar as wide as the card is tall and it covered everything.
+- **The card picture is a 1:2 crop.** The picker's tile is a fixed 1:2 box (the shape of the 180×360 portrait an
+  appearance is chosen by) and the enlarged view letterboxes whatever it is given; an outfit's art from the client is the
+  wide splash (~1.25:1). `skins.py` therefore writes `portrait.png` as **full height × half width, centred on the
+  figure** (408×817 for a 1022×817 splash) and keeps the untouched splash as `illust.png` (`--crop-portraits` re-crops
+  the already extracted files without touching the models).
+- **The 180×180 avatars** come from the client's `spritepack/ui_char_avatar_*.ab` (19 shards, read in a couple of
+  seconds): the sprite named after the outfit's `avatarId` (`char_003_kalts_boc#6`) is saved as `avatar.png` beside the
+  model and named in the record, so a tile shows the outfit's own face instead of the operator's. `--avatars-only`
+  (re)writes just those for the outfits already in the sidecar (a few seconds).
+- **Not extracted**: the outfits' voice lines — this client install carries no outfit voice packs at all (`audio/`
+  holds the ambience and average sounds; the per-operator voices are downloaded on demand into `PersistentData`), so
+  they would have to come from the CDN or from an install that played them. The summons' outfit models need the same
+  treatment as the operators' (the client packs them in `pkgrps/btl_pfb_tokens_*.ab`) and the sidecar has no
+  `tokens` key yet.
+
+## 预缓存 (the asset cache)
+
+The browser pre-cache (素材预缓存, `public/asset-cache-sw.js` + `/api/asset-cache/catalog`) stores bytes **by content
+hash** and answers a request only when the requested path is an entry of the pinned catalog's URL map — so an asset the
+catalog does not list is simply downloaded again, in the lobby and in a match alike.
+
+- **Outfits and effects are in the catalog** (`server/assetCacheCatalog.js`): it reads the two sidecars beside the
+  committed manifests — `data/local-skins.json` (merged into the served `assets.json` before the model lists are built,
+  so an outfit's skel/atlas/pages carry the same single model hash the game asks for) and `data/local-fx.json` (the
+  official effects). Without them the lobby said "everything cached" and the first outfit in a match still downloaded.
+- **Coverage is all of it**: every URL of the served `assets.json` (18 366), `local-assets.json` (1 697) and
+  `local-fx.json` (27 642) is a key of the catalog map — outfits 1 653, effects 27 642, nothing missing.
+- **Verified in a real browser** (localhost, secure context): an outfit avatar, an outfit model (`.skel`) and an effect
+  prefab are first fetched from the network and then served from Cache Storage (`X-SP-Asset-*` on the cached copy), with
+  the exact bytes the catalog lists.
+- **It needs a secure context.** The feature lives entirely in a Service Worker and Cache Storage: a browser only
+  exposes those on HTTPS or `localhost`. The catalogue on a plain-HTTP, IP-address origin (`http://203.0.113.7:5892`)
+  reports `isSecureContext: false`, no `serviceWorker`, no `caches` — the 预缓存 panel cannot run there at all (the
+  ordinary HTTP cache still works, because the hashed URLs are `immutable`). Serve the game over HTTPS (a tunnel or a
+  TLS reverse proxy) if players should use the pre-cache.
+- **The catalog has a client-side size cap** (`MAX_MANIFEST_BYTES`, 32 MB): with the outfits and effects the JSON is
+  ≈24 MB, so it fits, but it is the number to watch when more extracted art joins the catalog.
+
 ## 导出 / 导入 (the envelopes carry the choice)
 
 The 干员调配 screen's 导出 downloads a versioned envelope (`stronghold.loadout`), and its 自选编队 tab one of its own
@@ -338,6 +444,8 @@ exists) gets no section rather than an empty grid.
 | `test/studio/targets.test.js` | The studio's target index: an outfit is a target of its own under its operator's record, searchable by name / series / operator, and `skin:<key>` reads back although the key carries `@ # + .` |
 | `tools/local-extract/skinfx.py` | 官方时装特效's data: read every `skinpack/<charId>.ab`, name each hooker's outfit, write `index.json`'s optional `skinFx` section and print the variant keys a `--fx-keys` run must export |
 | `test/render/vfx-skinfx.test.js` | 官方时装特效's runtime: the outfit decides (not the target, for an attack's own effects), a variant the set does not hold falls back to the base key, an older index without the section plays everything as before, and preloading covers the outfits in the battle |
+| `tools/local-extract/skins.py` | 本机提取的官方时装: `skinpack/<charId>.ab` → models + 立绘 + 半身像 under `public/assets/local/skins/`, and `data/local-skins.json` (official names from `skin_table.json`) |
+| `test/asset-views-skins.test.js` | The served-manifest merge: additive, an outfit the manifest already has is kept, an unknown operator skipped, a record with nothing to show dropped, a broken model costs only the model |
 | `public/dev/skin-preview.html` + `public/dev/skin-preview.js` | The browser harness the next row drives (a dev page: `public/dev/` is not shipped, `tools/package.mjs`) |
 | `test/render/skin-preview.browser.test.js` | The live half, in a real browser: the canvas appears for a model the machine has, a clip button re-points the same canvas instead of rebuilding it, and unmounting removes it |
 | `test/plugins/pack-token.test.js` | The pack's role parsing picks the token rules by the `tokens` path segment (`Skill_1` alone, no operator skill slots) |

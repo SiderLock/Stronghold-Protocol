@@ -35,8 +35,10 @@ async function fixture(run, { legacy = false } = {}) {
     ['/assets/audio/中 文.mp3', Buffer.from('1234567890')],
     ['/assets/local/spine/token/foo.skel', Buffer.from('local-token')],
   ]);
-  let slow = false, failSummary = false, hashedAliases = false, legacySW = legacy;
+  let slow = false, failSummary = false, hashedAliases = false, legacySW = legacy, fileDelay = 0;
   const downloads = [], ordinary = [], closed = [], catalogRequests = [], catalogUpdates = [], statusRequests = [];
+  // in-flight /api/asset-cache/file responses: the download worker fills the server's per-client lease in parallel
+  const inFlight = { n: 0, peak: 0 };
   const catalog = () => {
     const files = [...contents].map(([url, body]) => ({ url, bytes: body.length, sha256: hash(body),
       type: url.endsWith('.png') ? 'image/png' : url.endsWith('.mp3') ? 'audio/mpeg' : 'application/octet-stream',
@@ -80,13 +82,18 @@ async function fixture(run, { legacy = false } = {}) {
     if (url.pathname === '/api/asset-cache/file') {
       const target = url.searchParams.get('url'); const bytes = contents.get(target);
       downloads.push(target);
+      inFlight.n++; inFlight.peak = Math.max(inFlight.peak, inFlight.n);
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; inFlight.n--; } };
+      res.on('finish', done); res.on('close', done);
       if (!bytes || hash(bytes) !== url.searchParams.get('hash')) { res.writeHead(409); res.end(); return; }
       res.writeHead(200, { 'Content-Length': bytes.length, 'Content-Type': catalog().files.find((f) => f.url === target).type, 'Cache-Control': 'no-store' });
       if (slow) {
         res.write(bytes.subarray(0, 1));
         const timer = setTimeout(() => res.end(bytes.subarray(1)), 5000);
         res.on('close', () => { closed.push(target); clearTimeout(timer); });
-      } else res.end(bytes);
+      } else if (fileDelay > 0) setTimeout(() => res.end(bytes), fileDelay);
+      else res.end(bytes);
       return;
     }
     const pathname = decodeURIComponent(url.pathname);
@@ -150,8 +157,9 @@ async function fixture(run, { legacy = false } = {}) {
     await page.waitForFunction(() => navigator.serviceWorker.controller);
     if (legacy) await page.waitForFunction(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting);
     await run({ page, browser, url, contents, downloads, ordinary, problems, closed, catalog, catalogRequests, catalogUpdates,
-      statusRequests, legacyCatalog,
+      statusRequests, legacyCatalog, inFlight,
       setSlow: (value) => { slow = value; }, setFail: (value) => { failSummary = value; },
+      setFileDelay: (value) => { fileDelay = value; },
       upgrade: () => { contents.set('/assets/a.png', Buffer.from('image-two')); } });
   } finally {
     await browser?.close();
@@ -250,6 +258,17 @@ test('Edge imports partial/old ZIP locally, refuses traversal, and deep verifica
   });
 });
 
+test('Edge fills the catalog with several parallel downloads (the server lease), not one file at a time', opts, async () => {
+  await fixture(async ({ page, downloads, inFlight, setFileDelay }) => {
+    // a real transfer has latency: give every file 150 ms so two requests can genuinely overlap
+    setFileDelay(150);
+    await download(page);
+    assert.equal((await state(page)).readyFiles, 3);
+    assert.ok(inFlight.peak >= 2, `peak in-flight downloads ${inFlight.peak} (expected the lease to be used)`);
+    assert.equal(downloads.length, 3);
+  });
+});
+
 test('Edge cross-tab playing guard pauses online filling, preserves files, releases locks and allows retries', opts, async () => {
   await fixture(async ({ page, browser, url, downloads, setSlow, closed, problems, catalog }) => {
     await importCatalog(page, catalog());
@@ -272,7 +291,9 @@ test('Edge cross-tab playing guard pauses online filling, preserves files, relea
     setSlow(false);
     await download(page);
     assert.equal((await state(page)).readyFiles, 3);
-    assert.ok(downloads.length >= 3); assert.ok(closed.length <= 1);
+    // Pausing aborts the in-flight requests. Downloads run in parallel now (bounded by the server's per-client lease,
+    // 2 here: the mock's status carries no maxDownloadsPerClient), so up to that many connections may be cut.
+    assert.ok(downloads.length >= 3); assert.ok(closed.length <= 2, `closed ${closed.length} connections on pause`);
     assert.deepEqual(problems, []);
   });
 });

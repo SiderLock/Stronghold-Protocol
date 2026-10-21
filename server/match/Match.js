@@ -320,6 +320,11 @@ export class Match {
     this.registry = opts.registry || getDefaultRegistry();
     this.dispatcher = new EffectDispatcher(this, this.registry);
     this.BattleClass = typeof opts.BattleClass === 'function' ? opts.BattleClass : Battle;
+    // Only real vanilla matches with this exact data snapshot use the server-owned preview pool.
+    // Custom battle classes, test journals and virtual-time tools retain their existing execution path.
+    this.rehearsalPool = !this.sched.virtual && opts.test !== true && !opts.requireCs && this.BattleClass === Battle
+      && opts.rehearsalPool?.data === this.data ? opts.rehearsalPool : null;
+    this._workerRehearsals = new Set();
     this.battleContent = opts.battleContent || 'full';
     this.timerScale = Number.isFinite(opts.timerScale) && opts.timerScale >= 0 ? opts.timerScale : 1;
     this.gameSpeed = Number.isFinite(opts.combatSpeed) && opts.combatSpeed > 0 ? Math.min(opts.combatSpeed, 200) : GAME_SPEED;

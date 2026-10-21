@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { AUDIO_EXTS, MEDIA_PREFIX } from '../shared/media.js';
 import { hashedPath } from '../shared/assetPaths.js';
-import { rewriteManifest } from './http/assetViews.js';
+import { rewriteManifest, mergeLocalSkins } from './http/assetViews.js';
 
 export const ASSET_CACHE_SCHEMA = 1;
 export const ASSET_CACHE_MIME = Object.freeze({
@@ -127,9 +127,19 @@ export async function createAssetCacheCatalog({ publicDir, dataDir, app, concurr
       return null;
     }
   };
-  const [standard, local] = await Promise.all([readManifest('assets.json', false), readManifest('local-assets.json', true)]);
+  // The installation's own outfits and the official battle effects are served from sidecars, not from the committed
+  // assets.json: the outfits merge into the served copy (mergeLocalSkins), the effects ship as their own manifest. Both
+  // are files the client fetches through the same /assets/ paths, so a pre-cache that leaves them out means the lobby
+  // says "everything cached" and the first outfit in a match still downloads. Neither is required.
+  const [standard, local, outfits, effects] = await Promise.all([
+    readManifest('assets.json', false), readManifest('local-assets.json', true),
+    readManifest('local-skins.json', true), readManifest('local-fx.json', true),
+  ]);
+  // the model lists a skin's Spine entry forms (skel + atlas + pages share one hash), so the pre-cache stores the same
+  // URL the match asks for
+  const standardWithOutfits = outfits ? mergeLocalSkins(standard, outfits) : standard;
   const modelAtlases = new Set();
-  collectModelAtlases(standard, modelAtlases);
+  collectModelAtlases(standardWithOutfits, modelAtlases);
   // Optional runtime token/enemy models are reconstructed from local groups by spineEntry.
   for (const [group, records] of Object.entries(local?.groups || {})) {
     if (!group.startsWith('spine/')) continue;
@@ -250,7 +260,7 @@ export async function createAssetCacheCatalog({ publicDir, dataDir, app, concurr
       return parts.every(Boolean) ? createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16) : null;
     },
   };
-  for (const [name, manifest] of [['assets.json', standard], ['local-assets.json', local]]) {
+  for (const [name, manifest] of [['assets.json', standardWithOutfits], ['local-assets.json', local], ['local-fx.json', effects]]) {
     if (!manifest) continue;
     const { models } = rewriteManifest(manifest, name, hashes);
     for (const rels of models) {

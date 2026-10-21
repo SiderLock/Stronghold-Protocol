@@ -10,6 +10,8 @@ import { TOKEN_IDS } from '../../server/sim/content/tokens.js';
 import { createRegistry } from '../../server/match/effectsMeta.js';
 import { makeMatch, DATA, give, legalTileFor } from '../match/harness.js';
 import { FORCED_EXIT } from '../../server/sim/constants.js';
+import { COMBAT_TIME_SCALE } from '../../server/match/gamedata.js';
+import { formatBondEffect, richTextPlain } from '../../public/js/ui/richText.js';
 
 const close = (a, b, eps = 1e-6, msg) => assert.ok(Math.abs(a - b) <= eps, `${msg ?? ''} expected ${b}, got ${a}`);
 const op = (id, bonds, extra = {}) => chessRec({
@@ -840,6 +842,34 @@ test('叙拉古: after each deployment ASPD +(25+0.8L) for 32+0.4L s; 3 members:
   a.respawnAt = 0;
   h.b.redeploy(a);
   assert.equal(a.s.aspd, 100 + 25 + 0.8 * L);
+  checkInvariants(h.b);
+});
+
+test('叙拉古 6: 212 game seconds are 106 real seconds at 2×; layer gains do not extend an existing deployment buff', () => {
+  const list = Array.from({ length: 6 }, (_, i) => [`s${i}_a`, ['siracusaShip']]);
+  const h = makeBattle({ defs: defsOf(list), units: lineup(list.map((x) => x[0])),
+    bonds: { siracusaShip: bondOn(6, 450, null, [3, 6]) }, timeLimit: 1000, autoFinish: false });
+  h.step(1);
+  const a = h.unit('s0_a');
+  const duration = buffOf(a, 'bond:siracusa:stealth').duration;
+  assert.equal(duration, 212);
+  assert.equal(COMBAT_TIME_SCALE, 2);
+  assert.equal(duration / COMBAT_TIME_SCALE, 106);
+  assert.match(richTextPlain(formatBondEffect(DATA.bonds.siracusaShip, 450)), /持续212秒/);
+  h.run(20);
+  const before = buffOf(a, 'bond:siracusa:stealth').timeLeft;
+  h.b.addLayers('p1', 'siracusaShip', 100, 'test');
+  h.step(1);
+  assert.match(richTextPlain(formatBondEffect(DATA.bonds.siracusaShip, 550)), /持续252秒/);
+  assert.equal(buffOf(a, 'bond:siracusa:stealth').duration, 212);
+  assert.ok(buffOf(a, 'bond:siracusa:stealth').timeLeft < before, 'no timer reset on layer gain');
+  h.run(duration - h.b.time - 0.1);
+  assert.ok(a.s.flags.stealth);
+  h.run(0.3);
+  assert.ok(!a.s.flags.stealth);
+  assert.equal(a.s.aspd, 100, 'ASPD ends with the deployment timer too');
+  h.b.retreat(a); a.respawnAt = 0; h.b.redeploy(a);
+  assert.equal(buffOf(a, 'bond:siracusa:stealth').duration, 252, 'next deployment reads the new layers');
   checkInvariants(h.b);
 });
 

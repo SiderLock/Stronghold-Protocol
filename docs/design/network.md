@@ -15,6 +15,12 @@ use the existing compact-v1 extension slot; battle simulation and published wire
 
 ## 8. Network protocol (shared/protocol.js is normative)
 
+Capacity fork performance maintenance (2026-10-21): result validation indexes spawn modifiers once, preserving the
+original first-match and shallow-equality rules. Oversized results still use `b.yield` and full server settlement;
+vanilla normal/unite replays may run in the bounded child pool, with the same result and timeline and the original
+sliced fallback. Wire limits and loss attribution are unchanged. See [server configuration](../SERVER_SETTINGS.md#计算进程)
+and the measured investigation (local notes).
+
 Transport: one WebSocket per tab at `/ws`. Business objects remain `{ t: '<type>', ...payload }`; `hello` / `welcome` negotiate compact position arrays independently for each connection, with original JSON for older peers. The complete versioned positions, enums, UTF-8 restoration tool and fallback rules are in [WIRE_PROTOCOL.md](../WIRE_PROTOCOL.md). Standard `permessage-deflate` retains the server's per-connection compression context with a 32 KiB window; the 20-player fork keeps this bandwidth-oriented default instead of upstream's independent-message 2 KiB window. A client that offers no compression, or only a narrower server window than the active configuration permits, connects uncompressed. Client requests may carry `rid`; the direct reply echoes it (`ok`, a requested `lobby.state` view, or `error`). Server pushes have no `rid`. Max frame 64 KB inbound **after decompression**; rate limit 40 msgs/s per connection (excess dropped with `error RATE`). Ordinary public changes coalesce at 125 ms (maximum 8 Hz), identical views are deduplicated; explicit forced resyncs remain immediate. HTTP and WebSocket traffic counters at `/healthz?traffic=1` are available to loopback/private-network visitors only. See [D021](../development/DECISIONS.md#d021) and the [v0.2.6 merge record](../development/records/2026-10-14-02-upstream-v0.2.6.md).
 
 ### 8.1 Session & lobby

@@ -39,12 +39,16 @@ const EXTRA_INLINE = 3;
  * @param {any} m the composed manifest @param {string} charId @param {string|null} skinId
  * @returns {any | null} a manifest Spine entry
  */
-export function previewEntry(m, charId, skinId) {
+export function previewEntry(m, charId, skinId, { back = false } = {}) {
   const rec = m && typeof m === 'object' && m.chars ? m.chars[charId] : null;
   if (!rec) return null;
   const skin = skinId && rec.skins && typeof rec.skins === 'object' ? rec.skins[skinId] : null;
   const spine = skin && skin.spine && skin.spine.front ? skin.spine : rec.spine;
-  return spine && spine.front && typeof spine.front.skel === 'string' ? spine.front : null;
+  if (!spine) return null;
+  // `back` (the dev harness, and an outfit's own Back model when it ships one): a record with no Back keeps its Front,
+  // which is what a unit facing UP draws for such an outfit anyway (assets.js spineEntry)
+  const face = back && spine.back && typeof spine.back.skel === 'string' ? spine.back : spine.front;
+  return face && typeof face.skel === 'string' ? face : null;
 }
 
 /** One clip of a button: the manifest names the clips, the first one is what the button plays. */
@@ -85,14 +89,14 @@ const firstClip = (group) => (group.primary.find((b) => b.key === 'idle') || gro
  * load. The buttons never rebuild the skeleton — they only re-point the running one at another clip.
  * @param {{ charId: string, skinId?: string|null, art?: string|null, name?: string }} props
  */
-export function SkinModelPreview({ charId, skinId = null, art = null, name = '' }) {
+export function SkinModelPreview({ charId, skinId = null, art = null, name = '', face = 'front' }) {
   const hostRef = useRef(null);
   const actorRef = useRef(null);
   const [status, setStatus] = useState('idle');          // idle | loading | ready | failed
   const [group, setGroup] = useState({ primary: [], extra: [] });
   const [clip, setClip] = useState('idle');
   const [more, setMore] = useState(false);
-  const entry = previewEntry(data.get('assets'), charId, skinId);
+  const entry = previewEntry(data.get('assets'), charId, skinId, { back: face === 'back' });
 
   useEffect(() => {
     if (!entry) {

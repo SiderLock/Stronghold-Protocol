@@ -654,7 +654,11 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
           await swMessage('ASSET_CACHE_CLEAR');
           patch({ readyFiles: 0, readyBytes: 0, missingFiles: state.totalFiles, missingBytes: state.totalBytes });
         } else if (catalog) {
-          await runWorker(action === 'catalog' || action === 'catalog-update' ? 'scan' : action, { deep, ...(file ? { file } : {}) });
+          // The download worker runs several files at once, bounded by the server's per-client lease (state.policy,
+          // /api/asset-cache/status → policy.maxDownloadsPerClient). Asking for more only provokes 429s.
+          const maxParallel = action === 'download'
+            ? Math.max(1, Math.min(6, Number(state.policy?.maxDownloadsPerClient) || 2)) : 1;
+          await runWorker(action === 'catalog' || action === 'catalog-update' ? 'scan' : action, { deep, maxParallel, ...(file ? { file } : {}) });
           // Stale copies are housekeeping: a failure here (e.g. a legacy cache without an index) must not turn a
           // finished import/download into an error after every byte was already verified and written.
           if (action === 'import' || action === 'download') {

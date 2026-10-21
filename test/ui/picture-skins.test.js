@@ -105,3 +105,17 @@ test('shop, details, thumbnails and both result layouts carry the owning seat in
   const row = LineupThumb({ u, gd, ownerId: 'two' });
   assert.equal(imageOf(UnitThumb(row.props)).props.ownerId, 'two');
 });
+
+test('the in-match shop slot is an AVATAR slot: it never asks for the 立绘', () => {
+  // The official shop card is an avatar card (1:1); the 立绘 (1:2) belongs to the 调配 detail panel and the 结算 cards
+  // (docs/SKINS.md). A card that asked for the portrait showed nothing at all for an outfit without one.
+  const card = ChessCard({ slot: { id: chess.chessId, price: 1 }, idx: 0, priv: { playerId: 'one' } });
+  const img = imageOf(card);
+  assert.ok(img, 'the card renders an operator picture');
+  assert.notEqual(img.props.portrait, true, 'the shop slot must not ask for the portrait');
+  assert.equal(img.props.class, 'scard__art', 'and it keeps the card art class');
+  // the picture that call resolves is the owning seat's appearance avatar (skin 'picture' → its own avatar)
+  assert.equal(chessAvatarUrl(manifest, chess, { skin: 'picture' }), '/skin-a.png');
+  // a portrait-only appearance still leaves the avatar question to the operator, never to a 立绘 the slot did not ask for
+  assert.equal(chessPortraitUrl(manifest, chess, { skin: 'portrait' }), '/skin-p.png');
+});

@@ -11,7 +11,7 @@ import { rewriteManifest } from '../server/http/assetViews.js';
 import { createAssetIndex } from '../server/http/assetIndex.js';
 import { AUDIO_EXTS } from '../shared/media.js';
 
-async function fixture(t, assets = {}, local) {
+async function fixture(t, assets = {}, local, extra = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sp-asset-catalog-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const publicDir = path.join(root, 'public');
@@ -19,6 +19,10 @@ async function fixture(t, assets = {}, local) {
   await fs.mkdir(publicDir); await fs.mkdir(dataDir);
   await fs.writeFile(path.join(dataDir, 'assets.json'), JSON.stringify(assets));
   if (local) await fs.writeFile(path.join(dataDir, 'local-assets.json'), JSON.stringify(local));
+  // the two sidecares the installation may add: its own outfits and the official battle effects
+  for (const [name, doc] of Object.entries(extra)) {
+    if (doc) await fs.writeFile(path.join(dataDir, name), JSON.stringify(doc));
+  }
   const put = async (url, content) => {
     const target = path.join(publicDir, url.slice(1));
     await fs.mkdir(path.dirname(target), { recursive: true });
@@ -265,4 +269,38 @@ test('catalog matches browser validation and canonical URL map for aliases', asy
   const map = catalogURLMap(catalog);
   assert.equal(map.get('/media/a'), map.get('/assets/audio/a.mp3'));
   assert.equal(map.get('/assets/audio/a.ogg'), map.get('/media/a.ogg'));
+});
+
+test('the catalog includes the installation outfits and the official effects (a pre-cache that skips them means the first outfit in a match downloads)', async (t) => {
+  const model = (base) => ({ skel: `/assets/${base}.skel`, atlas: `/assets/${base}.atlas`, textures: [`/assets/${base}.png`],
+    pma: true, anims: { idle: 'Idle' }, animations: { Idle: 1 }, events: [], hits: {}, bounds: { width: 1, height: 1 } });
+  const f = await fixture(t, { chars: { char_a: { avatar: '/assets/a.png' } } }, null, {
+    // an outfit as the extractor writes it (tools/local-extract/skins.py)
+    'local-skins.json': { version: 1, skins: { 'char_a@x#1': { charId: 'char_a', name: 'X',
+      avatar: '/assets/local/skins/char_a/x/avatar.png', portrait: '/assets/local/skins/char_a/x/portrait.png',
+      spine: { front: { ...model('local/skins/char_a/x/front/model') } } } } },
+    // one effect prefab as data/local-fx.json lists it
+    'local-fx.json': { groups: { 'fx/prefabs': { k: { path: '/assets/local/fx/prefabs/k.json', kind: 'FxPrefab' } } } },
+  });
+  await f.put('/assets/a.png', 'a');
+  await f.put('/assets/local/skins/char_a/x/avatar.png', 'avatar');
+  await f.put('/assets/local/skins/char_a/x/portrait.png', 'portrait');
+  for (const name of ['model.skel', 'model.atlas', 'model.png']) await f.put(`/assets/local/skins/char_a/x/front/${name}`, name);
+  await f.put('/assets/local/fx/prefabs/k.json', '{"k":1}');
+
+  const catalog = await createAssetCacheCatalog({ ...f, concurrency: 2 });
+  assert.equal(catalog.complete, true);
+  const urls = catalogURLMap(catalog);
+  // the outfit's pictures and model are in the catalog …
+  assert.ok(urls.has('/assets/local/skins/char_a/x/avatar.png'));
+  assert.ok(urls.has('/assets/local/skins/char_a/x/portrait.png'));
+  assert.ok(urls.has('/assets/local/skins/char_a/x/front/model.skel'));
+  // … and its model answers the SAME url the served manifest hands out (the model hash, not a file hash)
+  const { doc } = rewriteManifest({ chars: { char_a: { skins: { 'char_a@x#1': { avatar: '/assets/local/skins/char_a/x/avatar.png',
+    spine: { front: model('local/skins/char_a/x/front/model') } } } } } }, 'assets.json',
+  { hashOf: (rel) => catalog.files.find((x) => x.url === `/${rel}`)?.sha256.slice(0, 16) || null,
+    modelHash(rels) { const parts = rels.map((r) => this.hashOf(r)); return parts.every(Boolean) ? createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16) : null; } });
+  assert.ok(urls.has(doc.chars.char_a.skins['char_a@x#1'].spine.front.skel), 'the served model URL is a cache hit');
+  // the effect prefab too
+  assert.ok(urls.has('/assets/local/fx/prefabs/k.json'));
 });

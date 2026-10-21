@@ -105,6 +105,42 @@ html:not(.sp-in-match) .toast-host { margin-top: var(--sa-t); }
 .fsbtn .icon { width: .26rem; height: .26rem; }
 .fsbtn:hover, .fsbtn[aria-pressed="true"] { color: var(--mint-400); border-color: var(--mint-700); }
 .title-fs, .title-settings { width: .4rem; height: .4rem; margin-left: .06rem; }
+.room-fs, .lo-fs { flex: none; width: max(.46rem, 28px); height: max(.46rem, 28px); }
+.sp-coarse :is(.title-fs, .room-fs, .lo-fs) { flex: none; width: 44px; height: 44px; margin-left: 0; }
+.sp-coarse :is(.title-fs, .room-fs, .lo-fs) .icon { width: 22px; height: 22px; }
+/* Keep the real target inside its own box, rather than expanding into adjacent toolbar controls. */
+.sp-coarse :is(.title-fs, .room-fs, .lo-fs)::before { inset: 0; width: auto; height: auto; transform: none; }
+
+/* Some phone browsers keep the layout viewport behind their bottom toolbar. Only these setup surfaces use the
+   existing visualViewport height; the battle canvas and pointer coordinates keep their current sizing contract.
+   The first min() arm respects the app's own box; the second also deducts the optional user screen-fit insets. */
+.sp-coarse :is(.title-screen, .room-screen) {
+  bottom: auto;
+  height: min(calc(100% - var(--sa-t) - var(--sa-b)), calc(100 * var(--sp-vh, 1vh) - var(--sa-t) - var(--sa-b) - var(--fit-t, 0px) - var(--fit-b, 0px)));
+}
+.sp-coarse .lo {
+  bottom: auto;
+  height: min(calc(100% - var(--fit-t, 0px) - var(--fit-b, 0px)), calc(100 * var(--sp-vh, 1vh) - var(--fit-t, 0px) - var(--fit-b, 0px)));
+}
+.sp-coarse .title-screen { padding: 64px 12px 28px; }
+.sp-coarse .title-main { flex-shrink: 1; min-height: 0; max-height: 100%; max-width: 100%; margin-top: 0; padding: 8px; overflow-y: auto; overscroll-behavior: contain; }
+.sp-coarse .title-main > * { flex-shrink: 0; }
+.sp-coarse .title-login { max-width: 100%; }
+.sp-coarse .title-corner__tools { gap: max(.1rem, 10px); }
+@media (max-height: 600px) {
+  .sp-coarse .title-main .emblem { display: none; }
+}
+/* Narrow phones need a separate row for the room title / invite key, especially with enlarged or translated text. */
+@media (max-width: 760px) {
+  .sp-coarse .room-screen .topbar { grid-template-columns: minmax(0, 1fr) auto; height: auto; padding-block: 8px; row-gap: 8px; }
+  .sp-coarse .room-screen .topbar__left { grid-column: 1 / -1; flex-wrap: wrap; gap: max(.18rem, 8px); }
+  .sp-coarse .room-screen .topbar__center { grid-column: 1; grid-row: 2; align-items: flex-start; text-align: left; min-width: 0; }
+  .sp-coarse .room-screen .topbar__right { grid-column: 2; grid-row: 2; }
+  .sp-coarse .room-screen .topbar__title { flex-wrap: wrap; gap: .12rem; }
+}
+/* Decorative title art gives way first when browser chrome or a keyboard leaves very little usable height. */
+.sp-coarse.sp-short-viewport .title-main :is(.emblem, .title-en, .title-tag) { display: none; }
+.sp-coarse.sp-short-viewport .title-login { margin-top: .2rem; }
 /* standalone / fullscreen: the browser bars are gone, nothing to reserve */
 .sp-standalone .rotate-hint__micro::after { content: ' · PWA'; }
 

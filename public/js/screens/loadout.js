@@ -55,6 +55,7 @@ import { diyCount, sanitizeDiyPicks, setPick, serializeDiy, parseDiyImport, DIY_
 import { t, tParts, N_ } from '../../../shared/i18n.js';
 import { copyText } from '../ui/clipboard.js';
 import { toast } from '../ui/toasts.js';
+import { FullscreenButton } from '../ui/device.js';
 
 export { openLoadout, closeLoadout };
 
@@ -695,6 +696,7 @@ function LoadoutScreen({ st }) {
     <header class="lo-top">
       <div class="lo-top__left">
         <${Button} variant="ghost" size="md" icon="chevronLeft" class="lo-back" onClick=${closeLoadout} aria-label=${t('返回')} title=${t('返回 (Esc)')}>${t('返回')}<//>
+        <${FullscreenButton} class="lo-fs" />
       </div>
       <div class="lo-top__center">
         <${MicroLabel} tone="mint">${tab === 'ownership' ? 'OPERATOR ROSTER' : tab === 'diy' ? 'SELF-SELECT SQUAD' : 'OPERATOR LOADOUT'}<//>

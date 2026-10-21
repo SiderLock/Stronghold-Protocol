@@ -197,6 +197,30 @@ async function cachedResponse(response, entry, request) {
   return new Response(response.body, { status: 200, headers });
 }
 
+/** A content-hash URL: '/assets/~0123456789abcdef/model.skel' → root '/assets', hash, rest. */
+const HASHED_PATH = /^(\/(?:assets|fonts|media))\/~([0-9a-f]{16})\/(.+)$/;
+
+/**
+ * A request whose URL is not one of the pinned catalog's aliases may still name bytes this cache already holds: the
+ * cache is keyed by CONTENT hash, and the URL itself carries that hash (`…/~<16 hex>/…`). When the catalog lists the
+ * same file under its plain path with the SAME hash, serving those bytes is exactly "use what the player pre-cached"
+ * — the alternative is downloading a file the player already has. A differing hash is never substituted (that would
+ * hand the renderer stale bytes for a new manifest).
+ * @returns {Promise<Response | null>}
+ */
+async function cachedHashAlias(event, path, indexed) {
+  const match = HASHED_PATH.exec(path);
+  if (!match) return null;
+  const entry = indexed?.urls.get(`${match[1]}/${match[3]}`);
+  if (!entry || !entry.sha256.startsWith(match[2])) return null;
+  try {
+    const cache = await caches.open(ASSET_CACHE_NAME);
+    const hit = await cache.match(origin + assetContentKey(entry.sha256));
+    if (isVerifiedAssetResponse(hit, entry)) return cachedResponse(hit, entry, event.request);
+  } catch { /* fall through to the network */ }
+  return null;
+}
+
 /** Exact-key hit in the title screen's imported-art cache (public/sw.js's rule), or null. */
 async function importedHit(request) {
   if (request.headers.has('range')) return null;
@@ -220,6 +244,9 @@ async function fetchAsset(event, path) {
     // for a new manifest (or replace the model's aggregate hash with an unrelated file hash).
     const entry = indexed?.urls.get(path);
     if (!entry) {
+      // Not an alias of the pinned catalog: the bytes may still be here under their content key (see cachedHashAlias).
+      const byHash = await cachedHashAlias(event, path, indexed);
+      if (byHash) return byHash;
       const imported = await importedHit(event.request);
       return imported || fetch(event.request);
     }

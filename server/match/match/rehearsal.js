@@ -118,6 +118,8 @@ export class MatchRehearsal {
    * match on screen is over (public/js/battle/rehearsal.js clear, wired in main.js).
    */
   _cancelRehearsal() {
+    for (const task of this._workerRehearsals) task.cancel();
+    this._workerRehearsals.clear();
     for (const task of [...this._rehearsalTasks.values()]) this._dropRehearsalTask(task, !this.disposed);
   }
 

@@ -154,8 +154,10 @@ export function BondPopup({ bondId, entry, priv, banned = [], onClose, onMember,
       ${th.map((n, i) => html`<span key=${i} class=${cx('bpop__tier', i < tier && 'is-on')}><b class="num">${n}</b><small>${b.maxCount != null ? t('名及以下') : tc('bond-threshold', '名')}</small></span>`)}
     </div>
     ${hasNow ? html`<section class="bpop__sec bpop__sec--now">
-      <h4>${t('当前效果')} ${b.noStack ? null : html`<small class="num">${t('（{layers} 层）', { layers })}</small>`}</h4>
+      <h4>${bondId === 'siracusaShip' ? t('按当前层数部署时') : t('当前效果')} ${b.noStack ? null : html`<small class="num">${t('（{layers} 层）', { layers })}</small>`}</h4>
       <${RichText} as="p" text=${formatBondEffect(b, layers)} class="bpop__desc" />
+      ${bondId === 'siracusaShip' ? html`<p class="bpop__off" role="note" data-bond-timing="deployment">${t('攻速与隐匿时长在每次部署时确定；作战中新增层数不会延长已生效的这次效果。')}</p>
+        <p class="bpop__off" role="note">${t('上述时长为作战内时间；2 倍速下的现实用时约为一半（不计暂停）。')}</p>` : null}
     </section>` : null}
     <section class="bpop__sec">
       <h4>${t('盟约效果')}</h4>

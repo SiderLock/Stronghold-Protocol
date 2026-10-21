@@ -12,7 +12,7 @@
 //   fullscreen              { supported(), active(), toggle(), exit() }: Fullscreen API with the webkit-prefixed
 //                           variant (iPadOS / older Safari); iPhone Safari has no element fullscreen → unsupported and the
 //                           button hides. Android: after entering, the orientation is locked to landscape when allowed.
-//   FullscreenButton        HUD / title button (hidden where unsupported), follows fullscreenchange.
+//   FullscreenButton        HUD / title / room / loadout button (hidden where unsupported), follows fullscreenchange.
 //   long-press              a still touch of LONG_PRESS_MS on a DOM control → a synthetic `contextmenu` (= detail) when
 //                           the browser sends none (iOS Safari); when a handler took it (preventDefault: detail card,
 //                           tooltip) the click of the release is swallowed — otherwise the slow tap stays a tap.
@@ -214,10 +214,14 @@ export function installDeviceSupport(win = globalThis) {
   const setVh = () => {
     const h = win.visualViewport?.height || win.innerHeight || 0;
     if (h > 0) root.style.setProperty('--sp-vh', `${h / 100}px`);
+    // Use the visible height, not a media query's layout height: some mobile browser bars overlay that box.
+    root.classList.toggle('sp-short-viewport', h > 0 && h <= 360);
   };
   setVh();
   on(win, 'resize', setVh, { passive: true });
   on(win.visualViewport, 'resize', setVh, { passive: true });
+  on(doc, 'fullscreenchange', setVh);
+  on(doc, 'webkitfullscreenchange', setVh);
 
   // rotation: the new viewport size settles a few frames late on iOS → one more resize after it settles
   let rotTimer = 0;

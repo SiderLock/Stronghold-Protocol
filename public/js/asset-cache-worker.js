@@ -90,9 +90,32 @@ async function readCatalog(message, h) {
 }
 
 /** Content keys already stored in the pre-cache. Cache.keys() throws "Operation too large" for a full 0.3.1 pack. */
+/**
+ * The hashes the last operation wrote into the cache's SHA index (writeCacheIndex). A full pack is 50 000 files: asking
+ * Cache.match once per file is the slowest part of every check/download/import on a phone. The index is a snapshot, so a
+ * few entries are probed before trusting it — a partially evicted cache falls back to the real scan below.
+ * @returns {Promise<Set<string> | null>} null when there is no usable index
+ */
+async function indexedHashes(cache, origin, catalog, h) {
+  try {
+    const listed = await (await cache.match(origin + h.ASSET_CACHE_INDEX_URL))?.json();
+    if (!Array.isArray(listed)) return null;
+    const known = new Set(catalog.files.map((entry) => entry.sha256));
+    const hashes = new Set();
+    for (const sha of listed) if (typeof sha === 'string' && known.has(sha)) hashes.add(sha);
+    if (!hashes.size) return null;
+    const sample = [...hashes];
+    const probes = sample.length > 3 ? [sample[0], sample[sample.length >> 1], sample[sample.length - 1]] : sample;
+    for (const sha of probes) if (!(await cache.match(origin + h.assetContentKey(sha)))) return null;
+    return hashes;
+  } catch { return null; }
+}
+
 async function precacheHashes(cache, catalog, h) {
   const origin = self.location.origin;
-  const hashes = new Set();
+  let hashes = await indexedHashes(cache, origin, catalog, h);
+  if (hashes) return hashes;
+  hashes = new Set();
   for (let i = 0; i < catalog.files.length; i += 16) {
     cancelled();
     await Promise.all(catalog.files.slice(i, i + 16).map(async (entry) => {
@@ -206,17 +229,29 @@ async function work(message) {
         report({ scanStats: { checked, invalid } });
       }
     } else if (message.action === 'download') {
+      // Parallel, bounded by what the server is willing to lease this client (server/http/cacheLimiter.js keeps a
+      // per-client cap, 2 by default, and answers 429 Retry-After when it is exceeded). A single sequential loop left
+      // most of a fast link idle: every file paid a full round trip before the next one started. Small files go first so
+      // the ready count (and the player's "can we start" moment) climbs early instead of waiting behind a 10 MB texture.
       let received = 0;
       const started = performance.now();
-      for (const entry of catalog.files) {
-        cancelled();
-        if (ready(entry)) continue;
+      const speed = () => Math.round(received * 1000 / Math.max(1, performance.now() - started));
+      let lastReport = 0;
+      const bump = () => {
+        const now = performance.now();
+        if (now - lastReport >= 250) { lastReport = now; report({ waiting: false, speedBps: speed() }); }
+      };
+      const queue = catalog.files.filter((entry) => !ready(entry)).sort((a, b) => a.bytes - b.bytes);
+      let limit = Math.max(1, Math.min(6, Number(message.maxParallel) || 2));
+      const fetchEntry = async (entry) => {
         let response;
         for (let retry = 0; retry < 6; retry++) {
           cancelled();
           response = await fetch(`/api/asset-cache/file?url=${encodeURIComponent(entry.url)}&hash=${entry.sha256}`, {
             cache: 'no-store', signal: active.abort.signal });
           if (response.status !== 429) break;
+          // The server is at its per-client lease: give a slot back and wait out the advertised delay.
+          limit = Math.max(1, limit - 1);
           const seconds = Math.max(1, Math.min(30, Number(response.headers.get('retry-after')) || 3));
           report({ waiting: true, speedBps: 0 });
           await sleep(seconds * 1000, active.abort.signal);
@@ -228,7 +263,7 @@ async function work(message) {
           throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
         const buffer = new Uint8Array(entry.bytes);
         const reader = response.body.getReader();
-        let offset = 0, lastReport = 0;
+        let offset = 0;
         try {
           while (true) {
             cancelled();
@@ -236,16 +271,30 @@ async function work(message) {
             if (chunk.done) break;
             if (offset + chunk.value.length > entry.bytes) throw h.assetCacheError('ASSET_CACHE_FILE_TOO_LARGE');
             buffer.set(chunk.value, offset); offset += chunk.value.length; received += chunk.value.length;
-            if (performance.now() - lastReport > 250) {
-              report({ waiting: false, speedBps: Math.round(received * 1000 / Math.max(1, performance.now() - started)) });
-              lastReport = performance.now();
-            }
+            bump();
           }
         } finally { await reader.cancel().catch(() => {}); }
         if (offset !== entry.bytes) throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
         await store(entry, buffer);
-        report({ waiting: false, speedBps: Math.round(received * 1000 / Math.max(1, performance.now() - started)) });
-      }
+        bump();
+      };
+      let next = 0, running = 0;
+      let failed = null;
+      await new Promise((resolve) => {
+        const settle = () => { if (failed || (running === 0 && next >= queue.length)) resolve(); };
+        const launch = () => {
+          if (failed) return;
+          while (running < limit && next < queue.length) {
+            const entry = queue[next++];
+            running++;
+            fetchEntry(entry).then(() => { running--; settle(); launch(); },
+              (error) => { running--; failed = failed || error; settle(); });
+          }
+          settle();
+        };
+        launch();
+      });
+      if (failed) throw failed;
     } else if (message.action === 'import') {
       if (!(message.file instanceof Blob)) throw h.assetCacheError('ASSET_CACHE_ZIP_INVALID');
       const reader = new zip.ZipReader(new zip.BlobReader(message.file), { useWebWorkers: false, checkSignature: true });
@@ -257,24 +306,51 @@ async function work(message) {
         entries = await archiveEntries(reader, h);
         const candidates = entries.filter((entry) => !entry.directory && entry.filename !== 'manifest.json');
         const importedHashes = new Set();
+        // Decompression is local CPU, but the SHA-256 (crypto.subtle) and the Cache write are asynchronous: a small
+        // pipeline keeps the next entry decompressing while the previous one is hashed and stored. Sequential handing of
+        // an 18 000-file / 646 MB pack leaves most of that idle.
+        const IMPORT_PARALLEL = 3;
+        const jobs = [];
         for (const entry of candidates) {
           cancelled();
           const target = expected.get(entry.filename);
           if (!target) { stats.unknown++; continue; }
           if (importedHashes.has(target.sha256) || ready(target)) { stats.reused++; continue; }
           if (entry.uncompressedSize !== target.bytes || ![0, 8].includes(entry.compressionMethod)) { stats.invalid++; continue; }
-          try {
-            const blob = await entry.getData(new LimitedWriter(target.bytes), { useWebWorkers: false, checkSignature: true,
-              signal: active.abort.signal });
-            const body = await blob.arrayBuffer();
-            if (body.byteLength !== target.bytes || await h.sha256Hex(body) !== target.sha256) { stats.invalid++; continue; }
-            await store(target, body); importedHashes.add(target.sha256); stats.imported++;
-          } catch (error) {
-            if (active.paused || error.name === 'QuotaExceededError') throw error;
-            stats.invalid++;
-          }
-          if ((stats.imported + stats.reused + stats.invalid) % 10 === 0) report({ importStats: { ...stats } });
+          jobs.push({ entry, target });
         }
+        let failed = null, nextJob = 0, running = 0;
+        const finish = () => {
+          if ((stats.imported + stats.reused + stats.invalid) % 10 === 0) report({ importStats: { ...stats } });
+        };
+        await new Promise((resolve) => {
+          const settle = () => { if (failed || (running === 0 && nextJob >= jobs.length)) resolve(); };
+          const launch = () => {
+            if (failed) return;
+            while (running < IMPORT_PARALLEL && nextJob < jobs.length) {
+              const { entry, target } = jobs[nextJob++];
+              running++;
+              (async () => {
+                cancelled();
+                const blob = await entry.getData(new LimitedWriter(target.bytes), { useWebWorkers: false, checkSignature: true,
+                  signal: active.abort.signal });
+                const body = await blob.arrayBuffer();
+                cancelled();
+                if (body.byteLength !== target.bytes || await h.sha256Hex(body) !== target.sha256) { stats.invalid++; return; }
+                if (importedHashes.has(target.sha256)) { stats.reused++; return; }   // another copy landed meanwhile
+                await store(target, body); importedHashes.add(target.sha256); stats.imported++;
+              })().then(() => { running--; finish(); settle(); launch(); },
+                (error) => {
+                  running--;
+                  if (active.paused || error?.name === 'QuotaExceededError') { failed = failed || error; settle(); return; }
+                  stats.invalid++; finish(); settle(); launch();
+                });
+            }
+            settle();
+          };
+          launch();
+        });
+        if (failed) throw failed;
         stats.absent = catalog.files.filter((entry) => !ready(entry)).length;
         report({ importStats: stats });
       } catch (error) {

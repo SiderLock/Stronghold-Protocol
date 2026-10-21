@@ -2397,5 +2397,10 @@
   "等候中": "Waiting",
   "缓存组件尚未完成升级，请关闭本站的全部游戏标签页后重新打开，再重试。": "The asset cache component has not finished updating. Close all game tabs for this site, reopen it, then retry.",
   "缓存组件未能启动，请关闭本站全部标签页后重新打开再试。": "The cache component could not start. Close every tab of this site, reopen, and try again.",
-  "浏览器存储或缓存组件异常，请关闭本站全部游戏标签页后重新打开再试；若仍失败请改用导入素材包。": "Browser storage or the cache component failed. Close every game tab of this site, reopen, and try again; if it still fails, import the asset pack instead."
+  "浏览器存储或缓存组件异常，请关闭本站全部游戏标签页后重新打开再试；若仍失败请改用导入素材包。": "Browser storage or the cache component failed. Close every game tab of this site, reopen, and try again; if it still fails, import the asset pack instead.",
+  "这个浏览器无法创建 WebGL 画面，战斗会退到简化视图。可以试试：在浏览器设置里关闭「硬件加速」后重启浏览器，或更新显卡驱动，或用 Chrome / Edge 最新版打开。": "This browser cannot create a WebGL canvas, so battles fall back to the simplified view. Try turning off hardware acceleration in the browser settings and restarting it, updating the graphics driver, or opening the game in the latest Chrome / Edge.",
+  "战斗画面渲染失败，已切换到简化视图。若反复出现，请在浏览器设置里关闭「硬件加速」后重启浏览器。": "The battle view failed to render, so the simplified view is shown. If it keeps happening, turn off hardware acceleration in the browser settings and restart the browser.",
+  "按当前层数部署时": "When deployed at the current stack count",
+  "攻速与隐匿时长在每次部署时确定；作战中新增层数不会延长已生效的这次效果。": "Attack speed and Stealth duration are set at each deployment. Stacks gained during combat do not extend effects already applied.",
+  "上述时长为作战内时间；2 倍速下的现实用时约为一半（不计暂停）。": "Durations above use in-game time. At 2× speed, real elapsed time is about half as long, excluding pauses."
 }

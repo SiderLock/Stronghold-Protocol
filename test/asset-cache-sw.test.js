@@ -175,9 +175,12 @@ test('SW exact hash aliases reuse unchanged full-SHA contents after an explicit 
   await f.fetchFile('updated', '/assets/~0000000000000000/model.atlas');
   assert.equal(f.network(), 1, 'an unrelated hash does not resolve by dropping its segment');
   await f.fetchFile('old', hashUrl);
-  assert.equal(f.network(), 2, 'another page retains its old catalog and does not borrow new aliases');
+  // The old page's catalog does not know the new alias, but it does list the same file under its plain path WITH THE SAME
+  // hash: the bytes are already verified in this cache, so a still-open page reuses them instead of downloading them
+  // again (asset-cache-sw.js cachedHashAlias). A page is never handed bytes with a different hash than its pin.
+  assert.equal(f.network(), 1, 'the same content hash is reused even without the alias');
   assert.equal(await (await f.fetchFile('old')).text(), 'atlas bytes');
-  assert.equal(f.network(), 2, 'the old plain-path pin continues to use its existing verified content');
+  assert.equal(f.network(), 1, 'the old plain-path pin continues to use its existing verified content');
 });
 
 test('the merged SW serves the title screen imported cache when no pinned catalog matches', async () => {

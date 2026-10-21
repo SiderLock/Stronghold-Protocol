@@ -30,6 +30,9 @@ making one, in Chinese). How to set up, test and send a change: [CONTRIBUTING.md
   match in memory — rounds, shop, economy, bots, validation. This fork additionally reads private announcement files
   and explicit owner-notification commands from disk ([ANNOUNCEMENTS.md](ANNOUNCEMENTS.md)); game state stays in memory.
   Plugin authoring writes folders and locks to disk; the studio key persists too. Gameplay content sets use separate match children (§3).
+- Vanilla matches can send detached AI preview inputs and oversized-result replays to `server/match/rehearsalPool.js`
+  and `rehearsalWorker.js`. Only the result/index comes back; economy, deadlines, networking and settlement stay in
+  the parent. Failures retain the existing sliced path. Configuration: [SERVER_SETTINGS.md](SERVER_SETTINGS.md#计算进程).
 - **The browser** loads native ES modules with no bundler and no build step; the libraries are vendored into
   `public/vendor/` by `tools/vendor.mjs` on `npm install`.
 - **The battle simulation** (`server/sim/`) is pure ESM without any Node API, served read-only at `/sim/`. Both sides
