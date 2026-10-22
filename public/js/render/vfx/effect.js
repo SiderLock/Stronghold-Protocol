@@ -732,6 +732,12 @@ export class Effect {
       const dx = w[12] - camPos[0], dy = w[13] - camPos[1], dz = w[14] - camPos[2];
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       const nearGround = Math.abs(w[14] - this.groundZ) < 0.25;
+      // A body effect can put only some children behind the skeleton (魔王 S3's `scale` / glass).
+      // Measure their depth in the root's own frame: world Z includes the Graphic tilt and is not art depth.
+      const root = this.world[0];
+      const depth = this.rootRot || this.mountRot
+        ? (w[12] - root[12]) * root[8] + (w[13] - root[13]) * root[9] + (w[14] - root[14]) * root[10] : 0;
+      const back = def.back || depth > 1e-5;
       const ov = this.matOv.get(i) || null;
       const r = def.psr[i], s = this.sys[i];
       if (r && s && r.enabled && r.mode !== 'none') {
@@ -739,19 +745,19 @@ export class Effect {
         if (m0 && s.count > 0) {
           const meshData = r.mode === 'mesh' ? (r.mesh && this.lib ? this.lib.mesh(r.mesh) : null) : null;
           if (r.mode !== 'mesh' || meshData) {
-            sink(entry('ps', i, 0, m0, ov, r.order, r.layer, dist + r.fudge, behindUnits(r.layer, r.order, def.back) || (isFlatParticles(r, w, meshData) && nearGround), this, r.mode === 'mesh' ? r.mesh : null));
+            sink(entry('ps', i, 0, m0, ov, r.order, r.layer, dist + r.fudge, behindUnits(r.layer, r.order, back) || (isFlatParticles(r, w, meshData) && nearGround), this, r.mode === 'mesh' ? r.mesh : null));
           }
         }
         if (s.def.trail && r.mats[1] != null && (s.count > 0 || s.orphans.length)) {
           const m1 = def.material(r.mats[1], lite);
-          if (m1) sink(entry('trailmod', i, 0, m1, ov, r.order, r.layer, dist + r.fudge, behindUnits(r.layer, r.order, def.back), this, null));
+          if (m1) sink(entry('trailmod', i, 0, m1, ov, r.order, r.layer, dist + r.fudge, behindUnits(r.layer, r.order, back), this, null));
         }
       }
       const mr = def.mesh[i];
       if (mr && mr.enabled && mr.mesh && (this.rendOv.get(i)?.enabled ?? true)) {
         const md = this.lib ? this.lib.mesh(mr.mesh) : null;
         if (md && md.submeshes) {
-          const flat = behindUnits(mr.layer, mr.order, def.back) || (isFlatMesh(md, w) && nearGround);
+          const flat = behindUnits(mr.layer, mr.order, back) || (isFlatMesh(md, w) && nearGround);
           for (let k = 0; k < mr.mats.length; k++) {
             if (mr.mats[k] == null || !md.submeshes[k]) continue;
             const mat = def.material(mr.mats[k], lite);
@@ -766,7 +772,7 @@ export class Effect {
           for (let k = 0; k < sk.mats.length; k++) {
             if (sk.mats[k] == null || !md.submeshes[k]) continue;
             const mat = def.material(sk.mats[k], lite);
-            if (mat) sink(entry('skinned', i, k, mat, ov, sk.order, sk.layer, dist, behindUnits(sk.layer, sk.order, def.back), this, sk.mesh));
+            if (mat) sink(entry('skinned', i, k, mat, ov, sk.order, sk.layer, dist, behindUnits(sk.layer, sk.order, back), this, sk.mesh));
           }
         }
       }
@@ -774,7 +780,7 @@ export class Effect {
       if (tr && tr.enabled && tr.mats[0] != null) {
         const st = this.trails.get(i);
         const mat = st && st.n > 0 ? def.material(tr.mats[0], lite) : null;
-        if (mat) sink(entry('trail', i, 0, mat, ov, tr.order, tr.layer, dist, behindUnits(tr.layer, tr.order, def.back), this, null));
+        if (mat) sink(entry('trail', i, 0, mat, ov, tr.order, tr.layer, dist, behindUnits(tr.layer, tr.order, back), this, null));
       }
       const ln = def.line[i];
       // a world-space line's authored points are the editor's placeholders — fixed spots of the authoring scene (§33.6;
@@ -782,7 +788,7 @@ export class Effect {
       if (ln && ln.enabled && ln.mats[0] != null && (!ln.world || this.linePts.has(i))) {
         const pts = this.linePts.get(i) || ln.points;
         const mat = pts.length >= 2 ? def.material(ln.mats[0], lite) : null;
-        if (mat) sink(entry('line', i, 0, mat, ov, ln.order, ln.layer, dist, behindUnits(ln.layer, ln.order, def.back), this, null));
+        if (mat) sink(entry('line', i, 0, mat, ov, ln.order, ln.layer, dist, behindUnits(ln.layer, ln.order, back), this, null));
       }
     }
   }
@@ -929,6 +935,8 @@ function entry(part, node, submesh, mat, ov, order, layer, dist, ground, effect,
  * placed on, whose tilted body lies at its feet's depth, so Unity draws its order-0 renderers first (0.3.1: 瑕光 S3's
  * horses, wings and halo at z +0.23 and 0.5–1.1 tiles behind her feet covered her); one pulled forward (z < 0) stays
  * over them. A positive order is drawn after them. [ASSUMED: the units' order-0 renderers sort at their feet's depth]
+ * Body-mounted effects additionally pass each renderer's depth along the root's Z axis (nested helpers included),
+ * so a background inside a zero-offset root need not cover its owner (魔王 S3).
  */
 export function behindUnits(layer, order, back = false) {
   return layer < 0 || (layer === 0 && (order < 0 || (back && order === 0)));

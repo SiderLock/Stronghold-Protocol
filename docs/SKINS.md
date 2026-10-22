@@ -217,6 +217,17 @@ from the GameObject it hangs under (`<charId>_<stem>` → `<charId>@<stem>`, the
   Ground / tile effects, map-position effects and projectile flight distances keep their world-tile dimensions.
   Late-loaded descriptors and chained effects select their own placement; pooled instances reset the factor.
   This conversion is shared by default models and outfits, and needs no asset re-extraction.
+- Body effects also preserve child depth: an order-0 renderer authored behind the skeleton (including nested
+  helpers, 魔王 S3's background) draws under it; positive sorting orders retain foreground placement. Depth is
+  measured along the effect root's Z axis so the Graphic tilt is not mistaken for a background offset.
+- 魔王 S3 includes the mode AuraHeal's owner / range loops and carrier effects, with the caster's outfit deciding
+  the carrier variant. New indexes export `modes[].attack.buffUses`; a transcribed fallback supports existing indexes.
+  The official redistribution burst follows the sim's existing `redistribute` event. Carrier loops follow the
+  equipped skill's grid and end on leaving it, skill end or source / target removal; overlapping identical variants
+  share one loop. **[ASSUMED]** Carrier visibility uses living allies in that grid; snapshots do not expose `noHeal`
+  buffs. This affects decoration only. Owner / range wiring uses existing files. An old set missing the default
+  `cetsyr_skill_03_burst_01` retains its procedural pulse until that prefab is extracted / installed; an installed
+  outfit variant can play independently. No combat or protocol changes. Targeted extraction preserves `skinFx`.
 - `fakeProjectiles` are extracted but **not wired yet** (the client's projectile-graphic replacement); an outfit that
   needs one plays its normal projectile.
 

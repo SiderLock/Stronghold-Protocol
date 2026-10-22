@@ -94,6 +94,12 @@ Body-relative official effects and static mounts use the same displayed skeleton
 distances remain in world tiles; particles and meshes of a body effect share the conversion even under different
 Unity particle scaling modes. This also applies after an outfit replacement. Details: [SKINS.md](../SKINS.md#the-runtime-rendervfxwiringjs).
 
+Body FX distinguish nested background depth from foreground sorting orders. 魔王 S3 also plays its mode AuraHeal
+owner / range effects, the existing simulation event's redistribution burst, and caster-outfit carrier effects.
+Carrier loops reconcile against the skill's grid, share identical variants across sources and stop when no source
+remains. **[ASSUMED]** Carrier decoration follows living allies; `noHeal` buffs are not present in render snapshots.
+Extraction exports direct mode aura `buffUses`; existing indexes retain a verified 魔王 S3 fallback. Combat is unchanged.
+
 Picture-only outfits (B6, ported from upstream 0.3.2): per the maintainer's 2026-10-18 option A, a `skins` record
 with pictures and no Spine is wearable, labelled 「仅更换头像与立绘」. Owner-specific cards / panels / results read
 that seat's choice; missing pictures and the battle model use the effective operator's defaults. #686's visibility

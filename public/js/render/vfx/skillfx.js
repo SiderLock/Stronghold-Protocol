@@ -92,6 +92,7 @@ import {
 } from './skills.js';
 import { fxSpec } from '../fx/kinds.js';
 import { UF, ANIM } from '../../../../shared/constants.js';
+import { rangeTiles } from '../../ui/facing.js';
 
 /** Battle seconds a held (non-oneshot) row of a skill's single cast lasts (FxWiring's CAST_LOOP_S for attacks). */
 export const SKILL_CAST_S = 0.6;
@@ -202,6 +203,7 @@ export class SkillFx {
     this.w = w;
     this.units = new Map();    // battle id → unit record | null (nothing official to play)
     this.tloops = new Map();   // `${target id}|${key}` → { h, until, U, tgt, bySkill } (skills.js targetsOf `hit`)
+    this.skillAuras = new Map(); // target id + resolved skin FX key → one shared mode-aura loop
     this.marks = [];           // FX_BINDINGS reached effects: { owner, r, c, until, h, cover }
     this.born = new Map();     // unit id → { frame, own } of its official birth effect (deployed: FxWiring.deploy's key)
     this.frame = 0;            // FxWiring.tick counts frames: events of one frame share a value
@@ -690,6 +692,10 @@ export class SkillFx {
     const id = idOf(v);
     const U = id != null ? this.units.get(id) : null;
     if (U) this._releaseU(U);
+    for (const [k, t] of this.skillAuras) {
+      t.sources.delete(id);
+      if (idOf(t.v) === id || !t.sources.size) { t.h.stop(); this.skillAuras.delete(k); }
+    }
     for (const [slot, t] of this.tloops) if (idOf(t.tgt) === id) { t.h.stop(); this.tloops.delete(slot); }
     for (const [slot, t] of this.aloops) if (idOf(t.v) === id) { t.h.stop(); this.aloops.delete(slot); }
     this._modeEnd(v);
@@ -697,6 +703,10 @@ export class SkillFx {
   }
 
   _releaseU(U) {
+    for (const [k, t] of this.skillAuras) {
+      t.sources.delete(U.id);
+      if (!t.sources.size) { t.h.stop(); this.skillAuras.delete(k); }
+    }
     if (U.ewin) { for (const h of U.ewin.loops) h.stop(); U.ewin = null; }
     this._stopCond(U);
     this._stopLoops(U);
@@ -881,6 +891,8 @@ export class SkillFx {
       this.tloops.clear();
       for (const t of this.aloops.values()) t.h.stop();
       this.aloops.clear();
+      for (const t of this.skillAuras.values()) t.h.stop();
+      this.skillAuras.clear();
       this.tier = tier;
       this.wasActive = active;
     }
@@ -945,6 +957,7 @@ export class SkillFx {
     for (const U of this.units.values()) {
       if (U && U.seen !== sweep && (U.loopsOn || U.readyOn || U.passiveOn || U.energy || U.ewin)) this._releaseU(U);
     }
+    this._syncSkillAuras(views);
     for (const [slot, t] of this.tloops) {
       const tv = t.tgt;
       if (!tv || tv.destroyed || tv.alive === false || now >= t.until || (t.bySkill && !this._on(t.U)) || !t.h.alive) {
@@ -958,6 +971,42 @@ export class SkillFx {
       if (!tv || tv.destroyed || tv.alive === false || now >= t.until || !t.h.alive) { t.h.stop(); this.aloops.delete(slot); }
     }
     if (this.marks.length) this.marks = this.marks.filter((m) => m.until > now);
+  }
+
+  /** Cetsyr S3's AuraHeal carrier effects. The grid is the equipped skill's data, not a guessed radius.
+   * No general AuraAbility validator interpreter: this binding is only for this verified ally-healing aura.
+   * [ASSUMED] Carrier visibility follows living allies in that grid; snapshots do not expose noHeal buffs.
+   */
+  _syncSkillAuras(views) {
+    const want = new Map();
+    const up = (v) => v && v.alive !== false && !v.destroyed && !v.down;
+    for (const U of this.units.values()) {
+      if (U?.skillId !== 'skchr_cetsyr_3' || U.key !== 'char_4134_cetsyr' || U.seen !== this.sweep || !up(U.v) || !this._on(U)) continue;
+      const src = U.v;
+      const rows = U.plan.targets.filter((e) => e.from === 'AuraAbility._buffs');
+      if (!rows.length || !Array.isArray(U.srec?.rangeGrid)) continue;
+      const tiles = new Set(rangeTiles(U.srec.rangeGrid, Math.round(src.y), Math.round(src.x), src.dir || src.info?.dir).map(([r, c]) => `${r},${c}`));
+      for (const v of views) {
+        // Battle.alliesInGrid includes every ally on this field, including a unite partner's operators.
+        if (v === src || !up(v) || v.info?.side !== src.info?.side
+          || v.info?.kind === 'device' || !tiles.has(`${Math.round(v.y)},${Math.round(v.x)}`)) continue;
+        for (const e of rows) {
+          const key = this.w.skinFxKey(e.key, this.w.outfitOf(src));
+          if (!this.w.ofx.lib.has(key)) continue;
+          const slot = `${idOf(v)}|${key}`;
+          let t = want.get(slot);
+          if (!t) { t = { key, v, src, sources: new Set() }; want.set(slot, t); }
+          t.sources.add(U.id);
+        }
+      }
+    }
+    for (const [k, t] of this.skillAuras) if (!want.has(k) || !t.h.alive) { t.h.stop(); this.skillAuras.delete(k); }
+    for (const [k, t] of want) {
+      const old = this.skillAuras.get(k);
+      if (old) { old.sources = t.sources; continue; }
+      const h = this.w.playOn(t.key, t.v, { loop: true, follow: true, important: true, skinFrom: t.src, flipFrom: t.src });
+      if (h) this.skillAuras.set(k, { h, v: t.v, sources: t.sources });
+    }
   }
 
   /**
@@ -1063,7 +1112,7 @@ export class SkillFx {
    * says; a binding's own `keys` at 'target' once on the unit the fx names.
    */
   _bound(U, bind, x, y, extra) {
-    const keys = bindingEffects(this.w.idx, bind).filter((k) => this.w.ofx.lib.has(k));
+    const keys = bindingEffects(this.w.idx, bind).filter((k) => this.w.ofx.lib.has(this.w.skinFxKey(k, this.w.outfitOf(U.v))));
     if (!keys.length) return false;
     if (bind.at === 'target') {
       // once on the unit the fx names (泡泡's attacker, 归溟幽灵鲨 S1's ally), else where it happens; turned by the owner's side
@@ -1333,6 +1382,8 @@ export class SkillFx {
 
   /** Battle reset: forget every unit (the effects themselves are cleared by OfficialFx.clear). */
   clear() {
+    for (const t of this.skillAuras.values()) t.h.stop();
+    this.skillAuras.clear();
     this.units.clear();
     this.tloops.clear();
     this.marks = [];
