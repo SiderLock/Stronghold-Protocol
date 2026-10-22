@@ -12,6 +12,8 @@
 
 协议目录中的 ID、字段顺序和枚举编号属于永久约定。**已发布的 v1 不允许重排、删除、复用编号或插入字段；布局变化须引入新 wire 版本并保留旧版解码。** 尚未登记的字段通过扩展对象完整传输；尚未登记的消息保持原 JSON；尚未登记的枚举字符串保持字符串。新增业务字段不会被静默丢弃。
 
+队友申请重刷（[PR #857](https://github.com/sganggs/Stronghold-Protocol/pull/857)、[D041](development/DECISIONS.md#d041)）的 `room.requestReroll {setupRevision}` 沿用 JSON 回退；`m.public.rerollRequests: [{playerId}]` 使用既有扩展对象，空列表也完整保留。登记字段覆盖白名单并验证非空请求及 6 / 9 / 13 / 20 席真实视图往返；v1 指纹不变。
+
 预缓存准入的 `room.create`、`room.join`、`lobby.quickMatch`、`room.spectate` 可选字段 `assetCache: {schema:1,version:<64位SHA>,readyFiles:<整数>,readyBytes:<整数>}`，以及 `welcome` / `lobby.state` 的 `requireAssetCache`，使用既有扩展对象，**没有新增 v1 字段位置**。解码后完整还原同名标准 JSON；新错误码 `ASSET_CACHE_REQUIRED` 依照现有未知枚举字符串规则传输。字段覆盖测试为这四项报告登记明确的扩展白名单，同时保留 v1 指纹和往返测试；不放宽其他字段的目录要求。详见 [准入约定](SERVER_SETTINGS.md#完整预缓存准入) 与 [任务记录](development/records/2026-10-10-12-offline-catalog-admission.md)。
 
 带宽紧急保护的 `m.emergency {active,reason,since,retryAt}` 使用原 JSON 回退，不新增 v1 消息 ID。`welcome.emergency` 及紧急期间 `m.public` 的 `emergencyFrozen`、`emergencyFrozenAt`、`emergencyReason` 使用既有扩展对象；正常与恢复后的公共快照省略这三项。`SERVER_EMERGENCY` 沿用未知枚举字符串规则，已发布字段位置、枚举顺序、目录指纹与固定字节样本均保持不动。通知和原成员续连规则见 [紧急保护](ASSET_CACHE.md#带宽紧急保护)。
