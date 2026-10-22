@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html } from './components.js';
 import { data } from '../data.js';
 import { t } from '../../../shared/i18n.js';
+import { settingsStore } from './settingsStore.js';
 
 /** Device pixel ratio for the preview canvas, capped the way the battle renderer caps its own. */
 const dpr = () => Math.min(2, globalThis.devicePixelRatio || 1);
@@ -115,12 +116,14 @@ export function SkinModelPreview({ charId, skinId = null, art = null, name = '',
     let releaseRenderer = null;
     let releaseModel = null;
     let observer = null;
+    let unsubscribe = null;
     let inView = true;
     const visibility = () => {
       if (!app || cancelled) return;
       if (document.hidden || !inView) app.stop(); else app.start();
     };
     const dispose = () => {
+      unsubscribe?.(); unsubscribe = null;
       observer?.disconnect();
       document.removeEventListener('visibilitychange', visibility);
       if (actorRef.current === spine) actorRef.current = null;
@@ -143,6 +146,8 @@ export function SkinModelPreview({ charId, skinId = null, art = null, name = '',
         const host = hostRef.current;
         if (!host) { releaseModel(); return; }
         app = new P.Application({ width: BOX_W, height: BOX_H, backgroundAlpha: 0, antialias: dpr() < 1.5, resolution: dpr(), autoDensity: true });
+        app.ticker.maxFPS = settingsStore.get().frameLimit;
+        unsubscribe = settingsStore.subscribe(s => { if (app) app.ticker.maxFPS = s.frameLimit; });
         const canvas = app.view;
         canvas.className = 'lo-spine__canvas';
         canvas.setAttribute('aria-label', t('小人预览'));

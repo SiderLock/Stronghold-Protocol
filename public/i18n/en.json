@@ -2429,5 +2429,10 @@
   "已关闭并清理对局缓存。": "Local match caching is disabled and its cache has been cleared.",
   "已关闭缓存；清理未完成，请重新打开页面后重试。": "Caching is disabled, but cleanup did not finish. Reopen the page and try again.",
   "自动调整渲染分辨率": "Adaptive render resolution",
-  "开启后，移动端持续卡顿时会降低棋盘与角色画面的分辨率，流畅后逐步恢复；界面文字不变。关闭后固定使用所选画质。": "When enabled, sustained slow frames on mobile reduce board and character resolution, then gradually restore it as performance improves. Interface text stays sharp. Turn off to keep the selected quality."
+  "开启后，移动端持续卡顿时会降低棋盘与角色画面的分辨率，流畅后逐步恢复；界面文字不变。关闭后固定使用所选画质。": "When enabled, sustained slow frames on mobile reduce board and character resolution, then gradually restore it as performance improves. Interface text stays sharp. Turn off to keep the selected quality.",
+  "帧率上限": "Frame rate limit",
+  "不限": "Unlimited",
+  "限制战场与小人预览的画面刷新率，可减少发热和耗电；不改变战斗速度。实际帧率取决于设备性能。": "Limiting battlefield and character preview refresh rates can reduce heat and power use. Battle speed stays the same. Actual frame rate depends on your device.",
+  "30 FPS": "30 FPS",
+  "60 FPS": "60 FPS"
 }

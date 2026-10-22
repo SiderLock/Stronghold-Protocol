@@ -119,6 +119,7 @@ function Toggle({ label, micro, value, onChange, testId }) {
 
 /** Display order only: 低 / 中 / 高, the same direction as 官方特效 关 / 精简 / 完整. Stored values stay high | medium | low. */
 const QUALITY = [['low', N_('低')], ['medium', N_('中')], ['high', N_('高')]];
+const FRAME_LIMIT = [[30, '30 FPS'], [60, '60 FPS'], [0, N_('不限')]];
 /**
  * 官方特效 (0.3.0, render/vfx): the official battle effects the server's owner extracted from their own client (the
  * server serves them: every player of that server sees the owner's extraction) — normal attacks, projectiles, hits,
@@ -534,6 +535,14 @@ export function SettingsModal({ open, onClose }) {
             class=${s.quality === id ? 'is-on' : ''} onClick=${() => updateSettings({ quality: id })}>${t(label)}</button>`)}
         </div>
       </div>
+      <div class="set-row" data-testid="frame-limit">
+        <span class="set-row__label">${t('帧率上限')}<${MicroLabel}>FRAME RATE<//></span>
+        <div class="set-seg" role="radiogroup" aria-label=${t('帧率上限')}>
+          ${FRAME_LIMIT.map(([id, label]) => html`<button key=${id} type="button" role="radio" aria-checked=${s.frameLimit === id ? 'true' : 'false'}
+            class=${s.frameLimit === id ? 'is-on' : ''} onClick=${() => updateSettings({ frameLimit: id })}>${t(label)}</button>`)}
+        </div>
+      </div>
+      <p class="set-hint">${t('限制战场与小人预览的画面刷新率，可减少发热和耗电；不改变战斗速度。实际帧率取决于设备性能。')}</p>
       <${Toggle} label=${t('自动调整渲染分辨率')} micro="ADAPTIVE RESOLUTION" value=${s.adaptiveResolution} onChange=${(v) => updateSettings({ adaptiveResolution: v })} />
       <p class="set-hint">${t('开启后，移动端持续卡顿时会降低棋盘与角色画面的分辨率，流畅后逐步恢复；界面文字不变。关闭后固定使用所选画质。')}</p>
       ${fxOk ? html`<div class="set-row" data-testid="official-fx">

@@ -4,6 +4,11 @@ import { createAssets, assets as defaultAssets } from '../../assets.js';
 import { standInRecord } from '../../../../shared/standIn.js';
 import { diyRecordOf } from '../../../../shared/diy.js';
 
+/** Load detection follows the chosen render cadence; intentional 30 FPS is not overload. */
+export function frameBudget(frameLimit) {
+  return 1000 / (frameLimit === 30 ? 30 : 60);
+}
+
 /** Under sustained pressure a touch-only device reduces canvas fill; DOM text and CSS hit coordinates stay sharp. */
 export function pressureResolution(deviceDpr, qualityCap, loadLevel, touch) {
   const cap = touch && loadLevel > 0 ? (loadLevel >= 3 ? 1 : loadLevel >= 2 ? 1.25 : 1.5) : Infinity;

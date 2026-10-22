@@ -49,10 +49,13 @@ perf.sample = (ms = 10000) => new Promise((resolve) => {
   const t0 = last;
   const r0 = { ...perf.runner.stats() };
   const lt0 = longTasks.length;
-  const step = (t) => {
+  const ticker = perf.view.debug.app.ticker;
+  const step = () => {
+    const t = performance.now();
     deltas.push(t - last);
     last = t;
-    if (t - t0 < ms || deltas.length < 2) { requestAnimationFrame(step); return; }
+    if (t - t0 < ms || deltas.length < 2) return;
+    ticker.remove(step);
     deltas.shift();
     const r1 = perf.runner.stats();
     const v = perf.view.stats();
@@ -63,12 +66,12 @@ perf.sample = (ms = 10000) => new Promise((resolve) => {
       longTasks: lt.length, longTaskMs: Math.round(lt.reduce((a, b) => a + b, 0)),
       ticks, simMs: round(r1.stepMs - r0.stepMs), simMsPerTick: ticks > 0 ? round((r1.stepMs - r0.stepMs) / ticks, 3) : null,
       viewCpuMs: v.cpuMs, renderMs: v.renderMs, units: v.units, lod: v.lod, particles: v.particles,
-      resolution: v.resolution,
+      resolution: v.resolution, frameLimit: v.frameLimit,
       officialFx: v.officialFx ? { tier: v.officialFx.tier, effects: v.officialFx.effects, particles: v.officialFx.particles, draws: v.officialFx.draws, textures: v.officialFx.textures, texMB: v.officialFx.texMB } : null,
       board: v.board3d?.on ? '3d' : '2d', done: !!perf.runner.state()?.done,
     });
   };
-  requestAnimationFrame(step);
+  ticker.add(step);
 });
 
 /** The device line of a report: renderer, screen, cores (what a phone report needs to be comparable). */
@@ -233,7 +236,8 @@ async function main() {
     return r.json();
   });
   const officialFx = ['off', 'lite', 'full', 'auto'].includes(q.get('fx')) ? q.get('fx') : 'off';
-  const view = await createFieldView($('field'), { data, assets, settings: { quality, damageNumbers: true, officialFx } });
+  const frameLimit = [30, 60].includes(Number(q.get('fps'))) ? Number(q.get('fps')) : 0;
+  const view = await createFieldView($('field'), { data, assets, board: q.get('board'), settings: { quality, damageNumbers: true, officialFx, frameLimit } });
   view.setStage(data.lookup('stages', msg.spec.stageId));
   // the runner needs no server here: reports go nowhere, the battle runs from its start
   const net = { on: () => () => {}, send() {}, request: async () => ({ ok: true }) };
