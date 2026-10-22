@@ -503,7 +503,11 @@ export class PSys {
       this.accDist -= nd;
     }
     const total = n + nd;
-    for (let i = 0; i < total; i++) {
+    // Some authored systems request millions per second to keep just one particle alive (Cetsyr's outfit S3
+    // flowers). _spawn rejects a full system before touching RNG/state; stop those no-op calls here. Keep the
+    // original total for birth age/position, and still consume the rate/burst bookkeeping below when full.
+    const cap = Math.min(def.maxParticles, SYSTEM_CAP);
+    for (let i = 0; i < total && this.count < cap; i++) {
       // spread over the step: the i-th of n is (n − i) / n of the step old, placed along the emitter's motion
       const f = (i + 1) / total;
       this._spawn(tau, (1 - f) * span, f, 0, 0, null);
@@ -521,7 +525,7 @@ export class PSys {
         if (tf < la - 1e-9 && !(la === 0 && tf <= 1e-9)) continue; // passed while not emitting (a late start)
         if (B.prob < 1 && this.rng.next() >= B.prob) continue;
         const c = Math.round(B.count.at(Math.min(1, tf / D), this.rng.next()) * this.emissionScale);
-        for (let i = 0; i < c; i++) this._spawn(tau, Math.max(0, lb - tf), 1, i, c, null);
+        for (let i = 0; i < c && this.count < cap; i++) this._spawn(tau, Math.max(0, lb - tf), 1, i, c, null);
       }
     }
   }
@@ -531,7 +535,8 @@ export class PSys {
    * rot, life } of the parent.
    */
   _emitAt(count, x, y, z, inherit) {
-    for (let i = 0; i < count; i++) this._spawn(Math.min(1, this.time / this.def.duration), 0, 1, i, count, inherit, x, y, z);
+    const cap = Math.min(this.def.maxParticles, SYSTEM_CAP);
+    for (let i = 0; i < count && this.count < cap; i++) this._spawn(Math.min(1, this.time / this.def.duration), 0, 1, i, count, inherit, x, y, z);
   }
 
   /** Sub-emitter trigger from a parent particle (death / birth): bursts of this system at the point. */

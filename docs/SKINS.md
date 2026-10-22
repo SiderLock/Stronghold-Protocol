@@ -1,5 +1,12 @@
 # 干员皮肤 (Operator skins)
 
+Local installation metadata (`tools/local-extract/skin-meta.mjs`) applies the same validated character role fixes as
+default models. Every overridden skill checks its clip names against that outfit's skeleton; missing clips are
+reported and retain the resolved outfit role. Utage's 伪装 / 夏卉 FA661 keep S1's rest and S2's ordinary attacks.
+Ifrit's 轻松旅途 also retains ordinary attacks for S1/S3: its official skin `_animations` table does not bind the
+skeleton's extra `Skill` / `Skill_Down` clips. Its numbered skill family and all other outfits are preserved.
+Regenerate `data/local-skins.json` after updating the extractor; this installation sidecar and art stay outside Git.
+
 An operator's Spine model and its pictures can be replaced by one of its official alternative outfits (时装). This
 document is the normative reference for that feature; the art itself is **never** downloaded or written by the server —
 it comes from a **cosmetic plugin's overlay** (docs/PLUGINS.md §9), which the server's owner installs in `plugins/` and
