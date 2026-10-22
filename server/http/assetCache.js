@@ -82,7 +82,8 @@ async function verifyAsset(handle, entry, canceled) {
 }
 
 export function createAssetCacheHandler({ publicDir, dataDir, log, limits, trustProxy, buildCatalog = createAssetCacheCatalog,
-  requireAssetCache = () => false, updateNow = () => performance.now() }) {
+  requireAssetCache = () => false, updateNow = () => performance.now(),
+  hashCacheFile = path.resolve(publicDir, '..', '.cache', 'asset-catalog-hashes.json') }) {
   const limiter = new CacheDownloadLimiter(limits);
   const proxy = trustProxy ?? parseTrustProxy(process.env.TRUST_PROXY);
   let pending = null;
@@ -99,7 +100,8 @@ export function createAssetCacheHandler({ publicDir, dataDir, log, limits, trust
   // One immutable catalog per server lifetime, shared by the tiny summary and filling allowlist.
   // Failure is retryable (e.g. setup still copying files); a successful snapshot changes only after restart.
   async function snapshot() {
-    if (!pending) pending = Promise.resolve().then(() => buildCatalog({ publicDir, dataDir })).then((catalog) => {
+    if (!pending) pending = Promise.resolve().then(() => buildCatalog({ publicDir, dataDir, hashCacheFile,
+      onHashStats: stats => log?.info?.('[asset-cache] digest scan', stats) })).then((catalog) => {
       const byUrl = new Map(catalog.files.map((entry) => [entry.url, entry]));
       current = assetCacheSummary(catalog);
       return { catalog, byUrl };

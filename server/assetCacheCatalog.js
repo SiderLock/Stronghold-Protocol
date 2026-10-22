@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { AUDIO_EXTS, MEDIA_PREFIX } from '../shared/media.js';
 import { hashedPath } from '../shared/assetPaths.js';
 import { rewriteManifest, mergeLocalSkins } from './http/assetViews.js';
+import { openAssetDigestCache, assetFileStamp } from './assetDigestCache.js';
 
 export const ASSET_CACHE_SCHEMA = 1;
 export const ASSET_CACHE_MIME = Object.freeze({
@@ -32,10 +33,10 @@ export function assetCacheURLProblem(url) {
 }
 
 /** Check every path component; lstat prevents links, including a link to somewhere inside public/. */
-export async function checkedAssetPath(publicDir, url, directoryChecks = new Map()) {
+export async function checkedAssetPath(publicDir, url, directoryChecks = new Map(), bigint = false) {
   const bad = assetCacheURLProblem(url);
   if (bad) throw new Error(bad);
-  return checkedPublicPath(publicDir, url, directoryChecks, false);
+  return checkedPublicPath(publicDir, url, directoryChecks, false, bigint);
 }
 
 /** A media directory can be safe/exist even when every declared file in it is missing. */
@@ -45,7 +46,7 @@ async function checkedAssetDirectory(publicDir, url, directoryChecks) {
   return checkedPublicPath(publicDir, url, directoryChecks, true);
 }
 
-async function checkedPublicPath(publicDir, url, directoryChecks, directory) {
+async function checkedPublicPath(publicDir, url, directoryChecks, directory, bigint = false) {
   const root = path.resolve(publicDir);
   const parts = url.slice(1).split('/');
   let current = root;
@@ -56,7 +57,7 @@ async function checkedPublicPath(publicDir, url, directoryChecks, directory) {
     let stat;
     if (!regularFile && directoryChecks.has(current)) stat = await directoryChecks.get(current);
     else {
-      const promise = fsp.lstat(current);
+      const promise = fsp.lstat(current, { bigint: regularFile && bigint });
       if (!regularFile) directoryChecks.set(current, promise);
       stat = await promise;
     }
@@ -67,11 +68,20 @@ async function checkedPublicPath(publicDir, url, directoryChecks, directory) {
   throw new Error('not a file');
 }
 
-export async function hashAssetFile(filePath) {
-  const hash = createHash('sha256');
-  let bytes = 0;
-  for await (const chunk of fs.createReadStream(filePath)) { hash.update(chunk); bytes += chunk.length; }
-  return { bytes, sha256: hash.digest('hex') };
+export async function hashAssetFile(filePath, expected) {
+  const handle = await fsp.open(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || (expected && assetFileStamp(before) !== assetFileStamp(expected))) throw new Error('file changed during catalog build');
+    const hash = createHash('sha256');
+    let bytes = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) { hash.update(chunk); bytes += chunk.length; }
+    const after = await handle.stat({ bigint: true });
+    const current = await fsp.lstat(filePath, { bigint: true });
+    if (assetFileStamp(before) !== assetFileStamp(after) || assetFileStamp(before) !== assetFileStamp(current)
+      || !current.isFile() || BigInt(bytes) !== before.size) throw new Error('file changed during catalog build');
+    return { bytes, sha256: hash.digest('hex') };
+  } finally { await handle.close(); }
 }
 
 function collectURLs(node, urls, invalid) {
@@ -106,7 +116,7 @@ const empty = (value) => value && typeof value === 'object' && !Array.isArray(va
  * Missing declared files are reported in `missing`; a server can still serve its usable files, while
  * the full-pack tool refuses a catalog whose `complete` is false. No absolute paths are disclosed.
  */
-export async function createAssetCacheCatalog({ publicDir, dataDir, app, concurrency = 4 } = {}) {
+export async function createAssetCacheCatalog({ publicDir, dataDir, app, concurrency = 4, hashCacheFile = null, onHashStats } = {}) {
   if (!publicDir || !dataDir) throw new Error('publicDir and dataDir are required');
   const urls = new Set();
   const invalid = new Map();
@@ -228,6 +238,8 @@ export async function createAssetCacheCatalog({ publicDir, dataDir, app, concurr
   }
 
   const wanted = [...urls].sort();
+  const digests = await openAssetDigestCache(hashCacheFile, publicDir);
+  const hashStats = { reused: 0, hashed: 0, readBytes: 0 };
   const results = new Array(wanted.length);
   let next = 0;
   const workers = Math.max(1, Math.min(16, Math.floor(Number(concurrency) || 4)));
@@ -236,14 +248,19 @@ export async function createAssetCacheCatalog({ publicDir, dataDir, app, concurr
       const index = next++;
       const url = wanted[index];
       try {
-        const { filePath, stat } = await checkedAssetPath(publicDir, url, dirs);
+        const { filePath, stat } = await checkedAssetPath(publicDir, url, dirs, true);
         if (!stat.size) throw new Error('empty file');
-        const digest = await hashAssetFile(filePath);
-        if (digest.bytes !== stat.size) throw new Error('file changed during catalog build');
+        let digest = digests.get(url, stat);
+        if (digest) hashStats.reused++;
+        else { digest = await hashAssetFile(filePath, stat); hashStats.hashed++; hashStats.readBytes += digest.bytes; }
+        if (BigInt(digest.bytes) !== stat.size) throw new Error('file changed during catalog build');
+        digests.set(url, stat, digest);
         results[index] = { url, ...digest, type: ASSET_CACHE_MIME[path.posix.extname(url).toLowerCase()], aliases: [] };
       } catch (error) { missing.set(url, missingReason(error)); }
     }
   }));
+  await digests.save();
+  onHashStats?.(hashStats);
   const files = results.filter(Boolean);
   // Both extension-less and explicit-extension routes use the real media resolver's priority.
   // If mp3 and ogg have the same stem, /media/x belongs to mp3; /media/x.ogg belongs to ogg.
