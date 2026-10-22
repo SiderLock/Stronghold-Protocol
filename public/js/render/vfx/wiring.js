@@ -336,7 +336,8 @@ export class FxWiring {
    * BoneFollower points) and the camera's tilt (the plane the drawn model faces).
    */
   pose(v) {
-    return { x: v.x, y: v.y, z: (v.z || 0) + (v.hover || 0), left: (v.visFacing ?? v.facing ?? 1) < 0, back: typeof v._wantsBack === 'function' ? !!v._wantsBack() && !!v.entryBack : false, view: v, tilt: this._camTilt() };
+    return { x: v.x, y: v.y, z: (v.z || 0) + (v.hover || 0), left: (v.visFacing ?? v.facing ?? 1) < 0, back: typeof v._wantsBack === 'function' ? !!v._wantsBack() && !!v.entryBack : false, view: v, tilt: this._camTilt(),
+      scale: Number.isFinite(v.effectScale) && v.effectScale > 0 ? v.effectScale : 1 };
   }
 
   /** The battle camera's tilt (degrees from straight down), or undefined (mounts.js SKELETON_TILT). */
@@ -556,7 +557,8 @@ export class FxWiring {
     const pos = P.fmp ? mountPoint(skin, P.fmp.mount, pose) : spawnPoint(skin, P.spawn, pose);
     const ground = (v.z || 0);
     if (P.onGround) pos[2] = -ground;
-    const place = { pos, groundZ: -ground, yaw: 0, mirror: false, flipY: false, mountRot: null, rootRot: null };
+    const place = { pos, groundZ: -ground, yaw: 0, mirror: false, flipY: false, mountRot: null, rootRot: null,
+      scale: P.body && v.info ? pose.scale : 1 };
     this._rotate(P, place, skin, pose);
     this._orient(def, place, pose, o, v);
     const opts = { track: o.track || null, data: o.data ?? null, loop: !!o.loop, important: !!o.important, skip: o.skip > 0 ? o.skip : 0, owner: v };
@@ -565,7 +567,7 @@ export class FxWiring {
     // a condition; a prefab with chained effects (OnPlayEmitter: system.js FxHandle._start hands them this track) has
     // one for them
     const stick = !!o.stick;
-    if (!o.track && (P.follow || P.keep || stick || !def || def.direction || def.pause || def.onPlay?.length)) {
+    if (!o.track && (P.follow || P.keep || stick || !def || def.direction || def.pause || def.onPlay?.length || def.onFinish?.length)) {
       let d = def;
       const at0 = [pose.x, pose.y, pose.z], kept = new WeakMap(), chained = new Map();
       opts.track = (fx) => {
@@ -599,6 +601,8 @@ export class FxWiring {
           }
         }
         const G = Q.fmp ? Q : P;
+        // Once a descriptor arrives (or an emitter starts a child), use its own body / ground placement.
+        fx.scale = Q.body && v.info ? p.scale : 1;
         if (G.follow) {
           mountPoint(skin, G.follow.mount, p, fx.anchor);
           if (G.onGround) fx.anchor[2] = -(v.z || 0);
@@ -651,7 +655,8 @@ export class FxWiring {
       else rotKind = spawnRotation(spawn);
     }
     const keep = !follow && (!!o.follow || !!def?.holdByOwner);
-    return { spawn, fmp, follow, rotKind, rotFollow, loaded: !!def, onGround: GROUND_SPAWNS.has(spawn) && !fmp, keep };
+    const body = fmp ? fmp.mount === 0 || !!mountKind(fmp.mount) : spawn === 1 || !!spawnKind(spawn);
+    return { spawn, fmp, follow, rotKind, rotFollow, loaded: !!def, onGround: GROUND_SPAWNS.has(spawn) && !fmp, keep, body };
   }
 
   /**

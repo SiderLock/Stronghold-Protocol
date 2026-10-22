@@ -279,6 +279,7 @@ export class Effect {
     this.mountRot = null;                              // the mount point's world rotation on the root ([x,y,z,w]) or null
     this.rootRot = null;                               // the rotation the game sets on the root as it plays it, or null
     this.groundZ = 0;
+    this.scale = 1;                                    // display-unit conversion, separate from authored TRS / PS scalingMode
     this.time = 0;                                     // s since spawn (battle clock)
     this.delay = def.delayToPlay + (def.randomDelay > 0 ? Math.random() * def.randomDelay : 0);
     this.state = 'play';                               // 'play' | 'stopping' | 'linger' | 'done'
@@ -323,7 +324,7 @@ export class Effect {
     this.hier.fill(0); this.prevHier.fill(0); this.actAt.fill(-1); this.forcedOff.fill(0);
     this.matOv.clear(); this.rendOv.clear(); this.trails.clear(); this.linePts.clear();
     this.anchor[0] = this.anchor[1] = this.anchor[2] = 0;
-    this.yaw = 0; this.pitch = 0; this.roll = 0; this.mirror = false; this.flipY = false; this.groundZ = 0; this.mountRot = null; this.rootRot = null;
+    this.yaw = 0; this.pitch = 0; this.roll = 0; this.mirror = false; this.flipY = false; this.groundZ = 0; this.mountRot = null; this.rootRot = null; this.scale = 1;
     this.time = 0;
     this.delay = def.delayToPlay + (def.randomDelay > 0 ? Math.random() * def.randomDelay : 0);
     this.state = 'play'; this.linger = 0; this.started = false; this.track = null; this.hidden = false; this.pausedBy = false; this.owner = null;
@@ -344,6 +345,7 @@ export class Effect {
 
   /** Place the effect (see the header). */
   place(o) {
+    if (Number.isFinite(o.scale) && o.scale > 0) this.scale = o.scale;
     if (o.pos) { this.anchor[0] = o.pos[0]; this.anchor[1] = o.pos[1]; this.anchor[2] = o.pos[2]; }
     if (typeof o.yaw === 'number') this.yaw = o.yaw;
     if (typeof o.pitch === 'number') this.pitch = o.pitch;
@@ -589,6 +591,9 @@ export class Effect {
       _p3[0] = L[o]; _p3[1] = L[o + 1]; _p3[2] = L[o + 2];
       _q[0] = L[o + 3]; _q[1] = L[o + 4]; _q[2] = L[o + 5]; _q[3] = L[o + 6];
       _s3[0] = L[o + 7]; _s3[1] = L[o + 8]; _s3[2] = L[o + 9];
+      if (i === 0) {
+        for (let j = 0; j < 3; j++) { _p3[j] *= this.scale; _s3[j] *= this.scale; }
+      }
       // the root's rotation is the one the game gives it as it plays the effect (`rootRot`: the spawn location's —
       // Effect._InitLocationFromEntity sets transform.rotation —, the identity for a projectile's body, which the client
       // parents to the projectile and resets), not the prefab's own; an effect placed at a map position keeps it
@@ -631,6 +636,7 @@ export class Effect {
   _frame(i) {
     const s = this.sys[i], w = this.world[i];
     const f = this.__frame || (this.__frame = { m: mat4(), scale: [1, 1, 1] });
+    f.displayScale = this.scale;
     const mode = s.def.scalingMode;
     if (mode === 0) { f.m.set(w); mat4Scale(w, f.scale); return f; }
     // Local: the node's own scale on the world basis; Shape: no scale (the shape takes the world scale at birth). A
@@ -639,13 +645,22 @@ export class Effect {
     // cross product, turned by the mirror), as Unity's Local mode takes the world rotation without the parents' scale —
     // an empty column made the frame singular and a world-space system's limit-velocity round trip blew up.
     const o = i * 10, L = this.loc;
-    const sx = mode === 1 ? L[o + 7] : 1, sy = mode === 1 ? L[o + 8] : 1, sz = mode === 1 ? L[o + 9] : 1;
+    // The display conversion applies to the whole effect, including Local / Shape systems that deliberately
+    // ignore their authored parents' scale. Otherwise a mesh grows but its adjoining particles stay small.
+    const sx = (mode === 1 ? L[o + 7] : 1) * this.scale,
+      sy = (mode === 1 ? L[o + 8] : 1) * this.scale, sz = (mode === 1 ? L[o + 9] : 1) * this.scale;
     const B = this.__basis || (this.__basis = new Float64Array(9));
     basisOf(w, this.mirror ? -1 : 1, B);
     const m = f.m;
     for (let r = 0; r < 3; r++) { m[r] = B[r] * sx; m[4 + r] = B[3 + r] * sy; m[8 + r] = B[6 + r] * sz; }
     m[3] = 0; m[7] = 0; m[11] = 0; m[12] = w[12]; m[13] = w[13]; m[14] = w[14]; m[15] = 1;
-    if (mode === 1) { f.scale[0] = sx; f.scale[1] = sy; f.scale[2] = sz; } else mat4Scale(w, f.scale);
+    if (mode === 1) { f.scale[0] = sx; f.scale[1] = sy; f.scale[2] = sz; }
+    else {
+      mat4Scale(w, f.scale);
+      // Shape applies this vector to its spawn shape before the render basis. That basis already carries the
+      // display conversion: keep only the authored hierarchy here, avoiding a second conversion at birth.
+      for (let k = 0; k < 3; k++) f.scale[k] /= this.scale;
+    }
     return f;
   }
 

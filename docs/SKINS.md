@@ -210,6 +210,13 @@ from the GameObject it hangs under (`<charId>_<stem>` → `<charId>@<stem>`, the
   an attack puts on someone else (`o.skinFrom`, projectiles' hit rows), the view's own otherwise. A replacement the set
   does not hold keeps the base key — never a silent drop.
 - `keysFor` preloads the variants of the outfits in the battle, so the first cast does not wait on a fetch.
+- Body mounts and attached effects use the displayed model's tile conversion (`UnitView.effectScale`): the field's
+  `UNIT.modelScale = 1/320` divided by the extracted standard `0.27 × 0.01` (Graphic × SkeletonDataAsset), about
+  1.1574. Static points take that factor; live Spine bones already include it and are never scaled twice. FOOT /
+  HIT / HEAD / MUZZLE / Special effects use it uniformly, including child meshes and Local / Shape particles.
+  Ground / tile effects, map-position effects and projectile flight distances keep their world-tile dimensions.
+  Late-loaded descriptors and chained effects select their own placement; pooled instances reset the factor.
+  This conversion is shared by default models and outfits, and needs no asset re-extraction.
 - `fakeProjectiles` are extracted but **not wired yet** (the client's projectile-graphic replacement); an outfit that
   needs one plays its normal projectile.
 

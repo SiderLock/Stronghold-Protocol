@@ -456,7 +456,7 @@ export class FxHandle {
     fx.onFinish = (f) => {
       prev?.(f);
       this._stopChildren();
-      for (const k of def.onFinish) if (k !== def.key) s.spawn(k, { pos: f.anchor.slice(), yaw: f.yaw, mirror: f.mirror, groundZ: f.groundZ }, { track: this.opts.track, owner: this.opts.owner });
+      for (const k of def.onFinish) if (k !== def.key) s.spawn(k, { pos: f.anchor.slice(), yaw: f.yaw, mirror: f.mirror, groundZ: f.groundZ, scale: f.scale }, { track: this.opts.track, owner: this.opts.owner });
     };
     this.effect = fx;
     // started late (a cast whose wind-up began past the clip's start): advanced to where it would be
