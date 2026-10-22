@@ -11,6 +11,58 @@ function fixture(assets, get, local = { groups: {} }, fx = null) {
         : get(url, options);
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a slow streamed asset can finish beyond the timeout while bytes keep arriving', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let stream, signal, calls = 0;
+  const queue = createAssetDownload({ timeoutMs: 60000, retries: 0,
+    fetch: fixture({ a: '/assets/a' }, (_url, opts) => {
+      calls++; signal = opts.signal;
+      return new Response(new ReadableStream({ start(c) {
+        stream = c;
+        signal.addEventListener('abort', () => c.error(new DOMException('Aborted', 'AbortError')), { once: true });
+      } }));
+    }) });
+  const run = queue.start();
+  await flush();
+  for (let i = 0; i < 4; i++) {
+    t.mock.timers.tick(40000);
+    stream.enqueue(new Uint8Array([1, 2, 3]));
+    await flush();
+    assert.equal(signal.aborted, false);
+  }
+  stream.close();
+  await run;
+  assert.equal(queue.get().phase, 'complete');
+  assert.equal(queue.get().bytes, 12);
+  assert.equal(calls, 1, 'no restart despite 160 seconds of total download time');
+  t.mock.timers.tick(60000);
+  assert.equal(signal.aborted, false, 'completion clears the inactivity clock');
+});
+
+test('a stalled stream times out after its last bytes; empty chunks do not extend it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let stream;
+  const queue = createAssetDownload({ timeoutMs: 60000, retries: 0,
+    fetch: fixture({ a: '/assets/a' }, (_url, { signal }) => new Response(new ReadableStream({ start(c) {
+      stream = c;
+      signal.addEventListener('abort', () => c.error(new DOMException('Aborted', 'AbortError')), { once: true });
+    } }))) });
+  const run = queue.start();
+  await flush();
+  t.mock.timers.tick(40000);
+  stream.enqueue(new Uint8Array([1]));
+  await flush();
+  t.mock.timers.tick(40000);
+  stream.enqueue(new Uint8Array(0));
+  await flush();
+  t.mock.timers.tick(20000);
+  await run;
+  assert.equal(queue.get().phase, 'partial');
+  assert.equal(queue.get().done, 0, 'a partial body never counts as downloaded');
+  assert.equal(queue.get().failures.length, 1);
+});
 
 test('all model pages/local scenes/fonts are deduplicated; audio matches the playback URL', () => {
   const urls = collectAssetUrls({ a: { skel: '/assets/~1234567890abcdef/model.skel', atlas: '/assets/model.atlas',

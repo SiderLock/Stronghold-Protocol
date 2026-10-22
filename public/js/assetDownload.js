@@ -25,7 +25,8 @@ export function collectAssetUrls(...manifests) {
   return [...urls].sort((a, b) => Number(a.startsWith('/media/')) - Number(b.startsWith('/media/')) || a.localeCompare(b));
 }
 
-/** A bounded, pausable download queue. A file counts only after its entire body arrives. */
+/** A bounded, pausable download queue. A file counts only after its entire body arrives.
+ * timeoutMs bounds inactivity, so a slow file that keeps delivering bytes can finish. */
 export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.fetch(...args),
   concurrency = 4, timeoutMs = 60000, retries = 2, lookupImported = listImportedPaths } = {}) {
   let state = { phase: 'idle', total: 0, done: 0, bytes: 0, failures: [], localMissing: false, cached: 0 };
@@ -44,9 +45,15 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
       const cancel = () => abort.abort();
       controller.signal.addEventListener('abort', cancel, { once: true });
       if (controller.signal.aborted) cancel();
-      const timer = setTimeout(cancel, timeoutMs);
+      let timer;
+      const progress = () => {
+        clearTimeout(timer);
+        timer = setTimeout(cancel, timeoutMs);
+      };
+      progress();
       try {
         const response = await doFetch(url, { signal: abort.signal, cache: json ? 'no-cache' : 'default' });
+        progress();
         if (optional && response.status === 404) { await response.body?.cancel(); return null; }
         if (!response.ok || response.status === 206) {
           await response.body?.cancel();
@@ -65,6 +72,7 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
+              if (value.byteLength) progress();
               size += value.byteLength;
               state = { ...state, bytes: state.bytes + value.byteLength };
               emit();
@@ -77,6 +85,7 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
         if (!size) throw Object.assign(new Error('Empty asset response'), { status: 'empty' });
         return;
       } catch (error) {
+        clearTimeout(timer);
         if (paused) throw error;
         const transient = !error.status || error.status >= 500 || [408, 429].includes(error.status);
         if (!transient || attempt >= retries) throw Object.assign(error, { url });

@@ -15,6 +15,15 @@ use the existing compact-v1 extension slot; battle simulation and published wire
 
 ## 8. Network protocol (shared/protocol.js is normative)
 
+Client recovery (capacity fork, 2026-10-22): a WebSocket upgrade still pending after 15 seconds is abandoned and
+retried with the existing exponential backoff [ASSUMED: client timeout policy]. Open and teardown clear that
+clock. A browser `online` signal also probes an apparently open socket; the existing unanswered-ping deadline
+decides whether to replace it. Background tab timer throttling alone does not imply disconnection. Queued requests
+carry an absolute expiry checked again before the welcome flush, so deferred timeout callbacks cannot replay
+expired actions. Requests already sent are still rejected on disconnect and never automatically resent.
+Tests and limits: DEV-20261022-01 (local maintenance notes); `test/client-static.test.js` and
+`test/weak-network.browser.test.js`.
+
 Capacity fork performance maintenance (2026-10-21): result validation indexes spawn modifiers once, preserving the
 original first-match and shallow-equality rules. Oversized results still use `b.yield` and full server settlement;
 vanilla normal/unite replays may run in the bounded child pool, with the same result and timeline and the original

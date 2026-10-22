@@ -728,6 +728,13 @@ or partial response is never counted as successful. A missing optional local man
 base manifest or any listed missing file prevents successful completion. Server owners still install missing art
 with setup; this button only transfers files already supplied by the server.
 
+For streamed art, the 60-second timeout measures **inactivity**: response headers and each nonempty body chunk
+restart it. A continuously progressing download may take longer than 60 seconds without being aborted and
+downloaded again. A stalled body still times out, and pause still aborts immediately. JSON manifests and hosts
+without a readable body stream remain bounded while their whole body is read. This does not add byte-range
+resume or a permanent offline guarantee. Regression: `test/ui/asset-download.test.js`;
+maintenance evidence: DEV-20261022-01 (local notes).
+
 ## Importing a local asset pack
 
 The title screen's **导入素材包** button (`public/js/ui/assetImport.js`), beside 下载完整素材, opens its own dialog. Opening it requests nothing from the server and never starts the download queue; the manifests are read once an import starts. It imports art the player already has: the example asset pack `node tools/package.mjs --assets` writes (one folder holding `public/assets/…`, `public/fonts/…` and a `README.txt`; the maintainer offers it for download outside the GitHub release), a setup `public/assets` folder, or a published full zip whose paths contain `public/assets/`. The page reads a zip's central directory in the browser, and a picked or dropped zip File slice by slice, so a whole pack (some 700 MB) is never held in memory at once. Method 0 (stored) is copied. Method 8 is inflated with `DecompressionStream('deflate-raw')`. Any other method, and an encrypted entry, is counted and skipped. Nothing is uploaded.

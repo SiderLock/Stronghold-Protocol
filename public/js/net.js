@@ -1,8 +1,10 @@
 // WebSocket client for the game server (DESIGN §8).
 //
 // - One socket at ws(s)://<host>/ws, JSON text frames `{ t, ...payload }`.
-// - Auto-reconnect with exponential backoff + jitter; a heartbeat (`ping`) measures latency and
-//   detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
+// - Auto-reconnect with exponential backoff + jitter; a heartbeat (`ping`) measures latency, and
+//   a stalled WebSocket upgrade is abandoned after CONNECT_TIMEOUT_MS. Restored connectivity probes
+//   an apparently open socket too. Queued requests are checked for expiry again before a resync flush.
+// - The heartbeat detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
 //   close ⇒ reconnect). Measured from the oldest unanswered ping, not from the last inbound frame,
 //   so a background tab whose timers the browser throttles to ~1/min is not mistaken for dead.
 // - On every (re)connect, once a player name is known, sends `hello {name, token, version}`;
@@ -38,6 +40,8 @@ import { assetCache } from './assetCache.js';
 const ASSET_ADMISSION_TYPES = new Set(['room.create', 'room.join', 'lobby.quickMatch', 'room.spectate', 'lobby.join', 'lobby.spectate']);
 
 export const REQUEST_TIMEOUT_MS = 8000;
+// [ASSUMED] Bound a stalled upgrade independently of the hello/heartbeat clocks.
+export const CONNECT_TIMEOUT_MS = 15000;
 export const HELLO_TIMEOUT_MS = 8000;
 export const PING_INTERVAL_MS = 4000;
 export const DEAD_AFTER_MS = 15000;
@@ -168,6 +172,7 @@ export class Net {
     this._emergencyRetryAt = 0;
     this._openedAt = 0;
     this._reconnectTimer = null;
+    this._connectTimer = null;
     this._pingTimer = null;
     this._helloTimer = null;
     this._helloRid = null;
@@ -249,6 +254,12 @@ export class Net {
     ws.onmessage = (ev) => { if (ws === this.ws) this._onMessage(ev?.data); };
     ws.onerror = () => { /* followed by close */ };
     ws.onclose = (ev) => { if (ws === this.ws) this._onClose(ev); };
+    this._connectTimer = this.timers.setTimeout(() => {
+      if (ws !== this.ws || ws.readyState !== WS_CONNECTING) return;
+      this._teardownSocket();
+      try { ws.close(4000, 'connect timeout'); } catch { /* ignore */ }
+      this._scheduleReconnect();
+    }, CONNECT_TIMEOUT_MS);
   }
 
   /** Close for good (no reconnect). Pending requests reject with CLOSED. */
@@ -266,7 +277,9 @@ export class Net {
   /** Skip the backoff wait and reconnect right now (used on `online` / tab focus / retry button). */
   retryNow() {
     if (this._manualClose) return;
-    if (this.ws && (this.ws.readyState === WS_OPEN || this.ws.readyState === WS_CONNECTING)) return;
+    // Restored connectivity can leave a dead TCP socket looking OPEN to the browser.
+    if (this.ws?.readyState === WS_OPEN) { this.probe(); return; }
+    if (this.ws?.readyState === WS_CONNECTING) return;
     this.connect();
   }
 
@@ -304,6 +317,7 @@ export class Net {
   }
 
   _onOpen() {
+    this._clearTimer('_connectTimer', 'clearTimeout');
     this._openedAt = this.now();
     this._lastRx = this._openedAt;
     this._unansweredSince = null;
@@ -368,6 +382,7 @@ export class Net {
     this.wireVersion = 0;
     this._unansweredSince = null;
     this._clearTimer('_pingTimer', 'clearInterval');
+    this._clearTimer('_connectTimer', 'clearTimeout');
     this._clearTimer('_helloTimer', 'clearTimeout');
     this._helloRid = null;
     this._helloSentName = null;
@@ -493,16 +508,8 @@ export class Net {
         return;
       }
       const timeout = Number.isFinite(opts.timeout) && opts.timeout > 0 ? opts.timeout : REQUEST_TIMEOUT_MS;
-      const entry = { msg, resolve, reject, sent: false, timer: null };
-      entry.timer = this.timers.setTimeout(() => {
-        if (this._pending.get(rid) !== entry) return;
-        this._pending.delete(rid);
-        if (entry.sent) {
-          this._expired.add(rid);
-          if (this._expired.size > 64) this._expired.delete(this._expired.values().next().value);
-        }
-        reject(new NetError('TIMEOUT'));
-      }, timeout);
+      const entry = { msg, resolve, reject, sent: false, timer: null, expiresAt: this.now() + timeout };
+      entry.timer = this.timers.setTimeout(() => this._expireRequest(rid, entry), timeout);
       this._pending.set(rid, entry);
       if (this.status === 'online') entry.sent = this._sendRaw(msg);
     });
@@ -537,9 +544,22 @@ export class Net {
   }
 
   _flushQueue() {
-    for (const entry of this._pending.values()) {
+    for (const [rid, entry] of this._pending) {
+      // Background throttling can defer the timeout callback until after welcome.
+      if (this.now() >= entry.expiresAt) { this._expireRequest(rid, entry); continue; }
       if (!entry.sent) entry.sent = this._sendRaw(entry.msg);
     }
+  }
+
+  _expireRequest(rid, entry) {
+    if (this._pending.get(rid) !== entry) return;
+    this._pending.delete(rid);
+    this._clearEntryTimer(entry);
+    if (entry.sent) {
+      this._expired.add(rid);
+      if (this._expired.size > 64) this._expired.delete(this._expired.values().next().value);
+    }
+    entry.reject(new NetError('TIMEOUT'));
   }
 
   /**
