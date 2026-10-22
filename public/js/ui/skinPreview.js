@@ -134,7 +134,7 @@ export function SkinModelPreview({ charId, skinId = null, art = null, name = '',
     };
     (async () => {
       try {
-        const [{ ensurePixi }, assets, { releaseGl }] = await Promise.all([import('../render/app/pixi.js'), import('../assets.js'), import('../render/app/host.js')]);
+        const [{ ensurePixi }, assets, { releaseGl }, { optimizeSpineTransforms }] = await Promise.all([import('../render/app/pixi.js'), import('../assets.js'), import('../render/app/host.js'), import('../render/spineTransforms.js')]);
         store = assets.assets;
         releaseRenderer = releaseGl;
         const P = await ensurePixi();
@@ -154,6 +154,7 @@ export function SkinModelPreview({ charId, skinId = null, art = null, name = '',
         host.appendChild(canvas);
         spine = new P.spine.Spine(spineData);
         spine.autoUpdate = false;
+        optimizeSpineTransforms(spine);
         app.stage.addChild(spine);
         spine.update(0);                                    // measure after an update (the header's third trap)
         const b = spine.getLocalBounds();

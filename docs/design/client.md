@@ -716,6 +716,15 @@ Art/audio templates ship original CC0 sample media; the studio fills the target'
 
 ## Fork runtime performance maintenance (2026-10-22)
 
+Settings also expose 「帧率上限」 (30 FPS / 60 FPS / unlimited, default unlimited), saved locally and applied
+immediately to the field and skin preview tickers. Simulation timing is independent. Load detection uses the
+selected frame budget, so intentional 30 FPS does not force a lower resolution. Performance samples count actual
+render ticker callbacks, not the browser's unrestricted animation callbacks.
+
+Owned standard Pixi 7 Spine slot transforms batch skew/rotation coefficient updates during matrix decomposition.
+Native property values and local/world matrices remain identical; custom or replacement transforms use the original
+path. Animation timing, pose frequency, mesh updates and rendering order remain unchanged.
+
 Settings expose an independent, persisted 「自动调整渲染分辨率」 switch (default on). Only touch-only clients use
 the existing sustained-load levels to cap canvas DPR at 1.5 / 1.25 / 1, within the selected quality and device caps.
 Recovery follows the existing hysteresis; disabling restores the selected quality immediately. DOM text and CSS
