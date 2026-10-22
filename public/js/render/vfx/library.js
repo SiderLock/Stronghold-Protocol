@@ -15,6 +15,7 @@
 // 'builtin:Sphere') are generated here.
 
 import { compileEffect } from './effect.js';
+import { trackAssetDemand } from '../../assetPriority.js';
 import { FX_LIST_URL, loadFxList } from './available.js';
 import { setIndexVersion } from './mounts.js';
 import { mergePluginFx } from './pluginLibrary.js';
@@ -178,9 +179,11 @@ export class FxLibrary {
 
   async _json(url) {
     if (!url || !this.fetch) return null;
-    const res = await this.fetch(url);
-    if (!res || !res.ok) throw new Error(`fx ${res ? res.status : 'no response'} ${url}`);
-    return res.json();
+    return trackAssetDemand((async () => {
+      const res = await this.fetch(url);
+      if (!res || !res.ok) throw new Error(`fx ${res ? res.status : 'no response'} ${url}`);
+      return res.json();
+    })());
   }
 
   /** index.json (null without one); its version tells mounts.js whether skins still need skinShift. */
@@ -203,13 +206,13 @@ export class FxLibrary {
 
   /** Run fn under the parallel-load limit. */
   _limit(fn) {
-    return new Promise((resolve, reject) => {
+    return trackAssetDemand(new Promise((resolve, reject) => {
       const run = () => {
         this.active++;
         Promise.resolve().then(fn).then(resolve, reject).finally(() => { this.active--; const next = this.queue.shift(); if (next) next(); });
       };
       if (this.active < MAX_PARALLEL) run(); else this.queue.push(run);
-    });
+    }));
   }
 
   /** The descriptor of a prefab key (null when absent / failed). */

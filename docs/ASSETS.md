@@ -21,6 +21,9 @@ cooldown. It respects the SFX/mute settings; a stale asynchronous decode cannot 
 All downloaded game assets the client needs are listed in **`data/assets.json`**. Game-art requests must use that manifest.
 The original project icons below are shipped static files, not downloaded game assets.
 
+Player-authorized current-first loading and cross-match visual-file caching in this fork are documented in
+[Asset loading](development/ASSET_LOADING.md). This optional cache does not replace verified imports or admission checks.
+
 ## Original project application icons (#413)
 
 By the maintainer's revised decision of 2026-10-10, **沿用 0.2.x 的薄荷绿城堡并精修**.

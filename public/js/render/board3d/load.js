@@ -16,6 +16,7 @@
 import { resolveUvTable } from './atlas.js';
 import { parseObj } from './obj.js';
 import { runtimeURL } from '../../runtime.js';
+import { trackAssetDemand } from '../../assetPriority.js';
 import { prepareSceneInWorker, resetSceneWorker } from './sceneWorkerClient.js';
 
 export const THREE_URL = '/vendor/three.module.js';
@@ -304,7 +305,9 @@ export function sceneGroupRects(chunks) {
 }
 
 async function fetchBuffer(url) {
-  try { const r = await fetch(url, { cache: 'no-cache' }); return r.ok ? await r.arrayBuffer() : null; } catch { return null; }
+  return trackAssetDemand(Promise.resolve().then(async () => {
+    try { const r = await fetch(url, { cache: 'no-cache' }); return r.ok ? await r.arrayBuffer() : null; } catch { return null; }
+  }));
 }
 
 // A download manager can replace a successful binary fetch with an empty response. One explicit, complete range

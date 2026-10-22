@@ -2419,5 +2419,13 @@
   "同意换座": "Accept swap",
   "拒绝换座": "Decline swap",
   "取消申请": "Cancel request",
-  "确定将房主转让给「{name}」吗？双方座位保持不变。": "Transfer host to \"{name}\"? Both players keep their current seats."
+  "确定将房主转让给「{name}」吗？双方座位保持不变。": "Transfer host to \"{name}\"? Both players keep their current seats.",
+  "允许本地缓存与后台补齐": "Allow local caching and background downloads",
+  "先加载当前玩家需要的素材，再后台补齐其余画面素材，供下次对局复用。最多占用 2 GiB；关闭后停止补齐，已有导入包不受影响。": "Load your current assets first, then download remaining visual assets in the background for later matches. Uses up to 2 GiB. Turning this off stops background downloads and keeps imported packs.",
+  "关闭并清理对局缓存": "Disable and clear match cache",
+  "本地缓存需要 https 或 localhost 及浏览器支持；更新后可能需要重新打开页面才能启用。": "Local caching requires HTTPS or localhost and browser support. After an update, reopen the page to enable it.",
+  "缓存不可用、空间不足或已达到上限，后台补齐已停止，当前对局可继续。": "Cache storage is unavailable or full. Background downloads have stopped; your match can continue.",
+  "服主已限制在线补齐，后台队列暂停；本局实际使用的素材仍会缓存。": "The host has restricted online filling. Background downloads are paused; assets used in this match are still cached.",
+  "已关闭并清理对局缓存。": "Local match caching is disabled and its cache has been cleared.",
+  "已关闭缓存；清理未完成，请重新打开页面后重试。": "Caching is disabled, but cleanup did not finish. Reopen the page and try again."
 }

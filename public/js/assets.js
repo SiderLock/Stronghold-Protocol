@@ -51,6 +51,7 @@
 // caller falls back (docs/ASSETS.md "Other fallbacks").
 
 import { runtimeURL, runtimeCacheMode } from './runtime.js';
+import { trackAssetDemand } from './assetPriority.js';
 import { cosmetics, createCosmeticLayers, EMPTY_MANIFEST } from './cosmetics.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -1005,7 +1006,7 @@ export function createAssets(options) {
     if (retry && e?.done && !e.value) { images.delete(s); e = null; }
     if (!e) {
       e = { value: null, done: false, promise: null };
-      e.promise = Promise.resolve().then(() => loadImage(s)).then(
+      e.promise = trackAssetDemand(Promise.resolve().then(() => loadImage(s))).then(
         (img) => { e.value = img; e.done = true; if (!img) failed(s); return img; },
         () => { e.done = true; failed(s); return null; },
       );
@@ -1112,7 +1113,7 @@ export function createAssets(options) {
       // a cosmetic plugin's model that fails to load (any of its files) falls back to the installation's: its view loads
       // that one (render/units.js retryAssets) — not while the tab is hidden (a load the hidden tab left hanging times out
       // without the file being at fault: GitHub #68; the view tries again when it is shown)
-      acquire: (entry, o) => (validSpine(entry) ? spine.acquire(entry.skel, entry, o).catch((err) => {
+      acquire: (entry, o) => (validSpine(entry) ? trackAssetDemand(spine.acquire(entry.skel, entry, o)).catch((err) => {
         if (!globalThis.document?.hidden) failed(entry.skel);
         throw err;
       }) : Promise.reject(new Error('no spine entry'))),

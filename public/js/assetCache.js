@@ -19,7 +19,7 @@ const initialState = (env) => {
     hasCatalog: false, catalogCurrent: false, catalogComplete: false, serverMissingFiles: 0,
     serverVersion: null, requireAssetCache: false, importStats: null, scanStats: null, waiting: false, policy: null,
     catalogUpdateRetryAt: 0, emergency: false,
-    persistence: 'idle' };
+    persistence: 'idle', renderCacheReady: false, renderCacheFull: false };
 };
 
 export function createAssetCacheManager({ environment = globalThis, doFetch, workerURL = '/js/asset-cache-worker.js',
@@ -374,6 +374,8 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       patch({ playing: ownPlaying || !!data.playing });
       if (data.playing && operation) pause();
     } else if (data?.type === 'ASSET_CACHE_UPDATED') passiveScan();
+    else if (data?.type === 'ASSET_CACHE_RENDER_FULL') patch({ renderCacheFull: true });
+    else if (data?.type === 'ASSET_CACHE_RENDER_CLEARED') patch({ renderCacheReady: false, renderCacheFull: false });
   }
 
   async function initialize() {
@@ -692,6 +694,22 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
   const scan = (options = {}) => operation && !options.deep ? Promise.resolve(getState()) : perform('scan', { refresh: true, ...options });
   const manager = {
     getState, state: getState, initialize, scan,
+    refreshRenderingPolicy: () => refreshSummary({ force: true }),
+    async configureRendering(enabled, { clear = false } = {}) {
+      try {
+        await initialize();
+        if (!state.supported || !(await compatibleSWNow())) return false;
+        let caps = await swMessage('ASSET_CACHE_CAPABILITIES');
+        if (!caps.renderCache && enabled === true && registration?.waiting) {
+          await activateWaiting(null); // the existing cross-tab playing guard still owns upgrade permission
+          caps = await swMessage('ASSET_CACHE_CAPABILITIES');
+        }
+        if (!caps.renderCache) return false;
+        await swMessage('ASSET_CACHE_RENDER_CONSENT', { enabled: enabled === true, clear });
+        patch({ renderCacheReady: enabled === true, ...(clear ? { renderCacheFull: false } : {}) });
+        return true;
+      } catch { patch({ renderCacheReady: false }); return false; }
+    },
     updateCatalog: () => perform('catalog-update'),
     downloadCatalog: () => perform('catalog-update'),
     setEmergency(value) {

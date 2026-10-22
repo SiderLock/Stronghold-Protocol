@@ -160,11 +160,15 @@ if (battleRunner) {
 /** Router for the in-match screens. */
 export function GameScreen() {
   const pub = useStore((s) => s.match.public);
+  const assetPrivate = useStore((s) => s.match.private);
   const hasResult = useStore((s) => !!s.match.result);
   const ended = useStore((s) => !!s.room && !s.room.inMatch && !!s.match.public);
   const away = useStore((s) => s.away, Object.is, awayStore);
   const autoplay = useStore((s) => !!(Array.isArray(s.match.public?.players) && s.match.public.players.find((p) => p && p.playerId === s.me.playerId)?.autoplay));
   const gd = useGameData();
+  useEffect(() => {
+    if (gd.ready) import('../assetPreload.js').then(({ warmMatchAssets }) => warmMatchAssets(pub, assetPrivate)).catch(() => {});
+  }, [gd.ready, pub, assetPrivate]);
   // The briefing's visible icons get the bandwidth first. Warm the later boot screen during the draft.
   useEffect(() => {
     if (gd.ready && pub && phaseMode(pub.phase) !== 'briefing') preloadBootArt();

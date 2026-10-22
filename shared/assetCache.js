@@ -3,6 +3,21 @@ export const CACHE_SCHEMA = 1;
 // Page/SW coordination evolves independently of the persisted catalog format.
 export const ASSET_CACHE_SW_PROTOCOL = 1;
 export const ASSET_CACHE_NAME = 'sp-asset-cache-v1';
+// Optional render-session files, separate from verified imports and strict admission evidence.
+export const RENDER_CACHE_NAME = 'sp-render-assets-v1';
+export const RENDER_CACHE_LIMIT = 2 * 1024 * 1024 * 1024;
+export const RENDER_CACHE_FILE_LIMIT = 32 * 1024 * 1024;
+export const RENDER_CACHE_INDEX = '/__sp_render_cache__/usage';
+
+/** Only immutable same-origin game-art URLs, never scripts, data, audio, APIs or mutable plain paths. */
+export function renderAssetKey(input, origin) {
+  try {
+    const url = new (/** @type {any} */ (globalThis).URL)(input, origin);
+    if (url.origin !== origin || url.search || url.hash) return null;
+    if (!/^\/assets\/~[a-f0-9]{16}\/.+\.(?:png|webp|jpe?g|gif|svg|skel|atlas|json|obj|bin)$/i.test(url.pathname)) return null;
+    return url.href;
+  } catch { return null; }
+}
 export const ASSET_CACHE_META = 'sp-asset-cache-meta-v1';
 export const CACHE_KEY_PREFIX = '/__sp_asset_cache__/sha256/';
 export const ASSET_CACHE_LATEST_KEY = '/__sp_asset_cache__/latest';
