@@ -459,7 +459,7 @@ export async function createFieldView(host, options = {}) {
   function useOfficialScene(st) {
     const id = st && typeof st.id === 'string' ? st.id : '';
     if (!id || !board3d) return;
-    loadScenePack(assets, id).then((scene) => {
+    loadScenePack(assets, id, { areas: board3d.area }).then((scene) => {
       if (scene && !destroyed && board3d && stageRec && stageRec.id === id) board3d.setScenePack(id, scene);
     }).catch(() => {});
   }

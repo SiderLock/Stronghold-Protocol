@@ -309,22 +309,31 @@ export class FxLibrary {
 
   /** Decode an image: an ImageBitmap flipped for GL (v = 0 at the bottom row), else an HTMLImageElement. */
   async _image(url) {
+    let objectUrl = null;
     if (typeof createImageBitmap === 'function' && this.fetch) {
       const res = await this.fetch(url);
       if (!res.ok) throw new Error(`fx ${res.status} ${url}`);
       const blob = await res.blob();
-      const image = await createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
-      return { image, flipped: true };
+      try {
+        const image = await createImageBitmap(blob, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+        return { image, flipped: true };
+      } catch (err) {
+        // Some WebViews expose ImageBitmap but reject its options or this image format. Reuse the downloaded blob.
+        if (typeof Image === 'undefined') throw err;
+        if (typeof URL.createObjectURL === 'function') objectUrl = URL.createObjectURL(blob);
+      }
     }
     if (typeof Image === 'undefined') return null;
-    const image = await new Promise((resolve, reject) => {
-      const im = new Image();
-      im.crossOrigin = 'anonymous';
-      im.onload = () => resolve(im);
-      im.onerror = () => reject(new Error(`fx image ${url}`));
-      im.src = url;
-    });
-    return { image, flipped: false };
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.crossOrigin = 'anonymous';
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error(`fx image ${url}`));
+        im.src = objectUrl || url;
+      });
+      return { image, flipped: false };
+    } finally { if (objectUrl) URL.revokeObjectURL(objectUrl); }
   }
 
   /** Load prefabs (and the effects they chain), their meshes and textures. */

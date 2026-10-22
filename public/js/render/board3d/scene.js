@@ -33,7 +33,9 @@ import {
   sceneEnvTexture, applyWaterMaterial, trapMaterial,
 } from './materials.js';
 import { syncThreeCamera } from '../projection.js';
-import { mergeSceneChunks, sceneMaterialKey, sceneWaterInfo, isSceneWater } from './load.js';
+import { sceneWaterInfo, isSceneWater } from './load.js';
+import { sceneBuckets, sceneGroupVisible } from './sceneGeometry.js';
+export { sceneGroupVisible };
 
 /** Lighting rig (tuned against the official screenshots: bright even tops, darker sides, soft shadows). */
 export const LIGHTING = Object.freeze({
@@ -74,17 +76,6 @@ export function gatePulse(t, [from, mid] = GATE_TINT.start.alpha) {
   const u = ((t % 2) + 2) % 2;
   const x = u < 1 ? u : 2 - u;
   return from + (mid - from) * x * x * (3 - 2 * x);
-}
-
-/**
- * Is a named part of an official scene (its ground rect [x0, y0, x1, y1]) shown with the built `areas`? The official
- * scene keeps each field as a sub-graphic it switches on (HIDDEN@n: the left / right normal field, the boss field);
- * a part is shown when its centre lies in one of the areas.
- */
-export function sceneGroupVisible(rect, areas) {
-  if (!Array.isArray(rect) || rect.length < 4) return true;
-  const cx = (rect[0] + rect[2]) / 2, cy = (rect[1] + rect[3]) / 2;
-  return (areas || []).some((a) => cx >= a.c0 - 0.5 && cx <= a.c1 + 0.5 && cy >= a.r0 - 0.5 && cy <= a.r1 + 0.5);
 }
 
 const areaKey = (list) => (list || []).map((a) => `${a.r0},${a.r1},${a.c0},${a.c1}`).sort().join(';');
@@ -357,6 +348,8 @@ export class BoardScene {
     this._clear();
     this.sceneWater = [];
     this.official = null;
+    // Only the active scene needs GPU resources. CPU packs can rebuild a revisited scene without another download.
+    for (const key of this.sceneRes.keys()) if (key !== official?.key) this._disposeScene({ key });
     if (!stage) { applyWaterMaterial(this.mat.water, null); return; }
     const board = buildBoard(stage, { uv: this.pack?.uv || null, area: this.area, platformMesh: !!this.platformGeometry() });
     this.board = board;
@@ -395,6 +388,11 @@ export class BoardScene {
     if (prev === (pack || null)) return false;
     if (prev) this._disposeScene(prev);
     if (pack) this.scenePacks.set(id, pack); else this.scenePacks.delete(id);
+    // Retain the active stage and the most recent preload, not every stage visited in a long session.
+    for (const key of this.scenePacks.keys()) {
+      if (this.scenePacks.size <= 2) break;
+      if (key !== id && key !== this.stage?.id) this.scenePacks.delete(key);
+    }
     if (this.stage && this.stage.id === id) { this.stageKey = null; this.setStage(this.stage); }
     return true;
   }
@@ -429,21 +427,9 @@ export class BoardScene {
   _buildScene(pack) {
     const T = this.THREE;
     const res = this._sceneResources(pack);
-    const infos = pack.doc?.materials || {};
     this.sceneWater = [];
-    const buckets = new Map();
-    for (const c of pack.chunks || []) {
-      if (c.group && !sceneGroupVisible(pack.groups?.[c.group], this.area)) continue;
-      const info = infos[c.material] || null;
-      const mk = sceneMaterialKey(c, info);
-      let bucket = buckets.get(mk);
-      if (!bucket) { bucket = { info, chunks: [] }; buckets.set(mk, bucket); }
-      bucket.chunks.push(c);
-    }
     let n = 0;
-    for (const [mk, bucket] of buckets) {
-      const c = mergeSceneChunks(bucket.chunks);
-      const info = bucket.info;
+    for (const { key: mk, chunk: c, info } of sceneBuckets(pack, this.area)) {
       const surface = isSceneWater(info, c.material);
       const water = surface || info?.kind === 'water';
       let mat = res.mats.get(mk);
