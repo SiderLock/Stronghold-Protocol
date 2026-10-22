@@ -533,6 +533,8 @@ export const C2S = {
   'room.kick': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: isId },
   // Transfer names a current human, never a position that may have changed while the dialog was open.
   'room.transferHost': { playerId: isId },
+  'room.requestSeat': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: (v) => v === null || isId(v) },
+  'room.answerSeat': { requestId: isId, accept: isBool },
   'room.start': {},
   'room.rerollSetup': { setupRevision: (v) => isInt(v, 0, 2 ** 31) },
   'room.cancelReroll': { voteId: (v) => isInt(v, 1, 2 ** 31) },

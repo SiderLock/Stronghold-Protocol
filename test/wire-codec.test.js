@@ -25,7 +25,7 @@ const V1_EXTENSIONS = Object.freeze({
 // Published v1 has no new numeric IDs: these post-v1 business types deliberately use its JSON fallback.
 const V1_JSON_FALLBACK = Object.freeze({
   c2s: ['room.chat', 'room.setMatchmaking', 'lobby.join', 'lobby.spectate', 'b.rehearsalResult',
-    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins',
+    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins', 'room.requestSeat', 'room.answerSeat',
     // 0.3.1 business types (skins / unequip rule / plugin offers / test console) — post-v1, JSON fallback
     'room.skins', 'g.unequip', 'g.offer', 'g.offerRefresh', 'g.test'],
   s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel'],

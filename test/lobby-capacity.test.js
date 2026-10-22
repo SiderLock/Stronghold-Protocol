@@ -129,7 +129,7 @@ test('resizing preserves full seat identity and mixed ready states after host tr
   oldHostSeat.diy = Object.freeze({ test_slot: 'test_char' });
   const seatSnapshot = structuredClone(originalSeats);
   const spectatorSnapshot = structuredClone(room.spectators);
-  assert.equal(room.seats[0].playerId, newHost.playerId);
+  assert.equal(room.seats[1].playerId, newHost.playerId);
   assert.equal(oldHostSeat.ready, false, 'an unready former host must stay unready');
   assert.equal(room.seatOf(offline.playerId).ready, true);
   for (const capacity of [8, 20, 8, 4]) {

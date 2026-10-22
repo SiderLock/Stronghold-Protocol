@@ -89,6 +89,7 @@ export function roomFacts(room, myId) {
     canAddBot: waiting && isHost && room?.mode !== 'solo' && emptySeats > 0 && !aiLimitReached,
     transferableHumans: waiting && isHost && !!mine
       ? others.filter((s) => s.connected !== false && !s.left) : [],
+    canExchangeSeats: waiting && room?.mode === 'coop' && !!mine && !mine.isBot && !mine.left && mine.connected !== false,
     canStart: waiting && isHost && othersReady && !!mine && !aiLimitExceeded && contentReady
       && (!room?.content?.trusted || humans.every(s => room.content.trusted.consent[s.seat])),
     othersReady,
@@ -128,12 +129,41 @@ export function inviteLink(code) {
  */
 export { copyText };
 
-export function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot, onKick, onTransferHost }) {
+export function SeatExchangeButton({ seat, index, room, facts, myId, busy, connected, onExchange }) {
+  if (!facts.canExchangeSeats || seat?.playerId === myId) return null;
+  const pending = (room.seatRequests || []).some((r) => [r.fromId, r.toId].includes(myId));
+  return html`<${Button} class="seat__swap" variant="secondary" size="sm" disabled=${!!busy || !connected || pending || seat?.connected === false}
+    data-testid=${`seat-swap-${index}`} onClick=${() => onExchange(index, seat?.playerId ?? null)}
+    aria-label=${seat && !seat.isBot ? t('向 P{seat} 申请换座', { seat: index + 1 }) : t('换到 P{seat}', { seat: index + 1 })}>
+    ${!seat ? t('换到这里') : seat.isBot ? t('交换座位') : t('申请换座')}<//>`;
+}
+
+export function SeatRequestNotice({ room, myId, busy, connected, onAnswer }) {
+  const request = (room.seatRequests || []).find((r) => r.fromId === myId || r.toId === myId);
+  if (!request || room.inMatch) return null;
+  const incoming = request.toId === myId;
+  const other = room.seats.find((s) => s?.playerId === (incoming ? request.fromId : request.toId));
+  return html`<aside class="seat-request" data-testid="seat-request" role="status">
+    <div><strong>${incoming ? t('{name}（P{seat}）申请与你交换座位', { name: other?.name || t('博士'), seat: request.fromSeat + 1 })
+      : t('正在等待 {name} 同意换座', { name: other?.name || t('博士') })}</strong>
+      <span>${t('换座申请有效期为 30 秒')}</span></div>
+    <div class="seat-request__actions">
+      ${incoming ? html`<${Button} variant="primary" size="sm" disabled=${!!busy || !connected} data-testid="seat-accept"
+        onClick=${() => onAnswer(request.id, true)}>${t('同意换座')}<//>` : null}
+      <${Button} variant="secondary" size="sm" disabled=${!!busy || !connected} data-testid="seat-decline"
+        onClick=${() => onAnswer(request.id, false)}>${incoming ? t('拒绝换座') : t('取消申请')}<//>
+    </div>
+  </aside>`;
+}
+
+export function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot, onKick, onTransferHost, connected, onExchange }) {
   const coop = room.mode !== 'solo';
+  const exchange = html`<${SeatExchangeButton} seat=${seat} index=${index} room=${room} facts=${facts} myId=${myId}
+    busy=${busy} connected=${connected} onExchange=${onExchange} />`;
   if (!seat) {
     const canAdd = coop && facts.isHost;
     return html`<article class="seat seat--empty" style=${`--seat-i:${index}`}>
-      <header class="seat__head"><span class="seat__no num">P${index + 1}</span><${MicroLabel}>SEAT ${String(index + 1).padStart(2, '0')}<//></header>
+      <header class="seat__head"><span class="seat__no num">P${index + 1}</span><${MicroLabel}>SEAT ${String(index + 1).padStart(2, '0')}<//>${exchange}</header>
       <div class="seat__art seat__art--empty">
         <div class="seat__radar" aria-hidden="true"></div>
         <span class="seat__wait">${t('等待博士加入')}</span>
@@ -161,6 +191,7 @@ export function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRem
       <span class="seat__no num">P${index + 1}</span>
       <${MicroLabel}>SEAT ${String(index + 1).padStart(2, '0')}<//>
       ${isHostSeat ? html`<span class="seat__host"><${Icon} name="crown" />${t('房主')}</span>` : null}
+      ${exchange}
     </header>
     <div class="seat__art">
       <div class="seat__stripes" aria-hidden="true"></div>
@@ -326,6 +357,8 @@ export function RoomScreen() {
   const toggleReady = () => run('ready', () => net.request('room.ready', { ready: !myReady }));
   const start = () => run('start', () => net.request('room.start', {}));
   const addBot = () => run('add', () => net.request('room.addBot', {}));
+  const exchangeSeat = (seat, playerId) => run('seat', () => net.request('room.requestSeat', { seat, playerId }));
+  const answerSeat = (requestId, accept) => run('seat', () => net.request('room.answerSeat', { requestId, accept }));
   const removeBot = (seat, playerId) => run(`rm${seat}`, () => net.request('room.removeBot', { seat, playerId }));
   // the host removes a human before the match (community report #17): asked first; the player may join again. The
   // confirmed player's id goes along: if they left and someone else took the seat meanwhile, the server refuses it.
@@ -335,7 +368,7 @@ export function RoomScreen() {
   });
   const transferHost = (seat, name, playerId) => run(`transfer${seat}`, async () => {
     const ok = await confirmDialog({ title: t('转让房主'),
-      text: t('确定将房主转让给「{name}」吗？双方将交换席位，新房主位于 P1。', { name: name || t('博士') }),
+      text: t('确定将房主转让给「{name}」吗？双方座位保持不变。', { name: name || t('博士') }),
       okText: t('转让') });
     if (ok) await net.request('room.transferHost', { playerId });
   });
@@ -410,9 +443,11 @@ export function RoomScreen() {
     </header>
 
     ${coop ? html`<${CapacityPicker} room=${room} facts=${facts} busy=${busy} connected=${online} onPick=${setCapacity} onMatchmaking=${setMatchmaking} />` : null}
+    <${SeatRequestNotice} room=${room} myId=${me.playerId} busy=${busy} connected=${online} onAnswer=${answerSeat} />
     <main class=${`seats${coop ? facts.seats.length > 10 ? ' seats--dense' : facts.seats.length > 4 ? ' seats--expanded' : '' : ' seats--solo'}${coop && facts.seats.length === 10 ? ' seats--ten' : ''}`}>
       ${facts.seats.map((s, i) => html`<${SeatCard} key=${s ? `p${s.playerId}` : `e${i}`} seat=${s} index=${i} room=${room} facts=${facts}
-        myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} onTransferHost=${transferHost} />`)}
+        myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} onTransferHost=${transferHost}
+        connected=${online} onExchange=${exchangeSeat} />`)}
       ${coop ? null : html`<aside class="solo-brief brackets">
         <${MicroLabel} tone="mint">BRIEFING<//>
         <h2>${DIFFICULTY_NAMES[room.difficulty] ? t(DIFFICULTY_NAMES[room.difficulty]) : ''}<span class="num t-dim"> ${info.code}</span></h2>

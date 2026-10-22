@@ -5,8 +5,8 @@
 //   * Rooms are keyed by 4-letter codes from an unambiguous alphabet (no I/O, letters only). Join codes are
 //     case-insensitive.
 //   * 'solo' rooms hold exactly one human and never bots. 'coop' rooms offer 4 / 8 / 10 / 16 / 20 seats (humans + AI bots).
-//     Humans and bots take the lowest free seat index. In a waiting room the host occupies seat 0;
-//     host transfer/migration swaps only the host and seat 0. Running matches retain their fixed seats.
+//     Humans and bots take the lowest free seat index. Waiting humans can exchange seats (lobbySeats.js);
+//     host authority follows identity independently of seat position. Running matches retain their fixed seats.
 //   * ▸ Being in a LOBBY room and sending room.create / room.join implicitly leaves it. While your room is
 //     in a match, create/join of another room fails with ROOM_STARTED (send g.leave or room.leave first).
 //   * Host-only: room.setDifficulty, room.setAiPicksLast, room.addBot, room.removeBot, room.kick, room.start.
@@ -169,6 +169,7 @@ import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
 import { LobbyDiscovery } from './lobbyDiscovery.js';
+import { requestSeat, answerSeat, pruneSeatRequests, clearSeatRequests } from './lobbySeats.js';
 import { assetCacheReadinessMatches } from '../shared/assetCache.js';
 import { MatchChat } from './matchChat.js';
 
@@ -287,6 +288,9 @@ export class Room {
     /** @type {(Seat | null)[]} */
     this.capacity = mode === 'solo' ? 1 : capacity;
     this.seats = new Array(this.capacity).fill(null);
+    this.seatRequests = [];
+    this.seatRequestSeq = 0;
+    this.seatRequestTimer = null;
     /** @type {{ playerId: string, name: string, connected: boolean }[]} spectator seats, ≤ MAX_SPECTATORS (header) */
     this.spectators = [];
     /** @type {any} running Match instance */
@@ -349,6 +353,7 @@ export class Room {
       t: 'room.state',
       code: this.code,
       hostId: this.hostId,
+      ...(this.seatRequests.length ? { seatRequests: this.seatRequests.map((r) => ({ ...r })) } : {}),
       maxAiPerRoom: this.maxAiPerRoom,
       mode: this.mode,
       difficulty: this.difficulty,
@@ -731,6 +736,8 @@ export class Lobby {
       case 'room.removeBot': return this.removeBot(session, msg);
       case 'room.kick': return this.kick(session, msg);
       case 'room.transferHost': return this.transferHost(session, msg);
+      case 'room.requestSeat': return requestSeat(this, session, msg);
+      case 'room.answerSeat': return answerSeat(this, session, msg);
       case 'room.start': return this.start(session);
       case 'room.rerollSetup': return this.rerollSetup(session, msg);
       case 'room.cancelReroll': return this.rerollSetup(session, msg, true);
@@ -1244,7 +1251,6 @@ export class Lobby {
     }
     this.dropReplay(room, session.playerId);
     room.hostId = playerId;
-    this.promoteHostSeat(room);
     this.broadcastState(room);
     this.log.info(`[lobby] ${room.code} host transferred to ${target.name}`);
     return OK;
@@ -1631,7 +1637,6 @@ export class Lobby {
     const host = room.hostId ? room.seatOf(room.hostId) : null;
     if (!host || host.isBot || host.left) this.migrateHost(room);
     this.trimBots(room);
-    this.promoteHostSeat(room);
     if (room.activeHumans().length === 0) this.disposeRoom(room, 'empty');
     else {
       this.broadcastState(room);
@@ -1959,24 +1964,10 @@ export class Lobby {
     const pick = humans.find((s) => s.connected) || humans[0] || null;
     const prev = room.hostId;
     room.hostId = pick ? pick.playerId : null;
-    this.promoteHostSeat(room);
     if (pick && prev !== pick.playerId) this.log.info(`[lobby] ${room.code} host → ${pick.name}`);
     // a running match follows the host change: its delegated bot rehearsals fall back to the server and later ones ask
     // the new host (DESIGN §14, Match.setHost)
     if (room.match && room.hostId !== prev) this.callMatch(room, 'setHost', room.hostId);
-  }
-
-  /** Change waiting-room seat order only; a running match owns its original seats and fixed pool groups. */
-  promoteHostSeat(room) {
-    if (room.match || !room.hostId) return;
-    const host = room.seatOf(room.hostId);
-    if (!host || host.isBot || host.left || host.seat === 0) return;
-    const oldIndex = host.seat;
-    const first = room.seats[0];
-    room.seats[0] = host;
-    host.seat = 0;
-    room.seats[oldIndex] = first;
-    if (first) first.seat = oldIndex;
   }
 
   startGrace(room, seat) {
@@ -2010,6 +2001,7 @@ export class Lobby {
   disposeRoom(room, reason) {
     if (room.disposed) return;
     room.disposed = true;
+    clearSeatRequests(room);
     if (this.rooms.get(room.code) === room) {
       this.trustedRuntime?.event('roomClosed', { room: room.toState() });
       this.rooms.delete(room.code);
@@ -2069,6 +2061,7 @@ export class Lobby {
 
   broadcastState(room) {
     if (room.disposed) return;
+    pruneSeatRequests(this, room);
     this.discovery.changed();
     if (this.trustedRuntime) {
       const state = room.toState(), prev = room.trustedPrevious;

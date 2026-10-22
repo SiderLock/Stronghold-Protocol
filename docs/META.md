@@ -41,6 +41,12 @@ server/match/
 
 ## 1. Match flow
 
+Capacity-fork waiting rooms allow seat exchanges before starting: empty / AI seats exchange immediately,
+human seats require that person's consent. Host authority follows identity; handover and returning from a match
+do not reorder seats. Readiness and personal settings travel with the complete seat object; the next match uses
+the final seat order for fixed groups. Live match seats and groups stay fixed. See
+[D040](development/DECISIONS.md#d040) and the [network contract](design/network.md).
+
 ```
 LOBBY → INFO_CHECK (co-op 25 s; solo and single-human matches untimed; all humans confirmed ⇒ next) → BAND_DRAFT → BATTLE_CHECK (3 s)
 → for r = 1..lastRound (+ hidden):

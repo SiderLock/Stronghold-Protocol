@@ -2331,7 +2331,6 @@
   "已达上限": "Limit reached",
   "已达到服务器允许的 AI 队友上限": "The server limit for AI teammates has been reached",
   "转让房主": "Transfer host",
-  "确定将房主转让给「{name}」吗？双方将交换席位，新房主位于 P1。": "Transfer host to “{name}”? Your seats will be swapped, and the new host will occupy P1.",
   "转让": "Transfer",
   "你是同盟的房主，离开后房主身份将移交或同盟解散。确定离开吗？": "You are the Alliance host. Leaving will transfer host ownership or disband the Alliance. Leave?",
   "已就绪 · 等待房主开始模拟": "Ready · Waiting for the host to start the simulation",
@@ -2402,5 +2401,17 @@
   "战斗画面渲染失败，已切换到简化视图。若反复出现，请在浏览器设置里关闭「硬件加速」后重启浏览器。": "The battle view failed to render, so the simplified view is shown. If it keeps happening, turn off hardware acceleration in the browser settings and restart the browser.",
   "按当前层数部署时": "When deployed at the current stack count",
   "攻速与隐匿时长在每次部署时确定；作战中新增层数不会延长已生效的这次效果。": "Attack speed and Stealth duration are set at each deployment. Stacks gained during combat do not extend effects already applied.",
-  "上述时长为作战内时间；2 倍速下的现实用时约为一半（不计暂停）。": "Durations above use in-game time. At 2× speed, real elapsed time is about half as long, excluding pauses."
+  "上述时长为作战内时间；2 倍速下的现实用时约为一半（不计暂停）。": "Durations above use in-game time. At 2× speed, real elapsed time is about half as long, excluding pauses.",
+  "换到这里": "Move here",
+  "交换座位": "Swap seats",
+  "申请换座": "Request swap",
+  "换到 P{seat}": "Move to P{seat}",
+  "向 P{seat} 申请换座": "Request a swap with P{seat}",
+  "正在等待 {name} 同意换座": "Waiting for {name} to accept the seat swap",
+  "{name}（P{seat}）申请与你交换座位": "{name} (P{seat}) wants to swap seats with you",
+  "换座申请有效期为 30 秒": "Seat swap requests expire after 30 seconds",
+  "同意换座": "Accept swap",
+  "拒绝换座": "Decline swap",
+  "取消申请": "Cancel request",
+  "确定将房主转让给「{name}」吗？双方座位保持不变。": "Transfer host to \"{name}\"? Both players keep their current seats."
 }

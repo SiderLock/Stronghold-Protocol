@@ -74,8 +74,9 @@ export const NET_DEFAULTS = Object.freeze({
  * lobby.spectate / lobby.watch with on:true/list:true (a paginated room directory, at most 50 rows per reply), and
  * room.setPlugins (a new visual set: every member downloads its art manifest — server/plugins/visualSet.js).
  * room.skins (docs/SKINS.md) is a small `{ [charId]: skinId }` map, sent on every edit of the appearance.
+ * Seat requests and answers broadcast room state to every member and share the same budget.
  */
-export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'lobby.spectate', 'lobby.watch', 'room.setPlugins', 'room.skins']);
+export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'lobby.spectate', 'lobby.watch', 'room.setPlugins', 'room.skins', 'room.requestSeat', 'room.answerSeat']);
 
 /** Close codes (see header). */
 export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY: 1008, SHUTDOWN: 1001 });

@@ -15,6 +15,18 @@ use the existing compact-v1 extension slot; battle simulation and published wire
 
 ## 8. Network protocol (shared/protocol.js is normative)
 
+Waiting-room seat exchange (capacity fork, 2026-10-22): `room.requestSeat {seat, playerId}` binds the selected
+index to its current occupant (`null` for an empty seat). Any connected co-op participant may exchange with an
+empty or AI seat immediately. Another connected human receives a consent request in optional
+`room.state.seatRequests: [{id, fromId, toId, fromSeat, toSeat, expiresAt}]`. Only that recipient may accept with
+`room.answerSeat {requestId, accept:true}`; either participant may decline/cancel with `accept:false`.
+The server verifies both identities and original positions. Requests expire after 30 seconds, at most one per
+participant [ASSUMED interaction policy], and clear on displacement, disconnect, departure or match start. IDs are
+bound to the room lifetime. Both new C2S messages use v1's JSON fallback and its existing heavy-response budget;
+the optional state field uses the extension slot, preserving all published positions. Seat objects retain readiness
+and personal settings; host authority is independent of seat position, including handover and return from a match.
+No spectator, solo or running-match exchanges. Decision: [D040](../development/DECISIONS.md#d040).
+
 Client recovery (capacity fork, 2026-10-22): a WebSocket upgrade still pending after 15 seconds is abandoned and
 retried with the existing exponential backoff [ASSUMED: client timeout policy]. Open and teardown clear that
 clock. A browser `online` signal also probes an apparently open socket; the existing unanswered-ping deadline
