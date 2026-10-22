@@ -827,6 +827,10 @@ export function unloadSpineData(entry, _value, keep) {
 
 /** Spine LRU memory budget: estimated bytes (`spineDataWeight`) of idle skeletons kept while a scene is shown. */
 export const SPINE_IDLE_BYTES = 48 * 1024 * 1024;
+/** Retained decoded images only; live renderers keep their own references when an entry leaves this cache. */
+export const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
+export const IMAGE_CACHE_MAX = 256;
+export const IMAGE_LOAD_CONCURRENCY = 8;
 /** How long a released skeleton is safe from the weight budget (a prep ⇄ battle switch re-acquires within it). */
 export const SPINE_IDLE_GRACE_MS = 15000;
 /**
@@ -884,6 +888,28 @@ export function createAssets(options) {
   let readyPromise = manifest ? Promise.resolve(manifest) : null;
   const loadImage = opts.loadImage || loadImageElement;
   const images = new Map(); // url → { promise, value }
+  const imageBytes = Math.max(0, opts.imageCacheBytes ?? IMAGE_CACHE_BYTES);
+  const imageMax = Math.max(0, opts.imageCacheMax ?? IMAGE_CACHE_MAX);
+  const imageConcurrency = Math.max(1, opts.imageConcurrency ?? IMAGE_LOAD_CONCURRENCY);
+  const imageQueue = [];
+  let imageActive = 0, retainedImageBytes = 0;
+  const touchImage = (key, rec) => { images.delete(key); images.set(key, rec); };
+  // Eviction only drops the store's reference. Never close/reset an image a board or texture may still draw.
+  function trimImages() {
+    for (const [key, rec] of images) {
+      if (images.size <= imageMax && retainedImageBytes <= imageBytes) break;
+      if (!rec.done) continue;
+      images.delete(key);
+      retainedImageBytes -= rec.bytes;
+    }
+  }
+  function pumpImages() {
+    while (imageActive < imageConcurrency && imageQueue.length) {
+      const run = imageQueue.shift();
+      imageActive++;
+      run().finally(() => { imageActive--; pumpImages(); });
+    }
+  }
   const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : MANIFEST_RETRY_MS;
   const backoff = Array.isArray(opts.backoff) ? opts.backoff : MANIFEST_BACKOFF_MS;
   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -1005,13 +1031,24 @@ export function createAssets(options) {
     let e = images.get(s);
     if (retry && e?.done && !e.value) { images.delete(s); e = null; }
     if (!e) {
-      e = { value: null, done: false, promise: null };
-      e.promise = trackAssetDemand(Promise.resolve().then(() => loadImage(s))).then(
-        (img) => { e.value = img; e.done = true; if (!img) failed(s); return img; },
-        () => { e.done = true; failed(s); return null; },
-      );
+      e = { value: null, done: false, promise: null, bytes: 0 };
+      e.promise = trackAssetDemand(new Promise((resolve) => {
+        imageQueue.push(async () => {
+          let img = null;
+          try { img = await loadImage(s); } catch { /* image failures retain the existing fallback */ }
+          e.value = img; e.done = true;
+          const width = Number(img?.naturalWidth ?? img?.width) || 0;
+          const height = Number(img?.naturalHeight ?? img?.height) || 0;
+          e.bytes = Number.isFinite(width * height) ? Math.max(0, width * height * 4) : 0;
+          retainedImageBytes += e.bytes;
+          if (!img) failed(s);
+          trimImages();
+          resolve(img);
+        });
+      }));
       images.set(s, e);
-    }
+      pumpImages();
+    } else touchImage(s, e);
     return e.promise;
   }
 
@@ -1090,7 +1127,9 @@ export function createAssets(options) {
      */
     failed,
     /** Already-loaded image element or null (sync). */
-    imageNow(u) { const e = images.get(str(u) || ''); return e && e.done ? e.value : null; },
+    imageNow(u) { const key = str(u) || '', e = images.get(key); if (e) touchImage(key, e); return e && e.done ? e.value : null; },
+    /** Cache ownership, not total browser / GPU memory; pending decodes are separately bounded. */
+    imageStats: () => ({ entries: images.size, bytes: retainedImageBytes, active: imageActive, queued: imageQueue.length }),
     /**
      * Preload URLs; `onProgress(done, total, url)` after each. Resolves to { ok, failed } counts (never rejects).
      */

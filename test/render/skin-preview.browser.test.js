@@ -229,6 +229,62 @@ describe('小人预览 in headless Chrome', { skip }, () => {
     assert.deepEqual(problems, []);
   });
 
+  test('a cancelled pending preview releases exactly its reference, preserving another model consumer', async () => {
+    await open(CHAR);
+    await waitCanvas();
+    const counts = await page.evaluate(async ({ other, current }) => {
+      const { assets } = await import('/js/assets.js');
+      const { data } = await import('/js/data.js');
+      const entry = data.get('assets').chars[other].spine.front;
+      const original = assets.spine.acquire;
+      await original(entry); // a second consumer, such as the battlefield
+      let ready, unblock;
+      const entered = new Promise(r => { ready = r; });
+      const wait = new Promise(r => { unblock = r; });
+      assets.spine.acquire = (e, opts) => {
+        const loading = original(e, opts);
+        if (e.skel !== entry.skel) return loading;
+        ready();
+        return loading.then(async d => { await wait; return d; });
+      };
+      try {
+        globalThis.__skinPreview.show(other);
+        await entered;
+        globalThis.__skinPreview.show(current);
+        await new Promise(r => setTimeout(r, 150));
+        const cancelled = assets.spine.cache.map.get(entry.skel).refs;
+        unblock();
+        await new Promise(r => setTimeout(r, 150));
+        return { cancelled, completed: assets.spine.cache.map.get(entry.skel).refs };
+      } finally { unblock(); assets.spine.acquire = original; assets.spine.release(entry); }
+    }, { other: OTHER, current: CHAR });
+    assert.deepEqual(counts, { cancelled: 1, completed: 1 });
+    await waitCanvas();
+    assert.deepEqual(problems, []);
+  });
+
+  test('an offscreen preview stops posing and resumes when visible, without recreating the canvas', async () => {
+    await open(CHAR);
+    await waitCanvas();
+    await page.evaluate(() => {
+      const proto = globalThis.PIXI.spine.Spine.prototype;
+      const update = proto.update;
+      window.__previewUpdates = 0;
+      proto.update = function (...args) { window.__previewUpdates++; return update.apply(this, args); };
+      window.__previewCanvas = document.querySelector('[data-testid="skin-preview"] canvas');
+      document.querySelector('[data-testid="skin-preview"]').style.transform = 'translateY(2000px)';
+    });
+    await sleep(200);
+    const before = await page.evaluate(() => window.__previewUpdates);
+    await sleep(200);
+    assert.equal(await page.evaluate(() => window.__previewUpdates), before, 'no hidden pose / draw loop');
+    await page.evaluate(() => { document.querySelector('[data-testid="skin-preview"]').style.transform = ''; });
+    await sleep(200);
+    assert.ok(await page.evaluate(n => window.__previewUpdates > n, before), 'animation resumes');
+    assert.equal(await page.evaluate(() => window.__previewCanvas === document.querySelector('[data-testid="skin-preview"] canvas')), true);
+    assert.deepEqual(problems, []);
+  });
+
   test('an operator without a model degrades to 模型不可用 and never throws', async () => {
     await open(CHAR);
     await page.evaluate(() => globalThis.__skinPreview.show('char_not_a_real_operator'));

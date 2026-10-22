@@ -119,6 +119,7 @@ export class OfficialFx {
     this.P = ctx.P;
     this.renderer = ctx.renderer;
     this.lib = ctx.lib || new FxLibrary({ assets: ctx.assets });
+    this.ownsLibrary = !ctx.lib;
     this.glr = null;
     this.unsupported = false;
     this.tier = TIERS.includes(ctx.tier) ? ctx.tier : 'off';
@@ -282,7 +283,9 @@ export class OfficialFx {
   _warmStep() {
     if (!this.warmQueue.length || !this.glr) return;
     const t0 = performance.now();
-    while (this.warmQueue.length && performance.now() - t0 < WARM_MS) {
+    // Pending decodes get one attempt per frame, not 120 spins before their promise can settle.
+    let remaining = this.warmQueue.length;
+    while (remaining-- > 0 && this.warmQueue.length && performance.now() - t0 < WARM_MS) {
       const w = this.warmQueue.shift();
       if (w.kind) this.glr.program(w.kind, w.mat);
       else if (!this.glr.texture(w.tex, this.lite) && ++w.tries < 120) this.warmQueue.push(w); // its image still loads
@@ -378,7 +381,7 @@ export class OfficialFx {
     }
     renderer.batch.flush();
     try {
-      if (pass === 'ground' || this.prepared !== this.frameNo) this._warmStep();
+      if (this.warmedFrame !== this.frameNo) { this.warmedFrame = this.frameNo; this._warmStep(); }
       if (this.prepared !== this.frameNo) this._prepare(renderer);
       const items = this.items[pass];
       if (this.needDepth && this.depthDone !== this.frameNo) { this.glr.depthPrepass(this.vpB); this.depthDone = this.frameNo; }
@@ -401,7 +404,7 @@ export class OfficialFx {
   }
 
   /** Per-frame counters reset (draw counts are per frame). */
-  frameStats() { if (this.glr) { this.glr.stats.draws = 0; this.glr.stats.tris = 0; } }
+  frameStats() { if (this.glr) { this.glr.stats.draws = 0; this.glr.stats.tris = 0; this.glr.beginFrame(performance.now()); } }
 
   /** The GL context was lost / restored: drop GPU objects (rebuilt lazily). */
   contextLost() {
@@ -415,6 +418,9 @@ export class OfficialFx {
     this.glr = null;
     this.ground.destroy();
     this.over.destroy();
+    if (this.ownsLibrary) this.lib.destroy();
+    this.warmQueue.length = 0;
+    this.pool.clear();
   }
 }
 

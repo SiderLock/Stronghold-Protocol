@@ -112,16 +112,37 @@ export function SkinModelPreview({ charId, skinId = null, art = null, name = '',
     let app = null;
     let spine = null;
     let store = null;
+    let releaseRenderer = null;
+    let releaseModel = null;
+    let observer = null;
+    let inView = true;
+    const visibility = () => {
+      if (!app || cancelled) return;
+      if (document.hidden || !inView) app.stop(); else app.start();
+    };
+    const dispose = () => {
+      observer?.disconnect();
+      document.removeEventListener('visibilitychange', visibility);
+      if (actorRef.current === spine) actorRef.current = null;
+      if (app) releaseRenderer?.(app.renderer);
+      try { app?.destroy(true, { children: true, texture: false, baseTexture: false }); } catch { /* ignore */ }
+      app = null; spine = null;
+      releaseModel?.();
+    };
     (async () => {
       try {
-        const [{ ensurePixi }, assets] = await Promise.all([import('../render/app/pixi.js'), import('../assets.js')]);
+        const [{ ensurePixi }, assets, { releaseGl }] = await Promise.all([import('../render/app/pixi.js'), import('../assets.js'), import('../render/app/host.js')]);
         store = assets.assets;
+        releaseRenderer = releaseGl;
         const P = await ensurePixi();
+        if (cancelled) return;
+        let released = false;
+        releaseModel = () => { if (!released) { released = true; store.spine.release(entry); } };
         const spineData = await store.spine.acquire(entry);
-        if (cancelled) { try { store.spine.release(entry); } catch { /* ignore */ } return; }
+        if (cancelled) { releaseModel(); return; }
         const host = hostRef.current;
-        if (!host) return;
-        app = new P.Application({ width: BOX_W, height: BOX_H, backgroundAlpha: 0, antialias: true, resolution: dpr(), autoDensity: true });
+        if (!host) { releaseModel(); return; }
+        app = new P.Application({ width: BOX_W, height: BOX_H, backgroundAlpha: 0, antialias: dpr() < 1.5, resolution: dpr(), autoDensity: true });
         const canvas = app.view;
         canvas.className = 'lo-spine__canvas';
         canvas.setAttribute('aria-label', t('小人预览'));
@@ -136,17 +157,22 @@ export function SkinModelPreview({ charId, skinId = null, art = null, name = '',
         spine.x = BOX_W / 2 - (b.x + b.width / 2) * scale;
         spine.y = BOX_H / 2 - (b.y + b.height / 2) * scale;
         app.ticker.add(() => { if (spine) spine.update(app.ticker.deltaMS / 1000); });
+        document.addEventListener('visibilitychange', visibility);
+        if (typeof IntersectionObserver === 'function') {
+          observer = new IntersectionObserver(([item]) => { inView = !!item?.isIntersecting; visibility(); });
+          observer.observe(host);
+        }
+        visibility();
         actorRef.current = spine;
         setStatus('ready');
       } catch {
+        dispose();
         if (!cancelled) setStatus('failed');
       }
     })();
     return () => {
       cancelled = true;
-      actorRef.current = null;
-      try { app?.destroy(true, { children: true, texture: false, baseTexture: false }); } catch { /* ignore */ }
-      if (store) { try { store.spine.release(entry); } catch { /* ignore */ } }
+      dispose();
     };
     // `entry` is the manifest's own object: a layer change replaces it and the model is built again
   }, [entry]);

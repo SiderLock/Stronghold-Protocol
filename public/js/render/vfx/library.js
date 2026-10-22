@@ -104,10 +104,14 @@ export class FxLibrary {
     this.active = 0;
     this.failed = new Set();
     this.listeners = new Set();
+    this.destroyed = false;
+    this.imageRevision = 0;
+    this.abort = typeof AbortController === 'function' ? new AbortController() : null;
   }
 
   /** Load the file list (once). Resolves to `available`. */
   init() {
+    if (this.destroyed) return Promise.resolve(false);
     if (this._init) return this._init;
     this._init = (async () => {
       let list = this.list;
@@ -118,6 +122,7 @@ export class FxLibrary {
           if (res && res.ok) list = await res.json();
         } catch { /* no effects */ }
       }
+      if (this.destroyed) return false;
       let groups = isObj(list?.groups) ? list.groups : null;
       if (!groups || !isObj(groups['fx/prefabs']) || !Object.keys(groups['fx/prefabs']).length) {
         // a Phase 1a extraction listed the effects in data/local-assets.json
@@ -126,6 +131,7 @@ export class FxLibrary {
         const g = isObj(local?.groups) ? local.groups : null;
         if (g && isObj(g['fx/prefabs']) && Object.keys(g['fx/prefabs']).length) groups = { fx: g.fx || {}, 'fx/prefabs': g['fx/prefabs'], 'fx/tex': g['fx/tex'] || {}, 'fx/mesh': g['fx/mesh'] || {} };
       }
+      if (this.destroyed) return false;
       this.groups = groups && isObj(groups['fx/prefabs']) ? groups : null;
       this.pluginFx = mergePluginFx(null, this.assets?.manifest?.fx);
       if (this.pluginFx.descriptors.size) {
@@ -178,9 +184,9 @@ export class FxLibrary {
   has(key) { return this.pluginFx?.descriptors.has(String(key || '').toLowerCase()) || !!this.url('fx/prefabs', String(key || '').toLowerCase()); }
 
   async _json(url) {
-    if (!url || !this.fetch) return null;
+    if (this.destroyed || !url || !this.fetch) return null;
     return trackAssetDemand((async () => {
-      const res = await this.fetch(url);
+      const res = await this.fetch(url, { signal: this.abort?.signal });
       if (!res || !res.ok) throw new Error(`fx ${res ? res.status : 'no response'} ${url}`);
       return res.json();
     })());
@@ -208,6 +214,7 @@ export class FxLibrary {
   _limit(fn) {
     return trackAssetDemand(new Promise((resolve, reject) => {
       const run = () => {
+        if (this.destroyed) { resolve(null); return; }
         this.active++;
         Promise.resolve().then(fn).then(resolve, reject).finally(() => { this.active--; const next = this.queue.shift(); if (next) next(); });
       };
@@ -217,6 +224,7 @@ export class FxLibrary {
 
   /** The descriptor of a prefab key (null when absent / failed). */
   descriptor(key) {
+    if (this.destroyed) return Promise.resolve(null);
     const k = String(key || '').toLowerCase();
     let p = this.descs.get(k);
     if (!p) {
@@ -224,7 +232,7 @@ export class FxLibrary {
         if (this.pluginFx?.descriptors.has(k)) return this.pluginFx.descriptors.get(k);
         const url = this.url('fx/prefabs', k);
         return url ? this._limit(() => this._json(url)) : null;
-      }).catch((err) => { this.failed.add(k); console.warn('[fx] prefab failed', k, err?.message || err); return null; });
+      }).catch((err) => { if (!this.destroyed) { this.failed.add(k); console.warn('[fx] prefab failed', k, err?.message || err); } return null; });
       this.descs.set(k, p);
     }
     return p;
@@ -235,14 +243,17 @@ export class FxLibrary {
 
   /** Load and compile a prefab (with its meshes; textures load on first draw or through preload). */
   async load(key) {
+    if (this.destroyed) return null;
     const k = String(key || '').toLowerCase();
     const revision = this.pluginRevision || 0;
     if (this.defs.has(k)) return this.defs.get(k);
     const desc = await this.descriptor(k);
+    if (this.destroyed) return null;
     if (k.startsWith('plugin:') && revision !== (this.pluginRevision || 0)) return null;
     if (this.defs.has(k)) return this.defs.get(k);
     if (!desc) { this.defs.set(k, null); return null; }
     await Promise.all((desc.meshes || []).map((m) => this.loadMesh(m)));
+    if (this.destroyed) return null;
     if (k.startsWith('plugin:') && revision !== (this.pluginRevision || 0)) return null;
     const def = compileEffect(desc, this);
     this.defs.set(k, def);
@@ -251,7 +262,7 @@ export class FxLibrary {
 
   /** Mesh data (sync; null while loading — the load is started). */
   mesh(key) {
-    if (!key) return null;
+    if (this.destroyed || !key) return null;
     if (this.meshes.has(key)) return this.meshes.get(key);
     if (key.startsWith('builtin:')) { const m = builtinMesh(key.slice(8)); this.meshes.set(key, m); return m; }
     this.loadMesh(key);
@@ -259,7 +270,7 @@ export class FxLibrary {
   }
 
   loadMesh(key) {
-    if (!key) return Promise.resolve(null);
+    if (this.destroyed || !key) return Promise.resolve(null);
     if (this.meshes.has(key)) return Promise.resolve(this.meshes.get(key));
     if (key.startsWith('builtin:')) return Promise.resolve(this.mesh(key));
     let p = this.meshLoads.get(key);
@@ -267,7 +278,7 @@ export class FxLibrary {
       p = this.init().then(() => {
         const url = this.url('fx/mesh', key);
         return url ? this._limit(() => this._json(url)) : null;
-      }).then((m) => { const d = normalizeMesh(m); this.meshes.set(key, d); return d; }, () => { this.meshes.set(key, null); return null; });
+      }).then((m) => { if (this.destroyed) return null; const d = normalizeMesh(m); this.meshes.set(key, d); return d; }, () => { if (!this.destroyed) this.meshes.set(key, null); return null; });
       this.meshLoads.set(key, p);
     }
     return p;
@@ -283,18 +294,21 @@ export class FxLibrary {
   }
 
   loadTexture(key, half) {
+    if (this.destroyed) return Promise.resolve(null);
     const id = `${key}|${half ? 1 : 0}`;
     const revision = this.pluginRevision || 0;
-    const stale = () => key.startsWith('plugin:') && revision !== (this.pluginRevision || 0);
+    const imageRevision = this.imageRevision;
+    const stale = () => this.destroyed || imageRevision !== this.imageRevision || (key.startsWith('plugin:') && revision !== (this.pluginRevision || 0));
     if (this.images.has(id)) return Promise.resolve(this.images.get(id));
     if (this.onGpu.has(id)) return Promise.resolve(null);
     let p = this.imageLoads.get(id);
     if (!p) {
       p = Promise.all([this.init(), this.texInfo()]).then(async ([, infos]) => {
+        if (stale()) return null;
         const e = this.groups?.['fx/tex']?.[key];
         const url = isObj(e) ? (half && typeof e.half === 'string' ? e.half : e.path) : null;
         if (!url) return null;
-        const img = await this._limit(() => this._image(url));
+        const img = await this._limit(() => stale() ? null : this._image(url));
         return img ? { image: img.image, flipped: img.flipped, info: infos[key] || {} } : null;
       }).then((r) => {
         if (stale()) { r?.image?.close?.(); return null; }
@@ -314,7 +328,7 @@ export class FxLibrary {
   async _image(url) {
     let objectUrl = null;
     if (typeof createImageBitmap === 'function' && this.fetch) {
-      const res = await this.fetch(url);
+      const res = await this.fetch(url, { signal: this.abort?.signal });
       if (!res.ok) throw new Error(`fx ${res.status} ${url}`);
       const blob = await res.blob();
       try {
@@ -369,14 +383,32 @@ export class FxLibrary {
   /** The GPU let its textures go (FxGL destroyed): they load again when drawn. */
   forgetGpu() { this.onGpu.clear(); }
 
+  /** One idle GPU texture was evicted; its immutable file can be decoded again on demand. */
+  forgetTexture(id) { this.onGpu.delete(id); }
+
   onLoad(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   _notify() { for (const fn of this.listeners) { try { fn(); } catch { /* ignore */ } } }
 
   /** Release decoded images (a context loss, the end of a session). */
   dropImages() {
+    this.imageRevision++;
     for (const r of this.images.values()) if (r && r.image && typeof r.image.close === 'function') r.image.close();
     this.images.clear();
     this.imageLoads.clear();
     this.onGpu.clear();
+  }
+
+  /** A retired view cannot start more work or retain results that arrive after it closes. */
+  destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.abort?.abort();
+    this.dropImages();
+    while (this.queue.length) this.queue.shift()();
+    this.listeners.clear();
+    this.descs.clear(); this.defs.clear(); this.meshes.clear(); this.meshLoads.clear(); this.failed.clear();
+    this.groups = null; this.list = null; this.pluginFx = null; this.assets = null;
+    this._init = null; this._index = null; this._texInfo = null;
+    this._available = false;
   }
 }

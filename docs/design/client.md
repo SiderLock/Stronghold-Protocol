@@ -713,3 +713,16 @@ keys override and missing/invalid entries retain built-in text. Scope remains br
 room content and simulation. Pure geometry SDK helpers return frozen values and accept at most 1024 range cells.
 Forge UI mounts without an equivalent slot require an explicit manual-adaptation report, separate from script copying.
 Art/audio templates ship original CC0 sample media; the studio fills the target's first editable slot [ASSUMED].
+
+## Fork runtime performance maintenance (2026-10-22)
+
+Settings expose an independent, persisted 「自动调整渲染分辨率」 switch (default on). Only touch-only clients use
+the existing sustained-load levels to cap canvas DPR at 1.5 / 1.25 / 1, within the selected quality and device caps.
+Recovery follows the existing hysteresis; disabling restores the selected quality immediately. DOM text and CSS
+hit coordinates do not change. This is a presentation setting, never a simulation or network rule.
+
+Decoded-image cache ownership is bounded to 256 completed entries / 64 MiB, with 8 concurrent loads. Eviction never
+closes an image still referenced by a renderer. Official FX retire stale decodes, reuse GL texture bindings within
+a pass, and reclaim textures idle for 15 visible seconds when estimated GPU usage exceeds 96 MiB; active working
+sets can exceed the budget. Skins release exactly their acquired reference; hidden previews pause and release their
+renderer resources on teardown. Full behavior and evidence: [mobile performance](../development/MOBILE_PERFORMANCE.md).

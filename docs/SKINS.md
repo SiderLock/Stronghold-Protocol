@@ -545,6 +545,12 @@ exists) gets no section rather than an empty grid.
 
 ## Known limitations
 
+Preview lifecycle (2026-10-22 fork maintenance): a cancelled preview releases only its own model reference,
+including loads that finish after it closes. Offscreen / background previews stop their ticker and resume the same
+canvas on return; closing a preview frees that renderer's GPU objects. High-DPR previews avoid redundant MSAA.
+The in-game mobile resolution adjustment is independently switchable in settings; see
+[mobile performance](development/MOBILE_PERFORMANCE.md).
+
 - **Bots always wear the default model** (`PlayerState.setSkins` refuses a bot, as `setLoadout` does).
 - **The studio lists the skins the manifest already has** (P7): the target picker finds one by the outfit's name, its
   series or its operator, and `skin:<key>` names it — the key carries `@ # + .`, so it is copied from there rather than

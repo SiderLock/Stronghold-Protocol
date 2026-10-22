@@ -534,6 +534,8 @@ export function SettingsModal({ open, onClose }) {
             class=${s.quality === id ? 'is-on' : ''} onClick=${() => updateSettings({ quality: id })}>${t(label)}</button>`)}
         </div>
       </div>
+      <${Toggle} label=${t('自动调整渲染分辨率')} micro="ADAPTIVE RESOLUTION" value=${s.adaptiveResolution} onChange=${(v) => updateSettings({ adaptiveResolution: v })} />
+      <p class="set-hint">${t('开启后，移动端持续卡顿时会降低棋盘与角色画面的分辨率，流畅后逐步恢复；界面文字不变。关闭后固定使用所选画质。')}</p>
       ${fxOk ? html`<div class="set-row" data-testid="official-fx">
         <span class="set-row__label">${t('官方特效')}<${MicroLabel}>OFFICIAL FX<//></span>
         <div class="set-seg" role="radiogroup" aria-label=${t('官方特效')}>

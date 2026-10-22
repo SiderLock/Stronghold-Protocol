@@ -63,6 +63,7 @@ perf.sample = (ms = 10000) => new Promise((resolve) => {
       longTasks: lt.length, longTaskMs: Math.round(lt.reduce((a, b) => a + b, 0)),
       ticks, simMs: round(r1.stepMs - r0.stepMs), simMsPerTick: ticks > 0 ? round((r1.stepMs - r0.stepMs) / ticks, 3) : null,
       viewCpuMs: v.cpuMs, renderMs: v.renderMs, units: v.units, lod: v.lod, particles: v.particles,
+      resolution: v.resolution,
       officialFx: v.officialFx ? { tier: v.officialFx.tier, effects: v.officialFx.effects, particles: v.officialFx.particles, draws: v.officialFx.draws, textures: v.officialFx.textures, texMB: v.officialFx.texMB } : null,
       board: v.board3d?.on ? '3d' : '2d', done: !!perf.runner.state()?.done,
     });

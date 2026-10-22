@@ -2427,5 +2427,7 @@
   "缓存不可用、空间不足或已达到上限，后台补齐已停止，当前对局可继续。": "Cache storage is unavailable or full. Background downloads have stopped; your match can continue.",
   "服主已限制在线补齐，后台队列暂停；本局实际使用的素材仍会缓存。": "The host has restricted online filling. Background downloads are paused; assets used in this match are still cached.",
   "已关闭并清理对局缓存。": "Local match caching is disabled and its cache has been cleared.",
-  "已关闭缓存；清理未完成，请重新打开页面后重试。": "Caching is disabled, but cleanup did not finish. Reopen the page and try again."
+  "已关闭缓存；清理未完成，请重新打开页面后重试。": "Caching is disabled, but cleanup did not finish. Reopen the page and try again.",
+  "自动调整渲染分辨率": "Adaptive render resolution",
+  "开启后，移动端持续卡顿时会降低棋盘与角色画面的分辨率，流畅后逐步恢复；界面文字不变。关闭后固定使用所选画质。": "When enabled, sustained slow frames on mobile reduce board and character resolution, then gradually restore it as performance improves. Interface text stays sharp. Turn off to keep the selected quality."
 }
