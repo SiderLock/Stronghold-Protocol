@@ -74,6 +74,24 @@ function rig({ hidden = false, loadSim = async () => ({ spec: specMod, ds: DS })
   return r;
 }
 
+test('briefing and draft leave simulation downloads idle; preparation still warms it once', async () => {
+  let loads = 0;
+  const r = rig({ loadSim: async () => { loads++; return { spec: specMod, ds: DS }; } });
+  try {
+    for (const phase of ['INFO_CHECK', 'BAND_DRAFT', 'BATTLE_CHECK']) {
+      r.store.set({ match: { ...r.store.get().match, public: { phase, round: 0 } } });
+      await r.settle();
+      assert.equal(loads, 0, `${phase} does not compete with visible UI images`);
+    }
+    r.store.set({ match: { ...r.store.get().match, public: { phase: 'PREP', round: 1 } } });
+    await r.settle();
+    assert.equal(loads, 1);
+    r.store.set({ match: { ...r.store.get().match, public: { phase: 'PREP', round: 1 } } });
+    await r.settle();
+    assert.equal(loads, 1, 'repeated public states share the warmed simulation');
+  } finally { r.runner.dispose(); }
+});
+
 /** A real b.start of round 2 (a board with operators) from a client-combat match. */
 function realStart(seed = 7301) {
   const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 1, bots: 1, seed, captureFrames: false, clientCombat: true, clients: false });

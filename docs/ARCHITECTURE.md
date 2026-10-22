@@ -182,6 +182,8 @@ public/assets/ ─────────▶ public/js/render/, public/js/audio
   the sim through `server/sim/simdata.js`, which turns every record into a frozen engine def.
 - **In the browser**, `public/js/data.js` fetches the same files once per page for the UI, and the battle runner loads
   its own frozen copies for the sim (`loadBrowserSim` → `setSimData`), so both sides simulate from the same data.
+  Automatic sim warming starts after the briefing / strategy draft / boot phases; actual battle and rehearsal
+  requests still load it on demand. This leaves opening-page images the bandwidth first.
 - **Languages.** Chinese is the source language; every other language is a pack — `public/i18n/<code>.json` (UI
   strings) and optionally `data/i18n/<code>.json` (game texts), listed by the server at `/packs/index.json`
   (`server/packs.js`; PACKS.md). The English game texts come from the official EN client (`tools/build-i18n.mjs` →

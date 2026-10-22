@@ -165,8 +165,10 @@ export function GameScreen() {
   const away = useStore((s) => s.away, Object.is, awayStore);
   const autoplay = useStore((s) => !!(Array.isArray(s.match.public?.players) && s.match.public.players.find((p) => p && p.playerId === s.me.playerId)?.autoplay));
   const gd = useGameData();
-  // 协议启动！'s official sprites (ui/protocolBoot.js), fetched while the briefing and the band draft run
-  useEffect(() => { if (gd.ready) preloadBootArt(); }, [gd.ready]);
+  // The briefing's visible icons get the bandwidth first. Warm the later boot screen during the draft.
+  useEffect(() => {
+    if (gd.ready && pub && phaseMode(pub.phase) !== 'briefing') preloadBootArt();
+  }, [gd.ready, pub?.phase]);
   if (!pub || !gd.ready) {
     return html`<div class="screen gload">
       <${Spinner} size="lg" label=${pub ? 'LOADING DATA' : 'ENTERING SIMULATION'} />
