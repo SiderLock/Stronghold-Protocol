@@ -42,7 +42,7 @@ async function idleCards(page) {
     .every((seat) => seat.getAnimations().every((animation) => animation.playState === 'finished')));
 }
 
-test('Edge retained directory, P1 host handover and live owner AI limits remain usable across room layouts', {
+test('Edge retained directory, host handover and live owner AI limits remain usable across room layouts', {
   skip: process.env.SP_E2E === '1' ? false : 'set SP_E2E=1 (uses Edge)', timeout: 120000,
 }, async () => {
   let server, browser;
@@ -83,9 +83,11 @@ test('Edge retained directory, P1 host handover and live owner AI limits remain 
       const context = await browser.createBrowserContext();
       const page = await context.newPage();
       page.setDefaultTimeout(10000);
+      page.setDefaultNavigationTimeout(30000);
       page.on('pageerror', (error) => errors.push(`${name}: ${error.message}`));
       await page.setViewport({ width: 1920, height: 1080 });
-      await page.goto(server.url, { waitUntil: 'networkidle0' });
+      await page.goto(server.url, { waitUntil: 'domcontentloaded' });
+      await page.waitForFunction(() => !!globalThis.__SP__);
       await page.type('.title-login input', name);
       await page.click('.title-login > .btn--primary');
       await page.waitForSelector('.lobby-screen');
@@ -164,7 +166,7 @@ test('Edge retained directory, P1 host handover and live owner AI limits remain 
     await guestPage.setViewport({ width: 1920, height: 1080 });
     // Verify cancellation does not alter authority, then complete the actual UI handover.
     await hostPage.click(TRANSFER);
-    await hostPage.waitForFunction(() => document.querySelector('.modal__text')?.textContent.includes('新房主位于 P1'));
+    await hostPage.waitForFunction(() => document.querySelector('.modal__text')?.textContent.includes('双方座位保持不变'));
     await hostPage.keyboard.press('Escape');
     await hostPage.waitForFunction(() => !document.querySelector('.modal'));
     assert.equal(await hostPage.evaluate(() => globalThis.__SP__.store.get().room.hostId), hostId);
@@ -173,9 +175,9 @@ test('Edge retained directory, P1 host handover and live owner AI limits remain 
     await hostPage.click('.modal [data-autofocus]');
     await guestPage.waitForFunction((id) => globalThis.__SP__.store.get().room.hostId === id, {}, guestId);
     const swapped = await guestPage.evaluate(() => globalThis.__SP__.store.get().room);
-    assert.equal(swapped.seats[0].playerId, guestId);
+    assert.equal(swapped.seats[0].playerId, hostId);
     assert.equal(swapped.seats[0].seat, 0);
-    assert.equal(swapped.seats[1].playerId, hostId);
+    assert.equal(swapped.seats[1].playerId, guestId);
     assert.equal(swapped.seats[1].seat, 1);
     await hostPage.waitForFunction(() => !document.querySelector('[aria-label="转让房主给该博士"]'));
     assert.equal((await intent(hostPage, 'room.addBot')).code, 'NOT_HOST', 'server also revokes old host authority');
@@ -199,11 +201,12 @@ test('Edge retained directory, P1 host handover and live owner AI limits remain 
     };
     await apply('2', 2);
     assert.match(await guestPage.$eval('.room-ai-limit', (el) => el.textContent), /AI 队友 2 \/ 2/);
-    assert.equal(await guestPage.$$eval('.seat--empty button', (buttons) => buttons.length > 0 && buttons.every((button) => button.disabled)), true);
+    assert.equal(await guestPage.$$eval('.seat--empty .seat__foot button', (buttons) => buttons.length > 0 && buttons.every((button) => button.disabled)), true);
+    assert.equal(await guestPage.$$eval('.seat--empty .seat__swap', (buttons) => buttons.length > 0 && buttons.every((button) => !button.disabled)), true, 'AI ceiling does not block moving to an empty seat');
     assert.equal((await intent(guestPage, 'room.addBot')).code, 'AI_LIMIT');
     await idleCards(guestPage);
     await guestPage.mouse.move(1916, 4);
-    await guestPage.screenshot({ path: path.join(OUT, 'ai-limit-2-host-p1-1920.png') });
+    await guestPage.screenshot({ path: path.join(OUT, 'ai-limit-2-host-p2-1920.png') });
     await apply('0', 0);
     assert.match(await guestPage.$eval('.room-ai-limit', (el) => el.textContent), /AI 队友 0 \/ 0/);
     assert.equal((await intent(guestPage, 'room.addBot')).code, 'AI_LIMIT');
@@ -212,12 +215,13 @@ test('Edge retained directory, P1 host handover and live owner AI limits remain 
     assert.equal((await intent(guestPage, 'room.addBot')).t, 'ok');
     await guestPage.waitForFunction(() => globalThis.__SP__.store.get().room.seats.filter((s) => s?.isBot).length === 1);
     assert.equal((await intent(hostPage, 'room.transferHost', { playerId: guestId })).code, 'NOT_HOST');
-    report.handover = { code, oldHost: hostId, newHost: guestId, newHostSeat: 0, oldHostSeat: 1, readinessVerified: true };
+    report.handover = { code, oldHost: hostId, newHost: guestId, newHostSeat: 1, oldHostSeat: 0, readinessVerified: true };
 
     // Persisted policy is server-private; HTTP clients cannot read its path or operator command.
     assert.equal((await fetch(`${server.url}/runtime/server-settings.json`)).status, 404);
     assert.equal((await fetch(`${server.url}/tools/server-settings.mjs`)).status, 404);
-    assert.deepEqual(JSON.parse(await fs.readFile(path.join(settingsDir, 'server-settings.json'), 'utf8')), { version: 1, maxAiPerRoom: null });
+    assert.deepEqual(JSON.parse(await fs.readFile(path.join(settingsDir, 'server-settings.json'), 'utf8')),
+      { version: 1, maxAiPerRoom: null, requireAssetCache: false, assetCacheLimits: null });
     assert.deepEqual(errors, []);
   } finally {
     if (browser) { await browser.close(); report.cleanup.browserClosed = true; }

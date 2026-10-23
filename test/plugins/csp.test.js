@@ -6,7 +6,7 @@ import os from 'node:os';
 import { Writable } from 'node:stream';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
-import { siteCsp, SIM_WORKER_CSP } from '../../server/http/csp.js';
+import { siteCsp, SIM_WORKER_CSP, importMapHash, buildSiteCsp } from '../../server/http/csp.js';
 import { createRequestHandler } from '../../server/http/routes.js';
 import { createStaticHandler } from '../../server/http/static.js';
 import { installPixiNoEval } from '../../public/js/render/app/pixiNoEval.js';
@@ -34,7 +34,7 @@ function handler(csp = siteCsp(publicDir)) {
 test('page import maps hash exact bytes; no inline executable script/events; page forbids eval', () => {
   const csp = siteCsp(publicDir);
   assert.ok(!csp.includes('unsafe-eval')); assert.match(csp, /worker-src 'self' blob:/);
-  assert.match(csp,/connect-src 'self';/);assert.ok(!/script-src[^;]*(?:data:|blob:)/.test(csp));
+  assert.match(csp,/connect-src 'self' data:;/);assert.ok(!/script-src[^;]*(?:data:|blob:)/.test(csp));
   for (const file of ['index.html', 'studio/index.html', 'studio/console.html', 'dev/game-mock.html', 'dev/render-demo.html', 'dev/battle-perf.html', 'dev/uikit.html']) {
     const html = fs.readFileSync(path.join(publicDir, file), 'utf8');
     assert.ok(!/<[^>]+\son(?:load|error|click)=/i.test(html), file);
@@ -69,7 +69,9 @@ test('actual static responses: Worker CSP on 200/206/304 and encoded aliases, in
   for (const csp of [siteCsp(publicDir), null]) {
     const serve = handler(csp);
     const page = await request(serve, '/');
-    assert.equal(page.headers['content-security-policy'], csp || undefined);
+    const map = /<script\s+type=["']importmap["']\s*>([\s\S]*?)<\/script>/.exec(page.body);
+    assert.ok(map, 'the served runtime page contains an import map');
+    assert.equal(page.headers['content-security-policy'], buildSiteCsp([importMapHash(map[1])]));
     const a = await request(serve, '/js/battle/simWorker.js');
     assert.equal(a.status, 200); assert.equal(a.headers['content-security-policy'], SIM_WORKER_CSP);
     for (const headers of [{ range: 'bytes=0-20' }, { 'if-none-match': a.headers.etag }]) {

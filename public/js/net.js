@@ -1,8 +1,10 @@
 // WebSocket client for the game server (DESIGN §8).
 //
 // - One socket at ws(s)://<host>/ws, JSON text frames `{ t, ...payload }`.
-// - Auto-reconnect with exponential backoff + jitter; a heartbeat (`ping`) measures latency and
-//   detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
+// - Auto-reconnect with exponential backoff + jitter; a heartbeat (`ping`) measures latency, and
+//   a stalled WebSocket upgrade is abandoned after CONNECT_TIMEOUT_MS. Restored connectivity probes
+//   an apparently open socket too. Queued requests are checked for expiry again before a resync flush.
+// - The heartbeat detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
 //   close ⇒ reconnect). Measured from the oldest unanswered ping, not from the last inbound frame,
 //   so a background tab whose timers the browser throttles to ~1/min is not mistaken for dead.
 // - On every (re)connect, once a player name is known, sends `hello {name, token, version}`;
@@ -34,10 +36,14 @@ import { validateC2S } from '../../shared/protocol.js';
 import { WIRE_VERSION, encodeWire, decodeWire } from '../../shared/wireCodec.js';
 import { N_ } from '../../shared/i18n.js';
 import { assetCache } from './assetCache.js';
+import { RecentPeak } from '../../shared/networkTiming.js';
+import { ConnectionQuality } from './connectionQuality.js';
 
 const ASSET_ADMISSION_TYPES = new Set(['room.create', 'room.join', 'lobby.quickMatch', 'room.spectate', 'lobby.join', 'lobby.spectate']);
 
 export const REQUEST_TIMEOUT_MS = 8000;
+// [ASSUMED] Bound a stalled upgrade independently of the hello/heartbeat clocks.
+export const CONNECT_TIMEOUT_MS = 15000;
 export const HELLO_TIMEOUT_MS = 8000;
 export const PING_INTERVAL_MS = 4000;
 export const DEAD_AFTER_MS = 15000;
@@ -134,6 +140,7 @@ export class Net {
     this.getTokenClaim = typeof opts.getTokenClaim === 'function' ? opts.getTokenClaim : () => null;
     this.getAssetCacheReadiness = typeof opts.getAssetCacheReadiness === 'function' ? opts.getAssetCacheReadiness : null;
     this.now = opts.now || (() => Date.now());
+    this._monoNow = opts.now || (() => globalThis.performance?.now() ?? Date.now());
     this.random = opts.random || Math.random;
     this.timers = opts.timers || {
       setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
@@ -157,6 +164,13 @@ export class Net {
     this.lastError = null;     // last NetError relevant to the connection (e.g. hello rejected)
     this.clockOffset = 0;
     this.clockSynced = false;
+    this.quality = null;
+    this._quality = new ConnectionQuality();
+    this._clientLag = new RecentPeak(this._monoNow);
+    this._pingSamples = new Map();
+    this._lagTimer = null;
+    this._lagDue = 0;
+    this._visibleSince = 0;
 
     this._rid = 0;
     this._pending = new Map(); // rid -> { msg, resolve, reject, timer, sent }
@@ -168,6 +182,7 @@ export class Net {
     this._emergencyRetryAt = 0;
     this._openedAt = 0;
     this._reconnectTimer = null;
+    this._connectTimer = null;
     this._pingTimer = null;
     this._helloTimer = null;
     this._helloRid = null;
@@ -214,6 +229,7 @@ export class Net {
       status: this.status, attempt: this.attempt, retryAt: this.retryAt, ping: this.ping,
       lastError: this.lastError ? { code: this.lastError.code, text: this.lastError.message } : null,
       playerId: this.playerId,
+      quality: this.quality,
     };
   }
 
@@ -249,6 +265,12 @@ export class Net {
     ws.onmessage = (ev) => { if (ws === this.ws) this._onMessage(ev?.data); };
     ws.onerror = () => { /* followed by close */ };
     ws.onclose = (ev) => { if (ws === this.ws) this._onClose(ev); };
+    this._connectTimer = this.timers.setTimeout(() => {
+      if (ws !== this.ws || ws.readyState !== WS_CONNECTING) return;
+      this._teardownSocket();
+      try { ws.close(4000, 'connect timeout'); } catch { /* ignore */ }
+      this._scheduleReconnect();
+    }, CONNECT_TIMEOUT_MS);
   }
 
   /** Close for good (no reconnect). Pending requests reject with CLOSED. */
@@ -266,7 +288,9 @@ export class Net {
   /** Skip the backoff wait and reconnect right now (used on `online` / tab focus / retry button). */
   retryNow() {
     if (this._manualClose) return;
-    if (this.ws && (this.ws.readyState === WS_OPEN || this.ws.readyState === WS_CONNECTING)) return;
+    // Restored connectivity can leave a dead TCP socket looking OPEN to the browser.
+    if (this.ws?.readyState === WS_OPEN) { this.probe(); return; }
+    if (this.ws?.readyState === WS_CONNECTING) return;
     this.connect();
   }
 
@@ -304,6 +328,7 @@ export class Net {
   }
 
   _onOpen() {
+    this._clearTimer('_connectTimer', 'clearTimeout');
     this._openedAt = this.now();
     this._lastRx = this._openedAt;
     this._unansweredSince = null;
@@ -368,6 +393,12 @@ export class Net {
     this.wireVersion = 0;
     this._unansweredSince = null;
     this._clearTimer('_pingTimer', 'clearInterval');
+    this._clearTimer('_lagTimer', 'clearInterval');
+    this._clientLag.clear();
+    this._pingSamples.clear();
+    this._quality.reset();
+    this.quality = null;
+    this._clearTimer('_connectTimer', 'clearTimeout');
     this._clearTimer('_helloTimer', 'clearTimeout');
     this._helloRid = null;
     this._helloSentName = null;
@@ -493,16 +524,8 @@ export class Net {
         return;
       }
       const timeout = Number.isFinite(opts.timeout) && opts.timeout > 0 ? opts.timeout : REQUEST_TIMEOUT_MS;
-      const entry = { msg, resolve, reject, sent: false, timer: null };
-      entry.timer = this.timers.setTimeout(() => {
-        if (this._pending.get(rid) !== entry) return;
-        this._pending.delete(rid);
-        if (entry.sent) {
-          this._expired.add(rid);
-          if (this._expired.size > 64) this._expired.delete(this._expired.values().next().value);
-        }
-        reject(new NetError('TIMEOUT'));
-      }, timeout);
+      const entry = { msg, resolve, reject, sent: false, timer: null, expiresAt: this.now() + timeout };
+      entry.timer = this.timers.setTimeout(() => this._expireRequest(rid, entry), timeout);
       this._pending.set(rid, entry);
       if (this.status === 'online') entry.sent = this._sendRaw(msg);
     });
@@ -537,9 +560,22 @@ export class Net {
   }
 
   _flushQueue() {
-    for (const entry of this._pending.values()) {
+    for (const [rid, entry] of this._pending) {
+      // Background throttling can defer the timeout callback until after welcome.
+      if (this.now() >= entry.expiresAt) { this._expireRequest(rid, entry); continue; }
       if (!entry.sent) entry.sent = this._sendRaw(entry.msg);
     }
+  }
+
+  _expireRequest(rid, entry) {
+    if (this._pending.get(rid) !== entry) return;
+    this._pending.delete(rid);
+    this._clearEntryTimer(entry);
+    if (entry.sent) {
+      this._expired.add(rid);
+      if (this._expired.size > 64) this._expired.delete(this._expired.values().next().value);
+    }
+    entry.reject(new NetError('TIMEOUT'));
   }
 
   /**
@@ -636,6 +672,14 @@ export class Net {
   _startHeartbeat() {
     this._clearTimer('_pingTimer', 'clearInterval');
     this._pingTimer = this.timers.setInterval(() => this._heartbeat(), PING_INTERVAL_MS);
+    this._clearTimer('_lagTimer', 'clearInterval');
+    this._lagDue = this._monoNow() + 250;
+    this._visibleSince = this.now();
+    this._lagTimer = this.timers.setInterval(() => {
+      if (globalThis.document?.visibilityState === 'hidden') this._clientLag.clear();
+      else this._clientLag.add(Math.max(0, this._monoNow() - this._lagDue));
+      this._lagDue = this._monoNow() + 250;
+    }, 250);
   }
 
   _heartbeat() {
@@ -656,7 +700,11 @@ export class Net {
   _sendPing() {
     if (this.status !== 'online' && this.status !== 'connected') return;
     const now = this.now();
-    if (this._sendRaw({ t: 'ping', c: now }) && this._unansweredSince == null) this._unansweredSince = now;
+    if (this._sendRaw({ t: 'ping', c: now })) {
+      this._pingSamples.set(now, this._monoNow());
+      if (this._pingSamples.size > 8) this._pingSamples.delete(this._pingSamples.keys().next().value);
+      if (this._unansweredSince == null) this._unansweredSince = now;
+    }
   }
 
   /** Force an immediate latency probe (e.g. when the tab regains focus). */
@@ -668,9 +716,24 @@ export class Net {
     const now = this.now();
     const c = Number(msg.c);
     if (!Number.isFinite(c)) return;
-    const rtt = now - c;
+    const sent = this._pingSamples.get(c);
+    this._pingSamples.delete(c);
+    const rtt = sent == null ? now - c : this._monoNow() - sent;
     if (!(rtt >= 0 && rtt < 60000)) return;
     this.ping = Math.round(rtt);
+    // Recent sampler lateness is evidence of page stalls; hidden-tab throttling is excluded.
+    const visible = globalThis.document?.visibilityState !== 'hidden' && c >= this._visibleSince;
+    const overdue = Math.max(0, this._monoNow() - this._lagDue);
+    const recent = this._clientLag.evidence();
+    const clientLag = overdue >= 100 ? overdue : recent?.ms ?? this._clientLag.read() ?? 0;
+    const clientLagAge = overdue >= 100 ? 0 : recent?.ageMs ?? null;
+    const d = msg.d;
+    const safe = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+    const server = d && typeof d === 'object' ? { loopMs: safe(d.loopMs), handlerMs: safe(d.handlerMs),
+      loopAgeMs: safe(d.loopAgeMs), handlerAgeMs: safe(d.handlerAgeMs),
+      queuedBytes: safe(d.queuedBytes), sendMs: safe(d.sendMs) } : null;
+    this.quality = this._quality.sample({ rtt, server, clientLag, clientLagAge,
+      uploadBytes: Number(this.ws?.bufferedAmount) || 0, visible });
     if (Number.isFinite(msg.s)) this._addClockSample(msg.s + rtt / 2 - now, rtt);
     this._emit('ping', this.ping);
     this._emit('status', this.snapshot());
@@ -705,6 +768,12 @@ export class Net {
     this._hooked = true;
     window.addEventListener('online', () => this.retryNow());
     document.addEventListener('visibilitychange', () => {
+      this._clientLag.clear();
+      this._quality.reset();
+      this.quality = null;
+      this._visibleSince = this.now();
+      this._lagDue = this._monoNow() + 250;
+      this._emit('status', this.snapshot());
       if (document.visibilityState !== 'visible') return;
       if (this.status === 'reconnecting') this.retryNow();
       else if (this.status === 'online' || this.status === 'connected') this.probe();

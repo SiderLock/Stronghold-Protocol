@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bgmKeyFor, resolveBgm, SfxLimiter, AudioManager, normalAttackSfx, installAudio, audio, combatTrackFor, COMBAT_TRACK_SWITCH_ROUND, VoiceGate, resultSpeaker, resultVoiceSlot, VOICE_PRIORITY, VOICE_COOLDOWN_MS, voiceLine, VOICE_TREES } from '../../public/js/audio.js';
+import { bgmKeyFor, resolveBgm, SfxLimiter, AudioManager, normalAttackSfx, installAudio, audio, combatTrackFor, COMBAT_TRACK_SWITCH_ROUND, VoiceGate, resultSpeaker, resultVoiceSlot, VOICE_PRIORITY, VOICE_COOLDOWN_MS, voiceLine, VOICE_TREES, skinRecordOf } from '../../public/js/audio.js';
 import { mediaUrl } from '../../public/js/media.js';
 import { PHASE } from '../../shared/constants.js';
 import { makeBattle, chessRec } from '../helpers/battleHarness.js';
@@ -309,6 +309,49 @@ describe('operator battle voice', () => {
     } finally {
       globalThis.fetch = origFetch;
     }
+  });
+
+  test('皮肤语音 (docs/SKINS.md): the outfit\'s own slot wins, the operator\'s dub still outranks its Chinese line', async () => {
+    const audioM = {
+      voice: { char_a: { place: '/a/voice/cn/char_a/cn_023.mp3', start: '/a/voice/cn/char_a/cn_019.mp3' } },
+      voiceJp: { char_a: { place: '/a/voice/jp/char_a/cn_023.mp3' } },
+    };
+    const skin = {
+      voice: { place: '/a/skin/cn/place.mp3', select: '/a/skin/cn/select.mp3' },
+      voiceJp: { place: '/a/skin/jp/place.mp3' },
+    };
+    // the outfit voices the slot in the chosen language ⇒ the outfit's line, its own Chinese line of the same name as fallback
+    assert.deepEqual(voiceLine(audioM, 'char_a', 'place', 'jp', Math.random, skin),
+      { url: '/a/skin/jp/place.mp3', fallback: '/a/skin/cn/place.mp3' });
+    // a slot the outfit voices only in Chinese while the operator has a dub: the operator's dub wins — the documented
+    // consequence of 「外语优先于皮肤中文行」 (docs/SKINS.md): a CN-only outfit line does not replace a dub the operator has
+    assert.deepEqual(voiceLine(audioM, 'char_a', 'place', 'jp', Math.random, { voice: { place: '/a/skin/cn/place.mp3' } }),
+      { url: '/a/voice/jp/char_a/cn_023.mp3', fallback: '/a/voice/cn/char_a/cn_023.mp3' });
+    // 中文: the outfit's line first, then the operator's
+    assert.deepEqual(voiceLine(audioM, 'char_a', 'select', 'cn', Math.random, skin),
+      { url: '/a/skin/cn/select.mp3', fallback: null }, 'a slot only the outfit voices');
+    assert.deepEqual(voiceLine(audioM, 'char_a', 'start', 'cn', Math.random, skin),
+      { url: '/a/voice/cn/char_a/cn_019.mp3', fallback: null }, 'a slot the outfit does not voice: the operator\'s line');
+    assert.deepEqual(voiceLine(audioM, 'char_a', 'start', 'cn', Math.random, 42),
+      { url: '/a/voice/cn/char_a/cn_019.mp3', fallback: null }, 'a non-record skin is ignored');
+    assert.deepEqual(voiceLine(audioM, 'char_zz', 'select', 'jp', Math.random, skin),
+      { url: '/a/skin/cn/select.mp3', fallback: null },
+      'an operator with no voice bank of its own still speaks the outfit\'s line (皮肤语音는 干员无声时照播)');
+    assert.equal(voiceLine(audioM, 'char_zz', 'gacha', 'jp', Math.random, skin), null, 'a slot neither the operator nor the outfit voices');
+    // without a skin nothing changed at all (the pre-皮肤语音 contract, pinned above and here for the new branch)
+    assert.deepEqual(voiceLine(audioM, 'char_a', 'place', 'jp'), { url: '/a/voice/jp/char_a/cn_023.mp3', fallback: '/a/voice/cn/char_a/cn_023.mp3' });
+  });
+
+  test('skinRecordOf resolves an outfit by id, including the stand-in case the operator lookup misses', () => {
+    const m = { chars: { char_a: { skins: { 'a@1': { voice: { select: '/a/s.mp3' } } } }, char_b: { skins: { 'b@1': {} } } } };
+    assert.equal(skinRecordOf(m, 'char_a', 'a@1').voice.select, '/a/s.mp3');
+    assert.equal(skinRecordOf(m, 'char_b', 'a@1').voice.select, '/a/s.mp3',
+      'a voice body that is not the outfit\'s operator still finds it (the manifest is scanned once)');
+    assert.equal(skinRecordOf(m, 'char_a', 'nope'), null);
+    assert.equal(skinRecordOf(m, 'char_a', ''), null);
+    assert.equal(skinRecordOf(m, 'char_a', 42), null);
+    assert.equal(skinRecordOf(m, 'char_a', null), null);
+    assert.equal(skinRecordOf(null, 'char_a', 'a@1'), null);
   });
 
   test('语音语言 (0.2.2): 日本語 plays audio.voiceJp — the same slots and file names — and falls back to the Chinese line per slot and per line', async () => {

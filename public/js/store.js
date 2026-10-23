@@ -76,7 +76,7 @@ export const emptyMatch = () => ({ public: null, private: null, field: null, res
 
 /** Initial app state (exported for tests and resets). */
 export const initialState = Object.freeze({
-  connection: { status: 'idle', ping: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
+  connection: { status: 'idle', ping: null, quality: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
   emergency: /** @type {any} */ (null),
   me: { playerId: null, name: '', token: null },
   content: null,

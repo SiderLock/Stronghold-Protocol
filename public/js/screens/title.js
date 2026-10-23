@@ -233,6 +233,7 @@ export function TitleScreen() {
     <div class="title-corner title-corner--tr">
       <div>
         <div class="title-corner__tools">
+          <${FullscreenButton} class="title-fs" />
           <${Button} variant="ghost" size="sm" icon="chart" class="title-stats" onClick=${openStats} title=${t('统计数据')}>${t('统计')}<//>
           <${LangToggle} class="title-lang" />
         </div>
@@ -266,7 +267,6 @@ export function TitleScreen() {
           <${AnnouncementButton} class="title-announcements" />
           <button type="button" class="title-settings fsbtn tapx" aria-label=${t('设置')} title=${t('设置')}
             onClick=${() => setSettingsOpen(true)}><${GIcon} name="gear" /></button>
-          <${FullscreenButton} class="title-fs" />
         </div>
       </div>
       <div class="title-assets">

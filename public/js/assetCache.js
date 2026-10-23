@@ -3,7 +3,7 @@
 import { ASSET_CACHE_META, ASSET_CACHE_LATEST_KEY, ASSET_CACHE_SW_PROTOCOL, MAX_MANIFEST_BYTES, verifyAssetCatalog,
   assetCacheCatalogKey, validateAssetCacheSummary, catalogMatchesSummary, assetCacheError,
   IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL, IMPORTED_BORROWED_URL,
-  ASSET_CACHE_INDEX_URL } from '../../shared/assetCache.js';
+  ASSET_CACHE_INDEX_URL, createAssetTransfer, releaseAssetReader } from '../../shared/assetCache.js';
 
 // Re-exported for the imported-art helpers' consumers (public/sw.js duplicates these constants as a classic script).
 export { IMPORTED_ASSET_CACHE, IMPORTED_ASSET_CACHE_PREFIX, IMPORTED_ASSET_PATH, IMPORTED_INDEX_URL, IMPORTED_BORROWED_URL,
@@ -19,7 +19,7 @@ const initialState = (env) => {
     hasCatalog: false, catalogCurrent: false, catalogComplete: false, serverMissingFiles: 0,
     serverVersion: null, requireAssetCache: false, importStats: null, scanStats: null, waiting: false, policy: null,
     catalogUpdateRetryAt: 0, emergency: false,
-    persistence: 'idle' };
+    persistence: 'idle', renderCacheReady: false, renderCacheFull: false };
 };
 
 export function createAssetCacheManager({ environment = globalThis, doFetch, workerURL = '/js/asset-cache-worker.js',
@@ -374,6 +374,8 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       patch({ playing: ownPlaying || !!data.playing });
       if (data.playing && operation) pause();
     } else if (data?.type === 'ASSET_CACHE_UPDATED') passiveScan();
+    else if (data?.type === 'ASSET_CACHE_RENDER_FULL') patch({ renderCacheFull: true });
+    else if (data?.type === 'ASSET_CACHE_RENDER_CLEARED') patch({ renderCacheReady: false, renderCacheFull: false });
   }
 
   async function initialize() {
@@ -469,12 +471,13 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
     if (Date.now() < state.catalogUpdateRetryAt) throw assetCacheError('ASSET_CACHE_CATALOG_UPDATE_RATE_LIMITED');
     const abort = new env.AbortController();
     job.abort = abort;
-    const timer = env.setTimeout(() => abort.abort(), 120000);
+    const transfer = createAssetTransfer({ signal: abort.signal, timeoutMs: 120000, environment: env });
     try {
       const params = new URLSearchParams({ from: catalog?.version || '', to: summary.version,
         readyFiles: String(state.readyFiles), readyBytes: String(state.readyBytes) });
-      const response = await fetcher(full ? catalogURL : `${catalogUpdateURL}?${params}`, { cache: 'no-store', signal: abort.signal,
-        headers: full ? {} : { 'X-Asset-Cache-Update': 'manual' } });
+      const response = await transfer.wait(fetcher(full ? catalogURL : `${catalogUpdateURL}?${params}`, { cache: 'no-store', signal: transfer.signal,
+        headers: full ? {} : { 'X-Asset-Cache-Update': 'manual' } }));
+      transfer.progress();
       if (!response.ok) {
         if (response.status === 429) {
           const retryAfter = response.headers.get('Retry-After');
@@ -501,8 +504,9 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
               const chunks = []; let size = 0;
               while (true) {
                 if (job.paused || abort.signal.aborted) break;
-                const { done, value } = await reader.read();
+                const { done, value } = await transfer.wait(reader.read());
                 if (done) break;
+                if (value.byteLength) transfer.progress();
                 size += value.byteLength;
                 if (size > 4096) break;
                 chunks.push(value);
@@ -517,8 +521,7 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
             } catch { /* Unknown/unreadable server errors stay unavailable, not owner-disabled. */ }
             finally {
               abort.signal.removeEventListener('abort', cancel);
-              await reader.cancel().catch(() => {});
-              reader.releaseLock();
+              releaseAssetReader(reader);
             }
           }
           throw assetCacheError(unavailable);
@@ -537,16 +540,16 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
         while (true) {
           if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
           if (abort.signal.aborted) throw assetCacheError('ASSET_CACHE_CATALOG_UNAVAILABLE');
-          const { done, value } = await reader.read();
+          const { done, value } = await transfer.wait(reader.read());
           if (done) break;
+          if (value.byteLength) transfer.progress();
           size += value.byteLength;
           if (size > MAX_MANIFEST_BYTES) throw assetCacheError('ASSET_CACHE_BAD_CATALOG');
           chunks.push(value);
         }
       } finally {
         abort.signal.removeEventListener('abort', cancel);
-        await reader.cancel().catch(() => {});
-        reader.releaseLock();
+        releaseAssetReader(reader);
       }
       if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED');
       if (abort.signal.aborted) throw assetCacheError('ASSET_CACHE_CATALOG_UNAVAILABLE');
@@ -558,9 +561,10 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
       return await verifyAssetCatalog(value, env.crypto);
     } catch (error) {
       if (job.paused) throw assetCacheError('ASSET_CACHE_PAUSED', error);
-      throw error.code ? error : assetCacheError('ASSET_CACHE_CATALOG_UNAVAILABLE', error);
+      throw typeof error.code === 'string' && error.code !== 'ASSET_CACHE_DOWNLOAD_FAILED'
+        ? error : assetCacheError('ASSET_CACHE_CATALOG_UNAVAILABLE', error);
     } finally {
-      env.clearTimeout(timer);
+      transfer.close();
       // Header/body validation can reject before acquiring a reader. Abort in every exit path
       // too, releasing the server's shared transfer lease rather than leaving a response flowing.
       abort.abort();
@@ -654,7 +658,11 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
           await swMessage('ASSET_CACHE_CLEAR');
           patch({ readyFiles: 0, readyBytes: 0, missingFiles: state.totalFiles, missingBytes: state.totalBytes });
         } else if (catalog) {
-          await runWorker(action === 'catalog' || action === 'catalog-update' ? 'scan' : action, { deep, ...(file ? { file } : {}) });
+          // The download worker runs several files at once, bounded by the server's per-client lease (state.policy,
+          // /api/asset-cache/status → policy.maxDownloadsPerClient). Asking for more only provokes 429s.
+          const maxParallel = action === 'download'
+            ? Math.max(1, Math.min(6, Number(state.policy?.maxDownloadsPerClient) || 2)) : 1;
+          await runWorker(action === 'catalog' || action === 'catalog-update' ? 'scan' : action, { deep, maxParallel, ...(file ? { file } : {}) });
           // Stale copies are housekeeping: a failure here (e.g. a legacy cache without an index) must not turn a
           // finished import/download into an error after every byte was already verified and written.
           if (action === 'import' || action === 'download') {
@@ -688,6 +696,22 @@ export function createAssetCacheManager({ environment = globalThis, doFetch, wor
   const scan = (options = {}) => operation && !options.deep ? Promise.resolve(getState()) : perform('scan', { refresh: true, ...options });
   const manager = {
     getState, state: getState, initialize, scan,
+    refreshRenderingPolicy: () => refreshSummary({ force: true }),
+    async configureRendering(enabled, { clear = false } = {}) {
+      try {
+        await initialize();
+        if (!state.supported || !(await compatibleSWNow())) return false;
+        let caps = await swMessage('ASSET_CACHE_CAPABILITIES');
+        if (!caps.renderCache && enabled === true && registration?.waiting) {
+          await activateWaiting(null); // the existing cross-tab playing guard still owns upgrade permission
+          caps = await swMessage('ASSET_CACHE_CAPABILITIES');
+        }
+        if (!caps.renderCache) return false;
+        await swMessage('ASSET_CACHE_RENDER_CONSENT', { enabled: enabled === true, clear });
+        patch({ renderCacheReady: enabled === true, ...(clear ? { renderCacheFull: false } : {}) });
+        return true;
+      } catch { patch({ renderCacheReady: false }); return false; }
+    },
     updateCatalog: () => perform('catalog-update'),
     downloadCatalog: () => perform('catalog-update'),
     setEmergency(value) {

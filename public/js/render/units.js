@@ -656,6 +656,9 @@ export class UnitView {
     // enemies: the official prefab's size factor (1 for operators, summons and enemies at the standard size)
     const def = this.isEnemy && ctx.lookupDef ? ctx.lookupDef(info) : null;
     this.modelK = this.isEnemy ? enemyModelScale(def) : 1;
+    // The extracted FX points are in Unity tiles (standard Graphic 0.27 × SkeletonDataAsset 0.01), while the
+    // displayed skeleton uses UNIT.modelScale. Live bones already include it; static mounts / body FX must agree.
+    this.effectScale = UNIT.modelScale / (0.27 * 0.01);
     // a fast enemy walks on its model's own Run cycle when it has one (PR #275 by @xcdoge: 猎狗pro, moveSpeed 1.9, Run_Loop
     // 0.53 s next to Move_Loop 0.80 s; also 深池侦察犬 1.7). [ASSUMED] the threshold: faster than the standard 1
     this.moveFast = this.isEnemy && Number(def?.stats?.moveSpeed) > 1;

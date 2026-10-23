@@ -41,7 +41,7 @@ test('the official sprites, all in the asset list; no drawn stand-ins; not ready
 
 test('screens/game.js: the screen at BATTLE_CHECK once its art is in, else the banner; it fades, then goes', () => {
   const g = read('public/js/screens/game.js');
-  assert.match(g, /useEffect\(\(\) => \{ if \(gd\.ready\) preloadBootArt\(\); \}, \[gd\.ready\]\);/);
+  assert.match(g, /gd\.ready && pub && phaseMode\(pub\.phase\) !== 'briefing'\) preloadBootArt\(\)/);
   assert.match(g, /if \(phase === PHASE\.BATTLE_CHECK && bootArtReady\(\)\) \{ setBanner\(null\); setBoot\(\{ key: phaseKey \}\); \}\n\s+else if [\s\S]*?else if \(b\) setBanner/);
   assert.match(g, /<\$\{ProtocolBoot\} key=\$\{boot\.key\} players=\$\{players\} myId=\$\{myId\} leaving=\$\{phase !== PHASE\.BATTLE_CHECK\} \/>/);
   assert.match(g, /const id = setTimeout\(\(\) => setBoot\(null\), BOOT_LEAVE_MS\);/);

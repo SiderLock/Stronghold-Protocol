@@ -304,6 +304,8 @@ is a number of `data/enemies.json`), so a room's `cs` is the vanilla one whateve
 | Container | A record |
 |---|---|
 | `chars[charId]` | `avatar`, `avatarE2`, `portrait`, `portraitE2`, `illust` (image), `spine.front`, `spine.back` (Spine), `skins` (one key per skin, below) |
+| a skin's `tokens[tokenId]` | `tokenSkinId` (text), `spine` (Spine, **required**) — the model the summon wears while its summoner wears that skin |
+| a skin's `voice`, `voiceJp`, `voiceEn`, `voiceKr`, `voiceNative` | `<slot>`: an audio file or a list of 1–16 — the outfit's own lines, the same slots as the operator's own trees ([SKINS.md](SKINS.md) 皮肤语音) |
 | `enemies[key]` | `icon` (image), `spine` (Spine) |
 | `tokens[id]` | `avatar` (image), `spine` (Spine) |
 | `bonds`, `items`, `bands`, `skills`, `modules`, `ui`, `prof.icon` / `large` / `battlecard` / `sub` `[key]` | an image |
@@ -339,7 +341,9 @@ operator the manifest has counts as one even when the write only adds a skin und
 record did not have (`illust`); a new operator is an `assets.add`. `theme` is not applied yet
 (a warning).
 
-**立绘 and the skins of one operator.** `illust` is the full illustration (立绘), the picture a detail view shows. The
+**立绘 and the skins of one operator.** `illust` is the full illustration (立绘) of an operator the plugin gives no
+skin at all; the picker's 默认 tile is the one place it is drawn (a skin's own `illust` is the portrait fallback on
+every surface that resolves that skin, [SKINS.md](SKINS.md)). The
 committed `data/assets.json` of this version carries no `illust` and no `skins` yet, so a plugin that writes one adds that field to the
 entry (as any other field of an entry the installation has, it takes `assets.override`). An operator's record may also
 carry several appearances under `skins`, one per key — the key `chars[<charId>].skins` is written under, and it is this
@@ -358,7 +362,17 @@ key is data, never a path or a URL by itself: a plugin's files are named by path
 `%23` and never the start of a fragment. One record takes at most 64 skins. A key outside that character set, a field a
 skin has not, a text that is not 1–64 characters (0–64 for `group`), and a file a skin names that the folder lacks are
 reported as the same fault of the operator's own record would be; a skin's model goes into `plugin.lock.json` like any
-other. What a skin *is* —
+other. **A skin may also restyle the operator's summons.** `skins[<key>].tokens[<tokenId>]` holds
+`{ tokenSkinId?, spine }`: `spine` is ONE model — the same kind `tokens[<tokenId>].spine` is, skel / atlas / textures /
+anims, because a summon has no Front / Back pair — and it is **required**, since a mapping without a model would change
+nothing; the pair form is refused for that reason, and `tokenSkinId` is metadata only. At most 64 mappings per skin, and
+`<tokenId>` is a key the installation's `tokens` container can hold. The model is what the summon wears while its
+summoner wears that skin; without a mapping it keeps its own model ([SKINS.md](SKINS.md) 召唤物换装).
+**An outfit may also voice itself.** The same record takes `voice` (its Chinese tree) and optional `voiceJp`,
+`voiceEn`, `voiceKr`, `voiceNative`, each shaped exactly like the operator's own tree — a slot name to one audio file or
+a list of 1–16, the same slot names (`SLOT`, free slots rather than twelve enumerated ones). The outfit's line plays in
+the language the player picked, else the operator's dub, else the outfit's Chinese line, else the operator's own;
+a Chinese-only outfit does not replace a dub the operator has ([SKINS.md](SKINS.md) 皮肤语音). What a skin *is* —
 its name, its series, the picture a picker would show, the wearing of one — is this section's business; the key's shape is
 the overlay's own rule: the reader resolves every key into a path of the installation's manifest, so a key of the wrong
 shape is `PLUGIN_ASSET_KEY` (§15), as an entry key of the wrong shape is. The player picker
@@ -392,8 +406,17 @@ changes nothing a battle does, so it never enters `cs`) and published to teammat
 which is how a co-op partner's piece draws your skin. `public/js/assets.js` resolves it (`spineEntry`, `avatarUrl`,
 `portraitUrl`, `illustUrl` take `opts.skin`) and falls back to the operator's own model and pictures for a skin (or a
 skin's layer) that is not there, so a plugin that replaces only a model still draws a face. 设置「显示其他玩家的皮肤」
-(default on) is a pure client preference: off, this browser draws every OTHER seat's piece on the operator's own model
+(default on) is a pure client preference: off, this browser draws every OTHER seat's piece on the operator's own model and pictures
 while keeping its own player's — their screen keeps showing their skin.
+
+**Picture-only outfits (B6, 0.3.2).** Maintainer decision, 2026-10-18 option A: a skin with an avatar and/or
+portrait but no Spine is wearable. The picker marks it 「仅更换头像与立绘」; all owner-specific cards, panels and
+result rows use its pictures, while battle models use the effective operator's default Front / Back. Missing pictures
+fall back independently to that operator's normal / elite art. #686's per-seat choices, other-player visibility,
+stand-ins and DIY bodies stay in force; model outfits retain their model and image fallback behavior.
+[ASSUMED] The existing `avatarE2`, `portraitE2` and `illust` fields count too; metadata alone is not wearable.
+Official `skin_table.charSkins` separates operator identity, avatar, portrait, illustration and battle skin; the
+missing-plugin policy is the maintainer's choice. See [SKINS.md](SKINS.md#picture-only-outfits-032-b6) and §35.4.
 
 **Spine models and `plugin.lock.json`.** A model's clip roles, durations, events, hit times and bounds come from the
 skeleton itself: `node tools/plugin.mjs pack <dir>` parses it the way `tools/fetch-assets.mjs` parses the game's

@@ -413,7 +413,9 @@ describe('the studio over HTTP', () => {
     assert.equal(r.body.check.ok, true, 'the folder holds plain files again');
     // plugins/_moved a link to a folder outside: a file is never moved through it
     fs.writeFileSync(path.join(dir, 'notes.psd'), 'x');
-    unlink(path.join(plugins, '_moved'));
+    const moved = path.resolve(plugins, '_moved');
+    assert.equal(path.dirname(moved), path.resolve(plugins));
+    fs.rmSync(moved, { recursive: true, force: true });
     link(outside, path.join(plugins, '_moved'));
     r = await call('POST', '/studio/api/plugins/lnk-files/fix', { code: 'PLUGIN_FILE_TYPE', file: 'notes.psd' });
     assert.deepEqual([r.status, r.body.error], [403, 'PLUGIN_STUDIO_PATH']);

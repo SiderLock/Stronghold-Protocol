@@ -10,6 +10,7 @@
 //   --fx       设置「官方特效」 tiers to measure (the official battle effects, render/vfx; default off; needs extracted effects)
 //   --specs    names of public/dev/perf/index.json (default: all)      --warm    seconds before sampling (default 20)
 //   --sample   seconds per sample (default 6)                          --profile also record and summarise a CPU profile
+//   --mobile   touch-only mobile viewport (also exercises automatic light FX and adaptive canvas resolution)
 // Needs the downloaded assets (public/assets: real Spine models; without them every unit is a diamond and the numbers
 // mean little). Writes <out>/results.json (+ <spec>-<quality>-<cpu>x.cpuprofile / .summary.json with --profile).
 
@@ -131,7 +132,7 @@ async function main() {
       const page = await browser.newPage();
       const errors = [];
       page.on('pageerror', (e) => errors.push(e.message));
-      await page.setViewport({ width, height, deviceScaleFactor: dpr });
+      await page.setViewport({ width, height, deviceScaleFactor: dpr, isMobile: argv.includes('--mobile'), hasTouch: argv.includes('--mobile') });
       await page.goto(`http://127.0.0.1:${srv.port}/dev/battle-perf.html?spec=${encodeURIComponent(spec)}&quality=${quality}&fx=${fx}&panel=0`);
       await page.waitForFunction('window.__perf && (window.__perf.ready || window.__perf.error)', { timeout: 60000 });
       const err = await page.evaluate(() => globalThis.__perf.error);
@@ -153,7 +154,7 @@ async function main() {
         fs.writeFileSync(`${base}.cpuprofile`, JSON.stringify(profile));
         fs.writeFileSync(`${base}.summary.json`, JSON.stringify(summary, null, 1));
       }
-      const rec = { spec, quality, fx, cpu, ...s, profiled: profileOn, errors: errors.slice(0, 3) };
+      const rec = { spec, quality, fx, cpu, mobile: argv.includes('--mobile'), ...s, profiled: profileOn, errors: errors.slice(0, 3) };
       results.push(rec);
       if (!argv.includes('--json')) {
         const o = s.officialFx;

@@ -5,7 +5,20 @@
 // hands one such run to a browser is test/match/rehearsal-delegate.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RehearsalRun } from '../../server/sim/rehearsal.js';
+import { RehearsalRun, rehearsalLeaks } from '../../server/sim/rehearsal.js';
+
+test('early-stop checks use live leaks without building provisional reports, with result-only hosts supported', () => {
+  let reports = 0;
+  const live = { finished: false, _perPlayer: { p: { leaked: [null, { counted: false }, {}, { counted: true }] } },
+    result() { reports++; return { perPlayer: { p: { leaked: [{}] } } }; } };
+  assert.equal(rehearsalLeaks(live, 'p'), 2);
+  assert.equal(reports, 0);
+  live.finished = true;
+  assert.equal(rehearsalLeaks(live, 'p'), 1, 'finished battles use their final report');
+  assert.equal(reports, 1);
+  assert.equal(rehearsalLeaks({ result: live.result }, 'p'), 1, 'result-only stand-ins retain compatibility');
+  assert.equal(rehearsalLeaks(null, 'p'), 0);
+});
 
 test('the shared comparison scores leaks, then kills, then the earlier candidate', () => {
   const res = (n, killed) => ({ perPlayer: { p: { killed, total: 9, leaked: Array.from({ length: n }, () => ({ enemyKey: 'e', counted: true })) } } });

@@ -1241,7 +1241,7 @@ export function* createRehearsalSteps(m, ps, chosen, plans, { delegate = false }
       inputs.push(opts);
       // The default path builds now, in this generator step, as 0.3.0 did. Delegation builds nothing: the host
       // simulates the specs, and a takeover builds these same inputs later.
-      if (!delegate) battles.push(m.newBattle(opts, { preview: true }));
+      if (!delegate && !m.rehearsalPool) battles.push(m.newBattle(opts, { preview: true }));
     } catch {
       // A failed estimate cannot affect the match's error log or displace its default plan.
       break;
@@ -1252,7 +1252,7 @@ export function* createRehearsalSteps(m, ps, chosen, plans, { delegate = false }
     const job = m.delegateRehearsal({ ps, chosen, plans: cands, inputs });
     if (job) return job;
   }
-  return createRehearsalJob(m, ps, chosen, cands, inputs, delegate ? null : battles);
+  return createRehearsalJob(m, ps, chosen, cands, inputs, delegate || m.rehearsalPool ? null : battles);
 }
 
 /**

@@ -24,8 +24,8 @@
 
 import { useEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Icon, MicroLabel, Button, TierChip, TextField, Countdown, Spinner, confirmDialog, hasDeadline, Modal, Fragment } from '../ui/components.js';
-import { Img, RichText, UnitThumb } from '../ui/gameComponents.js';
-import { chessAvatarUrl, chessPortraitUrl, subProfIconUrl, bondIconUrl, moduleTypeIconUrl } from '../ui/assetUrls.js';
+import { OperatorImage, Img, RichText, UnitThumb } from '../ui/gameComponents.js';
+import { subProfIconUrl, bondIconUrl, moduleTypeIconUrl } from '../ui/assetUrls.js';
 import { GarrisonBlock } from '../ui/detailPanel.js';
 import { data, useData, localAsset, DATA_FILES } from '../data.js';
 import { useStore } from '../store.js';
@@ -37,6 +37,8 @@ import {
   opsOf, setOps, resetOps, moduleRecord,
 } from '../ui/loadoutModel.js';
 import { loadoutStore, openLoadout, closeLoadout, setEntries, setOpsMap, applyLoadoutEntries, setNotOwned, applyOwnershipImport, setDiyPicks, applyDiyImport } from '../ui/loadoutSync.js';
+// 时装 in the 导出 / 导入 envelopes (docs/SKINS.md 导出 / 导入): the same per-operator map the picker writes
+import { skinsStore, setSkins, SKINS_KEY } from '../ui/skins.js';
 import { OperatorVoice } from '../ui/operatorVoice.js';
 // 皮肤 (docs/SKINS.md): a self-contained section — everything it does lives in ui/skinPicker.js, so this screen keeps
 // one import and one line in its detail body
@@ -53,6 +55,7 @@ import { diyCount, sanitizeDiyPicks, setPick, serializeDiy, parseDiyImport, DIY_
 import { t, tParts, N_ } from '../../../shared/i18n.js';
 import { copyText } from '../ui/clipboard.js';
 import { toast } from '../ui/toasts.js';
+import { FullscreenButton } from '../ui/device.js';
 
 export { openLoadout, closeLoadout };
 
@@ -211,7 +214,7 @@ export function RosterRow({ m, chess, golden, entries, ops = {}, selected, onPic
       class=${cx('lo-card', `lo-card--t${chess.tier}`, selected && 'is-sel', changed && 'is-changed', notOwned && 'is-standin')}>
     <button type="button" class="lo-card__pick" aria-pressed=${selected ? 'true' : 'false'} title=${chess.name} onClick=${() => onPick(chess.chessId)}>
       <span class="lo-card__art">
-        <${Img} src=${chessAvatarUrl(m, chess)} fallback=${html`<span class="lo-card__glyph">${[...(chess.name || '?')][0]}</span>`} />
+        <${OperatorImage} m=${m} chess=${chess} fallback=${html`<span class="lo-card__glyph">${[...(chess.name || '?')][0]}</span>`} />
         <${TierChip} tier=${chess.tier} size="sm" class="lo-card__tier" />
       </span>
       <span class="lo-card__id">
@@ -325,7 +328,7 @@ function Detail({ m, chess, golden, entries, ops = {}, onChange, onOps, onReset,
   return html`<aside class="lo-detail" aria-label=${t('{name} 调配', { name: chess.name })}>
     <div class="lo-dhead">
       <div class=${cx('lo-dhead__art', `lo-dhead__art--t${chess.tier}`)}>
-        <${Img} src=${chessPortraitUrl(m, golden || chess)} fallback=${html`<${UnitThumb} kind="chess" id=${chess.chessId} size="lg" />`} />
+        <${OperatorImage} m=${m} chess=${golden || chess} portrait fallback=${html`<${UnitThumb} kind="chess" id=${chess.chessId} size="lg" />`} />
       </div>
       <div class="lo-dhead__info">
         <div class="lo-dhead__chips"><${TierChip} tier=${chess.tier} size="md" />
@@ -575,8 +578,8 @@ function LoadoutScreen({ st }) {
   const ioDiy = io?.kind === 'diy';
   const openExport = () => setIo(tab === 'ownership'
     ? { mode: 'export', kind: 'ownership', text: serializeOwnership(loadoutStore.get().notOwned) }
-    : tab === 'diy' ? { mode: 'export', kind: 'diy', text: serializeDiy(loadoutStore.get().diy) }
-      : { mode: 'export', kind: 'loadout', text: serializeExport(loadoutStore.get().entries, { ops: loadoutStore.get().ops }) });
+    : tab === 'diy' ? { mode: 'export', kind: 'diy', text: serializeDiy(loadoutStore.get().diy, { skins: skinsStore.get()[SKINS_KEY] }) }
+      : { mode: 'export', kind: 'loadout', text: serializeExport(loadoutStore.get().entries, { ops: loadoutStore.get().ops, skins: skinsStore.get()[SKINS_KEY] }) });
   const openImport = () => setIo({ mode: 'import', kind: tab, text: '' });
   const ioCopy = async () => {
     const ok = await copyText(ioText);
@@ -593,6 +596,10 @@ function LoadoutScreen({ st }) {
     if (f.size > (ioOwn ? OWNERSHIP_IMPORT_MAX_BYTES : LOADOUT_IMPORT_MAX_BYTES)) { toast(ioOwn ? t('文件过大，请选择「导出」下载的干员持有文件') : t('文件过大，请选择「导出」下载的调配文件'), 'error'); return; }
     try { setIo({ ...io, mode: 'import', text: await readFileText(f) }); } catch { toast(t('读取文件失败'), 'error'); }
   };
+  // 时装: the envelopes carry `{ [charId]: skinId }` (docs/SKINS.md 导出 / 导入). MERGED, never replacing: a payload
+  // that says nothing about an operator leaves that operator's choice alone, so an older export (no `skins` at all) and
+  // a file from another season cannot clear choices this browser already has.
+  const applySkinChoices = (skins) => { if (skins) setSkins({ ...(skinsStore.get()[SKINS_KEY] || {}), ...skins }); };
   const ioApply = () => {
     // an import before chess.json is loaded, or when it never arrived, would sanitise every entry away — refuse instead
     // of wiping the loadout
@@ -602,8 +609,11 @@ function LoadoutScreen({ st }) {
       const r = parseDiyImport(ioText);
       if (!r.ok) { toast(t('导入失败：{error}', { error: t(r.error, r.params) }), 'error'); return; }
       const { applied, dropped } = applyDiyImport(r.picks, diyData(), loadoutStore.get().diyKitted || []);
+      const nSkins = Object.keys(r.skins || {}).length;
+      applySkinChoices(r.skins);
       setIo(null);
-      toast(applied ? t('已导入 {n} 个自选名额', { n: applied }) + (dropped ? t('（另有 {n} 项不可用，未导入）', { n: dropped }) : '') : t('已导入：全部名额为空'), dropped ? 'warn' : 'success');
+      toast((applied ? t('已导入 {n} 个自选名额', { n: applied }) + (dropped ? t('（另有 {n} 项不可用，未导入）', { n: dropped }) : '') : t('已导入：全部名额为空'))
+        + (nSkins ? t('（含 {n} 名干员的时装）', { n: nSkins }) : ''), dropped ? 'warn' : 'success');
       return;
     }
     if (ioOwn) {
@@ -628,10 +638,14 @@ function LoadoutScreen({ st }) {
     const nOps = r.ops ?? 0;
     // nothing survived sanitising (unknown chess, or every choice already the default): keep the current loadout
     if (!applied && !nOps) { toast(t('导入失败：这份数据在当前版本没有可用的调配，未做任何改动'), 'error'); return; }
+    // 时装 rides along: the appearances of the operators this file names (docs/SKINS.md 导出 / 导入)
+    const nSkins = Object.keys(res.skins || {}).length;
+    applySkinChoices(res.skins);
     setIo(null);
-    toast(!applied ? t('已导入 {n} 名干员的潜能与练度', { n: nOps })
+    toast((!applied ? t('已导入 {n} 名干员的潜能与练度', { n: nOps })
       : dropped ? t('已导入 {applied} 名干员（另有 {dropped} 项未导入）', { applied, dropped })
-        : t('已导入 {applied} 名干员的调配', { applied }), dropped ? 'warn' : 'success');
+        : t('已导入 {applied} 名干员的调配', { applied })) + (nSkins ? t('（含 {n} 名干员的时装）', { n: nSkins }) : ''),
+    dropped ? 'warn' : 'success');
   };
 
   // Esc closes; ←/→ browse the filtered roster (not while typing in the search field)
@@ -682,6 +696,7 @@ function LoadoutScreen({ st }) {
     <header class="lo-top">
       <div class="lo-top__left">
         <${Button} variant="ghost" size="md" icon="chevronLeft" class="lo-back" onClick=${closeLoadout} aria-label=${t('返回')} title=${t('返回 (Esc)')}>${t('返回')}<//>
+        <${FullscreenButton} class="lo-fs" />
       </div>
       <div class="lo-top__center">
         <${MicroLabel} tone="mint">${tab === 'ownership' ? 'OPERATOR ROSTER' : tab === 'diy' ? 'SELF-SELECT SQUAD' : 'OPERATOR LOADOUT'}<//>

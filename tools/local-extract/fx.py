@@ -2075,7 +2075,20 @@ def roles_of(uses):
     return {r: out[r] for r in SKILL_ROLES if r in out}
 
 
-def parse_unit(env, rel, name, kind):
+def mode_aura_uses(cls, fields, node, templates=None, effect_key=None):
+    """Direct buff effects of a mode's AuraAbility, attached until that mode detaches.
+
+    Mode attacks are claimed before node_entry walks the other abilities; without this export their
+    _buffs / _passiveBuffs disappear (cetsyr S3 AuraHeal). Include their actual template actions, never infer keys.
+    """
+    if cls != 'AuraAbility':
+        return []
+    return behaviour_uses(cls, {k: fields[k] for k in ('_buffs', '_passiveBuffs') if k in fields},
+                          effect_key or (lambda k: k.lower() if isinstance(k, str) and k else None),
+                          templates=templates, node=node)
+
+
+def parse_unit(env, rel, name, kind, templates=None, effect_key=None):
     """A unit prefab (charpack / enemy / token) → its index.json unit (§33.12) before the keys are checked: the modes
     (attack, combat: ability_entry), start / dead effects, the Graphic transform, the chargeable groups (`charge`), the
     Spine-event effects (`spineEffects`, v3), and for crawl_units `_enemySkills` (its EnemySkill nodes: name, GameObject,
@@ -2177,6 +2190,10 @@ def parse_unit(env, rel, name, kind):
         if ago is None:
             return a
         a['node'] = path_of[gkey(ago)]
+        uses = mode_aura_uses(a['class'], ad, a['node'], templates, effect_key)
+        if uses:
+            a['buffUses'] = uses
+            strings.update(k for u in uses for k in u['keys'])
         claimed.add(gkey(ago))
         ems = node_emitters(ago)
         if len(ems) == 1 and ems[0][2] is None:
@@ -2871,13 +2888,13 @@ def crawl_units(ab_root, cabs, unit_ids, gd, eff, enemy_idx, token_idx, log):
         try:
             if uid.startswith('char_'):
                 rel = f'charpack/{uid}.ab'
-                u = parse_unit(env, rel, uid, 'char') if (Path(ab_root) / rel).exists() else None
+                u = parse_unit(env, rel, uid, 'char', templates, ekn) if (Path(ab_root) / rel).exists() else None
             elif uid.startswith('enemy_'):
                 rel = enemy_idx.get(uid)
-                u = parse_unit(env, rel, uid, 'enemy') if rel else None
+                u = parse_unit(env, rel, uid, 'enemy', templates, ekn) if rel else None
             else:
                 rel = token_idx.get(uid)
-                u = parse_unit(env, rel, uid, 'token') if rel else None
+                u = parse_unit(env, rel, uid, 'token', templates, ekn) if rel else None
             if u is None:
                 log(f'  skip (no prefab) {uid}')
                 continue
@@ -3200,7 +3217,11 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
     t0 = time.time()
     entries, textures, meshes, done = {}, {}, {}, set()
     todo, rounds = set(wanted), 0
-    with ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker, initargs=(tuple(eff),)) as pool:
+    # a one-process run does not build a pool at all: it would only be used for `jobs > 1`, and building one needs POSIX
+    # semaphores a restricted environment (a sandbox, a container without /dev/shm) refuses even though the work itself
+    # runs in this process
+    pool = ProcessPoolExecutor(max_workers=jobs, initializer=_init_worker, initargs=(tuple(eff),)) if jobs > 1 else None
+    try:
         while todo and rounds < 6:
             rounds += 1
             by_bundle = {}
@@ -3208,7 +3229,7 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
                 by_bundle.setdefault(eff[k], []).append(k)
             log(f'fx: pass {rounds}: exporting {len(todo)} prefabs from {len(by_bundle)} bundles ({jobs} processes)')
             work = [(str(ab_root), str(out_root), cabs, rel, ks) for rel, ks in sorted(by_bundle.items(), key=lambda kv: -len(kv[1]))]
-            results = list(pool.map(_export_worker, work)) if jobs > 1 and len(work) > 1 else [_export_worker(w, tuple(eff)) for w in work]
+            results = list(pool.map(_export_worker, work)) if pool and len(work) > 1 else [_export_worker(w, tuple(eff)) for w in work]
             done |= todo
             for e, tx, me, lines in results:
                 entries.update(e)
@@ -3218,6 +3239,9 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
                     log(line)
             named = {r for e in entries.values() for r in e.get('refs', [])}
             todo = {k for k in named if k in eff and k not in done}
+    finally:
+        if pool:
+            pool.shutdown()
     timings['prefabs'] = time.time() - t0
 
     summaries = {k: {f: v[f] for f in ('file', 'bundle', 'nodes', 'particleSystems', 'liveParticles', 'duration', 'looping', 'refs',
@@ -3250,6 +3274,8 @@ def export_fx(ab_root, out_root, manifest, log, selection='sample', keys=None, j
         'units': units, 'projectiles': projectiles, 'skills': skills, 'skins': skins,
         'generic': {**FX_GENERIC, 'keys': sorted(k for k in generic if k in summaries)},
         'prefabs': dict(sorted(summaries.items())),
+        # A targeted --fx-keys maintenance run must keep the separately extracted outfit hookers.
+        **({'skinFx': prev['skinFx']} if isinstance(prev, dict) and 'skinFx' in prev else {}),
     }
     write_atomic(out / 'index.json', json.dumps(index, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
     write_atomic(out / 'textures.json', json.dumps({'format': 'fx-textures', 'version': FORMAT_VERSION,

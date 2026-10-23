@@ -298,8 +298,9 @@ describe('content-hashed URLs through a real server', () => {
     assert.equal((await get(srv.port, '/assets/char/a.png', { 'if-none-match': `"${sha16(png)}"` })).status, 304);
     const font = await get(srv.port, v.fonts.faces.f.woff2);
     assert.equal(font.headers['cache-control'], IMMUTABLE);
-    const query = await get(srv.port, '/assets/char/a.png?v=1');
-    assert.match(query.headers['cache-control'], /immutable/, 'the old ?v= rule is kept');
+    const query = await get(srv.port, `/assets/char/a.png?v=${sha16(png)}`);
+    assert.match(query.headers['cache-control'], /immutable/, 'a digest retains the legacy art cache rule');
+    assert.equal((await get(srv.port, '/assets/char/a.png?v=1')).headers['cache-control'], 'public, max-age=86400', 'an arbitrary query does not pin content');
   });
 
   test('a Spine model: skeleton, atlas, page and the atlas derived from the skeleton URL are immutable under the model hash; a file derived beside them is no-cache', async () => {

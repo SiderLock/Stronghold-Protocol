@@ -87,6 +87,7 @@ export function healthReport({ startedAt, network, registry, lobby, content = nu
   };
   if (trusted && Object.keys(trusted).length) report.plugins = trusted;
   if (withTraffic && traffic) report.traffic = traffic.snapshot();
+  if (withTraffic && network.diagnostics) report.network = network.diagnostics();
   // content-hashed asset URLs (assetIndex.js / assetViews.js): off, building, or ready with how many files and URLs
   if (withTraffic) report.assetHashes = assetIndex ? { ...assetIndex.stats(), views: views ? views.stats() : null } : null;
   return report;

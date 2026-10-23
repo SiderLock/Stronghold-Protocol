@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Button } from '../../public/js/ui/components.js';
-import { roomFacts, SeatCard, MatchmakingControl } from '../../public/js/screens/room.js';
+import { roomFacts, SeatCard, MatchmakingControl, SeatExchangeButton, SeatRequestNotice } from '../../public/js/screens/room.js';
 
 function* walk(node) {
   if (Array.isArray(node)) { for (const child of node) yield* walk(child); return; }
@@ -14,6 +14,37 @@ const host = { seat: 0, playerId: 'host', name: 'Host', connected: true, ready: 
 const guest = { seat: 1, playerId: 'guest', name: 'Guest', connected: true, ready: true, isBot: false };
 const bot = { seat: 2, playerId: 'bot', name: 'AI', connected: true, ready: true, isBot: true };
 const room = (changes = {}) => ({ hostId: host.playerId, mode: 'coop', capacity: 4, inMatch: false, seats: [host, guest, bot, null], ...changes });
+
+test('seat exchange controls distinguish empty/AI/human seats and prevent offline or duplicate actions', () => {
+  const source = room(), calls = [], facts = roomFacts(source, 'host');
+  const props = { room: source, facts, myId: 'host', busy: null, connected: true, onExchange: (...args) => calls.push(args) };
+  assert.equal(SeatExchangeButton({ ...props, seat: host, index: 0 }), null);
+  for (const [seat, index] of [[guest, 1], [bot, 2], [null, 3]]) {
+    const button = SeatExchangeButton({ ...props, seat, index });
+    assert.equal(button.type, Button);
+    assert.equal(button.props.disabled, false);
+    button.props.onClick();
+    assert.equal(SeatExchangeButton({ ...props, seat, index, connected: false }).props.disabled, true);
+  }
+  assert.deepEqual(calls, [[1, 'guest'], [2, 'bot'], [3, null]]);
+  assert.equal(SeatExchangeButton({ ...props, seat: { ...guest, connected: false }, index: 1 }).props.disabled, true);
+  assert.equal(SeatExchangeButton({ ...props, seat: guest, index: 1,
+    room: room({ seatRequests: [{ fromId: 'host', toId: 'guest' }] }) }).props.disabled, true);
+  for (const changes of [{ inMatch: true }, { mode: 'solo' }]) assert.equal(roomFacts(room(changes), 'host').canExchangeSeats, false);
+  assert.equal(roomFacts(source, 'observer').canExchangeSeats, false);
+});
+
+test('request notice offers recipient accept/decline and sender cancellation without affecting outsiders', () => {
+  const source = room({ seatRequests: [{ id: 'swap_1', fromId: 'host', toId: 'guest', fromSeat: 0, toSeat: 1 }] });
+  const calls = [], props = { room: source, connected: true, onAnswer: (...args) => calls.push(args) };
+  assert.equal(SeatRequestNotice({ ...props, myId: 'other' }), null);
+  for (const myId of ['guest', 'host']) {
+    const controls = [...walk(SeatRequestNotice({ ...props, myId }))].filter((n) => n.type === Button);
+    assert.equal(controls.length, myId === 'guest' ? 2 : 1);
+    for (const c of controls) c.props.onClick();
+  }
+  assert.deepEqual(calls, [['swap_1', true], ['swap_1', false], ['swap_1', false]]);
+});
 
 test('matchmaking defaults open in old frames and only a seated waiting co-op host can change it', () => {
   for (const capacity of [4, 8, 20]) {

@@ -16,6 +16,11 @@ const source = (await fs.readFile(new URL('../public/js/asset-cache-worker.js', 
   .replace("const helpers = import('../../shared/assetCache.js');", 'const helpers = Promise.resolve(__helpers);');
 const origin = 'https://cache.test';
 const hash = (body) => createHash('sha256').update(body).digest('hex');
+const flush = () => new Promise(resolve => setImmediate(resolve));
+async function until(predicate) {
+  for (let i = 0; i < 500; i++) { if (await predicate()) return; await flush(); }
+  assert.ok(await predicate(), 'worker reached the expected transfer phase');
+}
 
 async function fixture(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sp-asset-pack-worker-'));
@@ -33,7 +38,7 @@ async function fixture(t) {
   return { root, files };
 }
 
-function worker({ keysThrow = false } = {}) {
+function worker({ keysThrow = false, fetcher } = {}) {
   const stores = new Map(); let network = 0, id = 0;
   const messages = [];
   const storage = { async open(name) {
@@ -53,7 +58,7 @@ function worker({ keysThrow = false } = {}) {
   } };
   const self = { location: { origin }, postMessage(message) { messages.push(message); } };
   vm.runInContext(source, vm.createContext({ self, importScripts() {}, zip, __helpers: helpers, caches: storage,
-    fetch: async () => { network++; throw new Error('Import must remain offline'); }, Blob, TextDecoder, TextEncoder,
+    fetch: async (...args) => { network++; if (fetcher) return fetcher(...args); throw new Error('Import must remain offline'); }, Blob, TextDecoder, TextEncoder,
     Uint8Array, Request, Response, AbortController, DOMException, performance, setTimeout, clearTimeout }));
   const run = async (input) => {
     const jobId = ++id;
@@ -65,7 +70,7 @@ function worker({ keysThrow = false } = {}) {
       progress: Object.assign({}, ...result.filter((message) => message.type === 'progress')) };
   };
   const blob = async (file) => new Blob([await fs.readFile(file)]);
-  return { run, network: () => network,
+  return { run, messages, network: () => network, pause: () => self.onmessage({ data: { type: 'pause' } }),
     seedImported: async (paths) => {
       const cache = await storage.open(helpers.IMPORTED_ASSET_CACHE);
       await cache.put(helpers.IMPORTED_INDEX_URL, Response.json(paths));
@@ -189,4 +194,86 @@ test('a duplicate content entry stays missing until its own URL is ready, not ju
   const scanned = await w.scan(catalog);
   assert.equal(scanned.progress.readyFiles, 1);
   assert.equal(scanned.progress.missingFiles, 1, 'b.png shares bytes but its URL is not imported');
+});
+
+test('a stalled request ignoring abort times out; retries follow healthy files in the same Worker', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = await fixture(t), catalog = await f.files({ '/assets/a.png': 'a', '/assets/b.png': 'bb', '/assets/c.png': 'ccc' });
+  const calls = [];
+  const w = worker({ fetcher: (url) => {
+    const target = new URL(url, origin).searchParams.get('url'); calls.push(target);
+    if (calls.length === 1) return new Promise(() => {});
+    const body = Buffer.from(target.includes('a.png') ? 'a' : target.includes('b.png') ? 'bb' : 'ccc');
+    return new Response(body, { headers: { 'content-length': String(body.length) } });
+  } });
+  const running = w.run({ action: 'download', catalog, maxParallel: 1 });
+  await until(() => calls.length === 1);
+  t.mock.timers.tick(60000);
+  const result = await running;
+  assert.deepEqual(calls, ['/assets/a.png', '/assets/b.png', '/assets/c.png', '/assets/a.png']);
+  assert.equal(result.progress.readyFiles, 3);
+  for (const entry of catalog.files) assert.equal(hash(await w.cachedBody(entry)), entry.sha256);
+});
+
+test('a stuck body and stuck cancellation never block healthy files or a retry without reloading', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = await fixture(t), catalog = await f.files({ '/assets/a.png': 'aa', '/assets/b.png': 'bbb' });
+  const calls = []; let repaired = false;
+  const w = worker({ fetcher: (url) => {
+    const target = new URL(url, origin).searchParams.get('url'); calls.push(target);
+    if (target.includes('a.png') && !repaired) return new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array([97])); }, cancel: () => new Promise(() => {}),
+    }), { headers: { 'content-length': '2' } });
+    const body = target.includes('a.png') ? 'aa' : 'bbb';
+    return new Response(body, { headers: { 'content-length': String(body.length) } });
+  } });
+  const rejected = assert.rejects(w.run({ action: 'download', catalog, maxParallel: 1 }), /ASSET_CACHE_DOWNLOAD_FAILED/);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await until(() => calls.filter(x => x.includes('a.png')).length === attempt);
+    await flush(); await flush(); t.mock.timers.tick(60000);
+  }
+  await rejected;
+  assert.equal(await w.cachedBody(catalog.files[1]), 'bbb', 'healthy bytes remain usable after a partial operation');
+  assert.equal(w.messages.filter(x => x.type === 'progress').at(-1).readyFiles, 1, 'the failed operation still publishes completed files');
+  repaired = true;
+  const again = await w.run({ action: 'download', catalog, maxParallel: 1 });
+  assert.equal(again.progress.readyFiles, 2);
+  assert.equal(calls.filter(x => x.includes('b.png')).length, 1, 'retry reuses the completed file');
+  assert.equal(await w.cachedBody(catalog.files[0]), 'aa');
+});
+
+test('fatal errors cancel sibling IO and settle all lanes before the Worker accepts a fresh operation', async t => {
+  const f = await fixture(t), catalog = await f.files({ '/assets/a.png': 'aa', '/assets/b.png': 'bbb' });
+  const signals = []; let failed = true;
+  const w = worker({ fetcher: (url, opts) => {
+    signals.push(opts.signal);
+    const target = new URL(url, origin).searchParams.get('url');
+    if (failed) return target.includes('a.png') ? new Response('', { status: 409 }) : new Promise(() => {});
+    const body = target.includes('a.png') ? 'aa' : 'bbb';
+    return new Response(body, { headers: { 'content-length': String(body.length) } });
+  } });
+  await assert.rejects(w.run({ action: 'download', catalog, maxParallel: 2 }), /ASSET_CACHE_STALE_CATALOG/);
+  assert.equal(signals.length, 2);
+  assert.ok(signals.every(signal => signal.aborted));
+  failed = false;
+  assert.equal((await w.run({ action: 'download', catalog })).progress.readyFiles, 2);
+});
+
+test('a reduced server lease still drains a later retry after another lane has already finished', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = await fixture(t), catalog = await f.files({ '/assets/a.png': 'aa', '/assets/b.png': 'bbb' });
+  let tries = 0;
+  const w = worker({ fetcher: url => {
+    if (new URL(url, origin).searchParams.get('url').includes('b.png')) {
+      if (++tries === 1) return new Response('', { status: 429, headers: { 'retry-after': '1' } });
+      if (tries === 2) throw new TypeError('connection interrupted');
+      return new Response('bbb', { headers: { 'content-length': '3' } });
+    }
+    return new Response('aa', { headers: { 'content-length': '2' } });
+  } });
+  const running = w.run({ action: 'download', catalog, maxParallel: 2 });
+  await until(() => w.cachedBody(catalog.files[0]).then(body => body === 'aa', () => false));
+  t.mock.timers.tick(1000);
+  assert.equal((await running).progress.readyFiles, 2);
+  assert.equal(tries, 3);
 });

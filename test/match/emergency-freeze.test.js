@@ -27,6 +27,8 @@ test('INFO emergency holds phase timeout, rejects gameplay and publishes frozen 
   assert.equal(m.paused, false, 'co-op remains separate from the solo pause');
   assert.equal(m.handle('p_0', { t: 'g.infoReady' }).error, ERR.SERVER_EMERGENCY);
   assert.equal(m.requestSetupReroll('p_0', 0).error, ERR.SERVER_EMERGENCY);
+  assert.equal(m.askSetupReroll('p_1', 0).error, ERR.SERVER_EMERGENCY);
+  assert.deepEqual(m.pendingRerollRequests(), [], 'a frozen match records no new reroll request');
   assert.equal(m.setLoadout('p_0', null).error, ERR.SERVER_EMERGENCY);
   h.sched.advance(HOLD);
   assert.equal(m.phase, PHASE.INFO_CHECK);

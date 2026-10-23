@@ -198,6 +198,12 @@ button.room-matchmaking:disabled { opacity: .45; cursor: default; }
 }
 .seat__actions { position: absolute; right: .14rem; bottom: .14rem; display: flex; align-items: center; gap: .06rem; }
 .seat__actions .tt-anchor { position: static; }
+.seat__swap { margin-left: auto; flex: none; }
+.seat-request { flex: none; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: .12rem .24rem; padding: .1rem .3rem; border-block: 1px solid var(--mint-700); background: var(--mint-a10); font-size: calc(.15 * var(--t)); }
+.seat-request > div:first-child { display: flex; flex-direction: column; gap: .04rem; }
+.seat-request span { color: var(--text-lo); font-size: calc(.12 * var(--t)); }
+.seat-request__actions { display: flex; flex-wrap: wrap; gap: .1rem; }
+.seats--dense .seat__head .seat__swap { min-height: .25rem; height: .25rem; padding: 0 .06rem; font-size: calc(.11 * var(--t)); }
 /* The generic mobile 44 px hit area would cover the adjacent crown/remove button. Keep the vertical expansion,
    but restrict these paired controls horizontally to their own side of the visible gap. */
 .sp-coarse .room-screen .seat__actions .btn::before { width: calc(100% + .06rem); }

@@ -15,6 +15,53 @@ use the existing compact-v1 extension slot; battle simulation and published wire
 
 ## 8. Network protocol (shared/protocol.js is normative)
 
+Delivery diagnostics (capacity fork, 2026-10-23): optional `pong.d` reports recent server event-loop lateness
+(`loopMs`, `loopAgeMs`), synchronous/awaited intent handling (`handlerMs`, `handlerAgeMs`), this socket's queued
+payload (`queuedBytes`) and send completion wait (`sendMs`, including outstanding sends). Missing evidence is null.
+The eight-second window and 250 ms sampler are [ASSUMED] operational policy. The browser also samples visible-page
+lateness. A server/page peak must overlap the probe's RTT to explain that probe; a historical peak alone cannot.
+Two affected probes show a passive notice for server processing, page stalls or connection delay; two healthy
+probes clear it. Hidden pages clear evidence, and pre-focus pongs cannot restore the notice. RTT/jitter cannot
+identify upload versus download delay or prove that a player's network caused it. Send completion includes
+compression and transport waiting; shared egress, routing and the last mile need operational correlation.
+Private `/healthz?traffic=1` adds aggregate `network` measurements and live-socket coalesced/dropped counts;
+abnormal pongs produce at most one aggregate `[net] delivery delayed` log per 30 seconds, without player identity.
+
+When a socket has at least 64 KiB queued [ASSUMED], adjacent full `m.public` snapshots may replace their deferred
+predecessor. Only one latest snapshot is held outside the transport and it drains without another broadcast.
+Phase, round, setup revision, deadline, pause and emergency changes are barriers, as is every other message.
+Replies, combat events, private state and results retain order. Healthy sockets keep normal 8 Hz updates; the
+existing 1 MiB battle-snapshot drop and 16 MiB hard guards remain. Dropped snapshots are rejected before encoding;
+compact encoding of a deferred public snapshot waits until it is actually needed. Session close clears deferred
+state and its retry timer. Tests: `test/network-quality.test.js`, `test/network-quality.browser.test.js`.
+
+Waiting-room seat exchange (capacity fork, 2026-10-22): `room.requestSeat {seat, playerId}` binds the selected
+index to its current occupant (`null` for an empty seat). Any connected co-op participant may exchange with an
+empty or AI seat immediately. Another connected human receives a consent request in optional
+`room.state.seatRequests: [{id, fromId, toId, fromSeat, toSeat, expiresAt}]`. Only that recipient may accept with
+`room.answerSeat {requestId, accept:true}`; either participant may decline/cancel with `accept:false`.
+The server verifies both identities and original positions. Requests expire after 30 seconds, at most one per
+participant [ASSUMED interaction policy], and clear on displacement, disconnect, departure or match start. IDs are
+bound to the room lifetime. Both new C2S messages use v1's JSON fallback and its existing heavy-response budget;
+the optional state field uses the extension slot, preserving all published positions. Seat objects retain readiness
+and personal settings; host authority is independent of seat position, including handover and return from a match.
+No spectator, solo or running-match exchanges. Decision: [D040](../development/DECISIONS.md#d040).
+
+Client recovery (capacity fork, 2026-10-22): a WebSocket upgrade still pending after 15 seconds is abandoned and
+retried with the existing exponential backoff [ASSUMED: client timeout policy]. Open and teardown clear that
+clock. A browser `online` signal also probes an apparently open socket; the existing unanswered-ping deadline
+decides whether to replace it. Background tab timer throttling alone does not imply disconnection. Queued requests
+carry an absolute expiry checked again before the welcome flush, so deferred timeout callbacks cannot replay
+expired actions. Requests already sent are still rejected on disconnect and never automatically resent.
+Tests and limits: DEV-20261022-01 (local maintenance notes); `test/client-static.test.js` and
+`test/weak-network.browser.test.js`.
+
+Capacity fork performance maintenance (2026-10-21): result validation indexes spawn modifiers once, preserving the
+original first-match and shallow-equality rules. Oversized results still use `b.yield` and full server settlement;
+vanilla normal/unite replays may run in the bounded child pool, with the same result and timeline and the original
+sliced fallback. Wire limits and loss attribution are unchanged. See [server configuration](../SERVER_SETTINGS.md#计算进程)
+and the measured investigation (local notes).
+
 Transport: one WebSocket per tab at `/ws`. Business objects remain `{ t: '<type>', ...payload }`; `hello` / `welcome` negotiate compact position arrays independently for each connection, with original JSON for older peers. The complete versioned positions, enums, UTF-8 restoration tool and fallback rules are in [WIRE_PROTOCOL.md](../WIRE_PROTOCOL.md). Standard `permessage-deflate` retains the server's per-connection compression context with a 32 KiB window; the 20-player fork keeps this bandwidth-oriented default instead of upstream's independent-message 2 KiB window. A client that offers no compression, or only a narrower server window than the active configuration permits, connects uncompressed. Client requests may carry `rid`; the direct reply echoes it (`ok`, a requested `lobby.state` view, or `error`). Server pushes have no `rid`. Max frame 64 KB inbound **after decompression**; rate limit 40 msgs/s per connection (excess dropped with `error RATE`). Ordinary public changes coalesce at 125 ms (maximum 8 Hz), identical views are deduplicated; explicit forced resyncs remain immediate. HTTP and WebSocket traffic counters at `/healthz?traffic=1` are available to loopback/private-network visitors only. See [D021](../development/DECISIONS.md#d021) and the [v0.2.6 merge record](../development/records/2026-10-14-02-upstream-v0.2.6.md).
 
 ### 8.1 Session & lobby
@@ -309,6 +356,11 @@ C→S adds host-only `room.rerollSetup {setupRevision}` / `room.cancelReroll {vo
 `g.rerollVote {voteId, agree}`. `m.public` carries `setupRevision` and nullable `rerollVote {id, proposerId, voters, agreed}`.
 Ready must reference the current revision; omission means revision 0 for old clients. The server blocks Ready while
 voting, refuses stale ids and cancels on disconnect/leave; DESIGN §28.21 / META.md describe the complete contract.
+A non-host may also ask (GitHub #854): `room.requestReroll {setupRevision}` from any seated human only records the ask
+(30 s per-player `RATE`), `m.public.rerollRequests` lists `[{playerId}]` until a vote starts — nothing changes, no timer
+pauses, and the host still proposes the vote with `room.rerollSetup`.
+Capacity-fork integration ([D041](../development/DECISIONS.md#d041)) forwards the same request through plugin
+MatchProxy hosts, rejects it during bandwidth emergency freezes, and retains compact-v1 JSON/extension fallback.
 
 Explicit local recovery (§28.20) reuses saved hello tokens after a fresh live-tab claim check. Display names and room
 codes are UI metadata only, never authentication. No new network message or nickname/IP matching is introduced.
