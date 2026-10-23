@@ -1,59 +1,61 @@
 ## 卫戍协议 20 人版
 
-本分支在上游原作 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 之上，提供最大 **20 人**联机、分组流程与网络优化。目前同步至 **0.3.1**（含插件系统、官方 UI 素材，以及素材导入/在线补齐修复）；公共状态最高 8 Hz，保留 20 人压缩默认与固定分组玩法。
+本 fork 基于 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 原作和 [LongQianChen（龙千尘）的多人分支](https://github.com/LongQianChen/Stronghold-Protocol)，持续维护 **最多 20 人合作、固定分组玩法、皮肤与特效、网络和移动端体验**。完整同步基线为 **0.3.1**，另选择性移植了部分上游 0.3.2 开发中的改进；不代表已经完整同步 0.3.2。
 
-### 本 fork 的目的 · 致谢
+感谢原作者和龙千尘提供实现基础，也感谢社区开发者公开分享代码与思路。[下方致谢](#开发者致谢与功能来源)列出每位作者提供了什么、我们如何采用。
 
-首先要感谢 **[龙千尘](https://github.com/LongQianChen)** 大佬：20 人容量扩展、固定分组与并行轮选、紧凑 WebSocket 协议、预缓存与服务器运维能力等，都是他此前扎实做出来的。他在 README 中说明，后续会**大幅降低更新频率、不再大量开发新功能**。
+### 相对上游的主要扩展
 
-正因如此，我们另开本 fork 的目标很明确：**及时追上上游的版本更新，并完成 20 人侧的适配**，让多人玩法能继续吃到上游的规则修复、插件系统、官方特效等新内容，而不是停在旧版本上。
+以下于 **2026-10-23** 对照作者 `master` 的 [`c9d804f4`](https://github.com/sganggs/Stronghold-Protocol/commit/c9d804f470b8d7422ae04eb66faf671cef21ad52) 核对。这里列的是本分支的功能增量，包含继承龙千尘的多人能力和本 fork 后续适配；不把上游已有的插件系统、基础皮肤选择、Spine 渲染与官方特效播放列为本分支原创。上游后续更新时，差异可能变化。
 
-### 关于「多人内容」的临时适配
+| 方向 | 本分支提供的扩展 | 详细说明 |
+|---|---|---|
+| **20 人与固定分组** | 房间容量可选 4 / 8 / 10 / 16 / 20，默认 8；六人起按实际参战人数分组，各组独立共享干员与装备库存，策略和机变按组并行、组内轮选，保留组内手动真人优先。 | [多人容量与规则](docs/PLAYER_CAPACITY.md) |
+| **多人联防与领袖适配** | 按固定组数扩展联防，最多五轮并可逐轮投票取消后续轮次；领袖血池、退场缩放与搭档分配适配多人，保留全房支援和跨组信标。 | [多人容量与规则](docs/PLAYER_CAPACITY.md) |
+| **找房与房间协作** | 房间列表、快速匹配、在线及游玩人数、公开匹配开关、目录观战、局内文字聊天；等候房可换空位 / AI 座位，换真人座位需对方同意；房主可转让，权限跟随本人。 | [服主配置](docs/SERVER_SETTINGS.md)、[换座规则](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/DECISIONS.md#d040) |
+| **队友申请重刷** | 非房主可以在开局简报页申请重刷，由房主发起原有全员投票；适配 20 席、全部固定组库存、插件对局和紧急冻结保护。 | [重刷申请规则](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/DECISIONS.md#d041) |
+| **皮肤、召唤物与语音** | 在上游皮肤基础上扩展动态小人预览、召唤物随主人换装、皮肤独立语音槽、穿搭导入导出，以及本机客户端皮肤提取、朝向和动作元数据修复。 | [皮肤功能](docs/SKINS.md) |
+| **时装特效与动作修复** | 读取客户端的时装特效替换映射，让已有技能与命中特效跟随时装；补充挂点、魔王特效和部分时装动作修复。缺少素材时保留回退，不代表所有时装与弹道变体均已支持。 | [皮肤与特效](docs/SKINS.md)、[提取参考](docs/LOCAL_ASSET_EXTRACTION.md) |
+| **多人网络与连接诊断** | 紧凑 WebSocket 编码、多人默认压缩和公共状态发送预算；慢连接合并同阶段旧状态，连续异常才显示服务器处理、页面运行或连接延迟提醒，补充服务端测量帮助归因。 | [网络协议与测量](docs/WIRE_PROTOCOL.md)、[HTTP 缓存](docs/HTTP_CACHE.md) |
+| **素材预缓存与下载恢复** | 完整目录及 SHA-256 核验、已有素材包导入、增量复用和在线补齐；本人授权后优先加载当前所需素材，再独立后台补齐。停滞请求释放名额，失败项后置重试，保留已校验文件。 | [预缓存](docs/ASSET_CACHE.md)、[加载与授权缓存](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/ASSET_LOADING.md) |
+| **服主运维** | 文件公告、置顶与显式局内通知；动态 AI 数量上限、下载预算和完整预缓存准入；带宽紧急保护及恢复。自动带宽检测默认关闭，由服主按需开启。 | [公告管理](docs/ANNOUNCEMENTS.md)、[服主配置](docs/SERVER_SETTINGS.md) |
+| **移动端与计算、渲染优化** | 30 / 60 / 不限帧率，可关闭的移动端自动分辨率；场景准备 Worker、AI 预演进程池、图片和特效资源回收、骨骼变换复用、满额粒子跳过无效生成、素材摘要增量复用。 | [移动端与资源维护](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/MOBILE_PERFORMANCE.md)、[运行性能](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/RUNTIME_PERFORMANCE.md) |
 
-上游在后续版本中**有可能引入官方的多人 / 联机相关内容**，但**目前尚未上线**。在此之前，本分支的 20 人容量、分组联机与带宽优化属于**临时适配方案**；待上游正式实装后，将以官方规则为准进行对齐、取舍或迁移，并在开发记录中说明。
+这些多人规则是本分支的适配选择，具体边界以[已确认决定](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/DECISIONS.md)为准。已有测量不等于 20 真人长期游玩或手机真机验收：极低共享带宽下并发下载仍可能延迟，页面提示也不能单独证明是玩家网络的问题。
 
-### 新增设计
+### 已提前采用的上游改进
 
-#### 联机设计
+作者 `dev` 的对照版本为 [`218647c6`](https://github.com/sganggs/Stronghold-Protocol/commit/218647c6e07531a6c86e2a7b53f9d4c786446197)。下列工作已有上游实现，单独列出来源：
 
-- 同盟房容量扩展至 4 / 8 / 10 / 16 / 20 人
-  - 调整房间容量时保留成员准备状态
+| 改进 | 来源与本分支采用方式 |
+|---|---|
+| **图片时装可穿** | 移植 sganggs 的 [0.3.2 B6 / `77b91081`](https://github.com/sganggs/Stronghold-Protocol/commit/77b91081c7988de7a8fc5304df59fe938f5b5c7c)：只有图片的时装也能穿，商店、详情与结算按席位取图，战斗沿用默认模型。这项已在作者 dev，不属于本分支原创。 |
+| **初始化正则复用** | 采用 hesperine 的 [PR #823](https://github.com/sganggs/Stronghold-Protocol/pull/823)，减少官方描述扫描重复创建正则；作者 dev 已合并。 |
+| **Windows 测试路径兼容** | 参考并沿用 zasx77771 的 [PR #739](https://github.com/sganggs/Stronghold-Protocol/pull/739)，统一皮肤守卫的路径分隔符；作者 master 已包含。 |
 
-- 玩家**分组机制**，当玩家人数超过5人时，将按平均每组3-5人进行分组，并且设计了分组UI
-  - 人数分组所有情况数字可见[PLAYER_CAPACITY.md](/docs/PLAYER_CAPACITY.md)
-- 各组牌库**互相独立**，组内牌库共享，3/4人是原版牌库，5人组牌库扩充1.25倍
-- 各组**并行进行**策略选择，机变选择，极大加快了多人流程中的冗长等待
-  - 组内策略不允许重复，各组间可以重复
-  - 机变选择每组回归6个选项
-  - 信标可以跨组投送
-- 将联防轮数上限设置为组数，并且提供投票跳过后续联防
-- boss血量将随存活人数线性增长
-- 新增局内文字聊天功能
+### 开发者致谢与功能来源
 
-- 新增联机大厅，快速匹配，房间列表，可查看在线人数，游玩人数，房间数。
-- 房主现在可以转让，房主可设置房间是否允许被匹配。
+感谢以下开发者提供实现、修复与设计思路。表中区分随上游继承、直接移植和设计参考；完整冻结版本、采用范围与许可证说明见 [来源与致谢](docs/REFERENCES.md)。
 
-#### 网络带宽优化
+| 开发者与参考 | 提供的功能或思路 | 本分支如何采用 |
+|---|---|---|
+| **[sganggs](https://github.com/sganggs/Stronghold-Protocol)** 与上游贡献者 | 浏览器游戏本体、确定性战斗模拟、规则考证、插件系统、基础皮肤和官方特效系统。 | 作为实现基础持续同步，并选择性移植图片时装等改进。 |
+| **[LongQianChen（龙千尘）](https://github.com/LongQianChen/Stronghold-Protocol)** | 20 人容量、固定分组与并行轮选、多人联防、紧凑协议、预缓存及服主运维基础。 | 继承多人分支，继续适配上游规则、皮肤与性能维护。 |
+| **[Flotiarenor](https://github.com/sganggs/Stronghold-Protocol/pull/685)** · [PR #686](https://github.com/sganggs/Stronghold-Protocol/pull/686) | 外观插件的多套皮肤与立绘、按席位选择及按 owner 渲染。 | 随上游继承，是后续皮肤扩展的基础。 |
+| **[alien-zzy · PR #652](https://github.com/sganggs/Stronghold-Protocol/pull/652)**；**[AoyamaT1 · PR #85](https://github.com/sganggs/Stronghold-Protocol/pull/85)** | 换装交互与动态小人预览方向；#85 是 #652 引用的更早换装参考。 | 参考交互思路，复用现有插件和资源缓存适配预览；不宣称直接移植了 #85 或整个 #652。 |
+| **[FengYuPrime](https://github.com/FengYuPrime/Stronghold-Protocol/blob/master/docs/FORK-SKIN-VFX.md)** | 召唤物随主人换装、时装特效替换映射、资源覆盖层与特效键名排查思路。 | 在本分支已有提取器、展示字段和 VFX 系统中适配，没有整套照搬其 fork。 |
+| **[xcdoge · PR #734](https://github.com/sganggs/Stronghold-Protocol/pull/734)** | 皮肤记录可携带独立语音槽的设计。 | 接入现有语音解析与默认回退。 |
+| **[hesperine · PR #823](https://github.com/sganggs/Stronghold-Protocol/pull/823)** | 复用描述扫描匹配器，减少初始化分配。 | 采用其正则复用优化，保留原解析结果。 |
+| **[zasx77771 · PR #857](https://github.com/sganggs/Stronghold-Protocol/pull/857)**、[PR #739](https://github.com/sganggs/Stronghold-Protocol/pull/739) | 队友申请、房主发起重刷投票的实现，以及 Windows 路径守卫修复。 | 融合重刷申请并适配多人状态机，沿用跨平台兼容思路。 |
+| **[YuriRestia · PR #70](https://github.com/sganggs/Stronghold-Protocol/pull/70)** | 英文界面与补充译文。 | 保留已有翻译采用范围及署名，详见 [NOTICE](NOTICE.md)。 |
+| **[isHarryh（Harry Huang）· Ark-Unpacker](https://github.com/isHarryh/Ark-Unpacker)**、**[K0lb3 · UnityPy](https://github.com/K0lb3/UnityPy)** | LZ4AK 解包与 Unity 资源解析基础。 | 本地提取工具保留原 BSD-3-Clause / MIT 许可与声明，详见 [第三方许可](THIRD-PARTY-NOTICES.md)。 |
 
-- 新增预缓存功能，支持在线下载与本地素材包导入，并且有目录版本校验
+本 fork 另有连接质量提示、背压状态合并、场景预处理、缓存生命周期及粒子、骨骼热路径等自行实现和测试。上表不把其他作者的工作归为本分支原创，也不表示所有参考 PR 都已获上游合并。
 
-- 关于人数较多时的联机带宽，我通过网络抓包定位到了webSocket连接中m.public公共状态报文大小随人数O(N²)级别增长，其为ws的最大带宽占用，所以我专门对其进行了开启raw-deflate压缩，建立紧凑 WebSocket 协议将原本的json明文编码为“位置数组+连接字典”，在极大程度上削减了报文大小，初步估算将其流量大小削减了90%-99%，代价是需要CPU算力进行解码。
-
-#### 服务器专用功能
-
-具体命令可以见项目目录下“[开服必看.md](开服必看.md)”
-
-- 公告功能，支持置顶公告和局内紧急公告
-
-- 限制房间最大ai数量
-- 在线预缓存下载限速
-- 控制是否允许未预缓存完毕的玩家游玩
+源码与素材分别遵守各自权利边界：本次维护只发布源码和必要说明，素材提取产物、素材包与私人报告不加入提交。准备素材请看[本地提取参考](docs/LOCAL_ASSET_EXTRACTION.md)；致谢、非商业用途和上游同步均不能代替素材权利人的授权，详见 [NOTICE](NOTICE.md)。
 
 ---
 
-玩法边界见 [多人容量说明](docs/PLAYER_CAPACITY.md)，基线、决定与维护记录见 [本分支开发记录](docs/development/README.md)。上游新增规则与已确认的多人分支决定结合。
-
-再次感谢龙千尘大佬的前期工作；本 fork 会尽量跟上上游，祝玩得开心。
 
 # 卫戍协议：盟约 · Stronghold Protocol: Alliance
 
@@ -84,6 +86,8 @@ English summary: [below](#english).
 | ![方向](docs/img/facing-wheel.jpg) | ![作战](docs/img/combat.jpg) | ![最终攻势](docs/img/final-assault.jpg) |
 
 ## 目录
+
+- [本分支扩展](#相对上游的主要扩展) · [上游改进来源](#已提前采用的上游改进) · [开发者致谢](#开发者致谢与功能来源)
 
 - [声明](#声明) · [简介](#简介) · [功能一览](#功能一览)
 - [快速开始](#快速开始)：[整合包](#方式一整合包推荐) · [从源码运行](#方式二从源码运行) · [系统要求](#系统要求) · [端口与配置](#端口与配置) · [局域网联机](#和朋友一起玩局域网)
@@ -142,7 +146,7 @@ English summary: [below](#english).
 ### 方式二：从源码运行
 
 ```bash
-git clone https://github.com/sganggs/Stronghold-Protocol.git
+git clone https://github.com/SiderLock/Stronghold-Protocol.git
 cd Stronghold-Protocol
 npm install        # 安装依赖（postinstall 会把 pixi / preact / three 复制到 public/vendor）
 npm run setup      # 检查环境，并从公开镜像下载约 720 MB 美术 / 音频（可中断，再次运行会续传）
