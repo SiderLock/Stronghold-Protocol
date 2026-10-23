@@ -15,6 +15,26 @@ use the existing compact-v1 extension slot; battle simulation and published wire
 
 ## 8. Network protocol (shared/protocol.js is normative)
 
+Delivery diagnostics (capacity fork, 2026-10-23): optional `pong.d` reports recent server event-loop lateness
+(`loopMs`, `loopAgeMs`), synchronous/awaited intent handling (`handlerMs`, `handlerAgeMs`), this socket's queued
+payload (`queuedBytes`) and send completion wait (`sendMs`, including outstanding sends). Missing evidence is null.
+The eight-second window and 250 ms sampler are [ASSUMED] operational policy. The browser also samples visible-page
+lateness. A server/page peak must overlap the probe's RTT to explain that probe; a historical peak alone cannot.
+Two affected probes show a passive notice for server processing, page stalls or connection delay; two healthy
+probes clear it. Hidden pages clear evidence, and pre-focus pongs cannot restore the notice. RTT/jitter cannot
+identify upload versus download delay or prove that a player's network caused it. Send completion includes
+compression and transport waiting; shared egress, routing and the last mile need operational correlation.
+Private `/healthz?traffic=1` adds aggregate `network` measurements and live-socket coalesced/dropped counts;
+abnormal pongs produce at most one aggregate `[net] delivery delayed` log per 30 seconds, without player identity.
+
+When a socket has at least 64 KiB queued [ASSUMED], adjacent full `m.public` snapshots may replace their deferred
+predecessor. Only one latest snapshot is held outside the transport and it drains without another broadcast.
+Phase, round, setup revision, deadline, pause and emergency changes are barriers, as is every other message.
+Replies, combat events, private state and results retain order. Healthy sockets keep normal 8 Hz updates; the
+existing 1 MiB battle-snapshot drop and 16 MiB hard guards remain. Dropped snapshots are rejected before encoding;
+compact encoding of a deferred public snapshot waits until it is actually needed. Session close clears deferred
+state and its retry timer. Tests: `test/network-quality.test.js`, `test/network-quality.browser.test.js`.
+
 Waiting-room seat exchange (capacity fork, 2026-10-22): `room.requestSeat {seat, playerId}` binds the selected
 index to its current occupant (`null` for an empty seat). Any connected co-op participant may exchange with an
 empty or AI seat immediately. Another connected human receives a consent request in optional

@@ -988,6 +988,11 @@
 }
 /* transitional states (connecting / re-handshaking) only appear if they last longer than .6 s */
 .conn-banner--soft { animation: conn-in-soft var(--t-med) var(--ease-out) .6s backwards; }
+.conn-banner--quality {
+  max-width: min(90vw, 7rem); width: max-content; pointer-events: none;
+  font-size: max(12px, calc(.16 * var(--t))); line-height: 1.4; gap: 6px; padding: 6px 9px;
+}
+.conn-banner--quality .icon { width: max(14px, .22rem); height: max(14px, .22rem); flex-shrink: 0; }
 @keyframes conn-in { from { opacity: 0; transform: translate(-50%, .12rem); } }
 @keyframes conn-in-soft { from { opacity: 0; visibility: hidden; transform: translate(-50%, .12rem); } }
 /* In a match the top-centre capsule (round / phase / kills), the ticker strip under it and the bottom centre

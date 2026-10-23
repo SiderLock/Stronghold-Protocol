@@ -1,5 +1,7 @@
 # 紧凑网络协议与带宽维护说明
 
+2026-10-23 收发维护：`pong.d` 使用 v1 既有扩展对象，携带服务器处理、事件循环及该连接的发送等待 / 队列证据，保留原有 `c` / `s` 及所有位置编号。客户端结合发生时间和页面卡顿测量，连续异常才提示；单凭 RTT 不判定用户故障。慢连接下相邻同阶段全量公共状态只保留最新一份，其他消息及阶段 / 时限变化形成顺序屏障。阈值、诊断边界和回归入口见 [网络设计](design/network.md#8-network-protocol-sharedprotocoljs-is-normative)。
+
 本分支使用业务对象与传输编码分开的协议。业务逻辑、校验和 UI 始终使用原来的 `{ t: 'm.public', phase: 'COMBAT', ... }`；紧凑数组只出现在 WebSocket 网络边界。解码恢复完整字段名和枚举字符串，不改变战斗、卡池、机变或联防规则。
 
 入口：[位置与枚举目录](../shared/wireSchema.js)、[纯 ESM 编解码器](../shared/wireCodec.js)、[开发记录](development/records/2026-10-10-09-compact-wire-bandwidth.md)。业务语义仍以 [protocol.js](../shared/protocol.js)、[网络设计](design/network.md)和 [META](META.md) 为准。

@@ -1,4 +1,7 @@
 {
+  "服务器处理较慢，操作响应可能延迟": "The server is processing slowly; actions may take longer to respond.",
+  "当前页面运行较慢，可尝试降低画质或关闭其他页面": "This page is running slowly. Try lowering graphics quality or closing other tabs.",
+  "连接延迟较高，可尝试切换网络或暂停下载": "Connection latency is high. Try switching networks or pausing downloads.",
   "_meta": {
     "type": "lang",
     "lang": "en",

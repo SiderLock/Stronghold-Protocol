@@ -42,9 +42,12 @@
 
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
+import { performance } from 'node:perf_hooks';
 import { C2S, validateC2S } from '../shared/protocol.js';
 import { ERR, ERR_TEXT, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
 import { WIRE_VERSION, encodeWire, decodeWire } from '../shared/wireCodec.js';
+import { RecentPeak } from '../shared/networkTiming.js';
+import { createConnectionMetrics } from './connectionMetrics.js';
 
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
 export const NET_DEFAULTS = Object.freeze({
@@ -283,6 +286,42 @@ const wireVersions = new WeakMap();
 // Frozen matches retain their socket even if an old queue is already full. Do not grow that queue;
 // resync/recovery supplies state later. Ordinary operation retains the existing hard-buffer guard.
 const emergencySockets = new WeakSet();
+const deliveries = new WeakMap();
+const STATE_QUEUE_BYTES = 64 * 1024;
+
+function deliveryOf(ws) {
+  let state = deliveries.get(ws);
+  if (!state) {
+    state = { pending: null, timer: null, coalesced: 0, dropped: 0,
+      sendMs: new RecentPeak(() => performance.now()), inFlight: new Map() };
+    deliveries.set(ws, state);
+    ws.once?.('close', () => {
+      clearTimeout(state.timer);
+      state.pending = null;
+      state.inFlight.clear();
+      deliveries.delete(ws);
+    });
+  }
+  return state;
+}
+
+/** Transport evidence, not proof of which end of the internet link is congested. */
+function deliveryMetrics(ws) {
+  const state = deliveries.get(ws);
+  const now = performance.now();
+  let sendMs = state?.sendMs.read() ?? null;
+  if (state) for (const at of state.inFlight.values()) sendMs = Math.max(sendMs ?? 0, now - at);
+  return { queuedBytes: Number(ws.bufferedAmount) || 0, sendMs, coalesced: state?.coalesced ?? 0, dropped: state?.dropped ?? 0 };
+}
+
+function flushLatest(ws, state) {
+  clearTimeout(state.timer);
+  state.timer = null;
+  const pending = state.pending;
+  state.pending = null;
+  if (pending) queueRaw(ws, wireVersionOf(ws) === WIRE_VERSION ? pending.frame.compact : pending.frame.json,
+    { droppable: pending.droppable });
+}
 
 export const wireVersionOf = (ws) => ws ? wireVersions.get(ws) || 0 : 0;
 const setWireVersion = (ws, version) => wireVersions.set(ws, version);
@@ -291,8 +330,17 @@ const setWireVersion = (ws, version) => wireVersions.set(ws, version);
 export function prepareMessage(msg) {
   const json = encode(msg);
   let compact;
+  let latestKey = null;
+  try {
+    if (msg?.t === 'm.public' && msg.rid == null) {
+      latestKey = JSON.stringify([msg.phase, msg.round, msg.setupRevision, msg.deadline, msg.paused, msg.emergencyFrozen]);
+    }
+  } catch { /* Unserializable frames retain the existing null/false send result. */ }
   return {
     json,
+    // Only adjacent full public snapshots of the same phase may replace one another. Every other
+    // message is an ordering barrier. Deadline/pause/revision changes are barriers too.
+    latestKey,
     get compact() {
       if (compact === undefined) {
         try { compact = JSON.stringify(encodeWire(JSON.parse(json), 's2c')); }
@@ -306,6 +354,26 @@ export function prepareMessage(msg) {
 /** A prepared broadcast is immutable JSON text; compression contexts remain per socket in ws. */
 export function sendPrepared(ws, frame, opts) {
   if (!frame || frame.json == null) return false;
+  if (!canQueue(ws, opts)) return false;
+  const state = deliveryOf(ws);
+  if (state.pending && state.pending.key !== frame.latestKey) flushLatest(ws, state);
+  if (frame.latestKey && (state.pending || ws.bufferedAmount >= STATE_QUEUE_BYTES)) {
+    if (state.pending) state.coalesced++;
+    state.pending = { key: frame.latestKey, frame, droppable: !!opts?.droppable };
+    if (!state.timer) {
+      const retry = () => {
+        state.timer = null;
+        if (!canQueue(ws)) { state.pending = null; return; }
+        if (ws.bufferedAmount < STATE_QUEUE_BYTES) flushLatest(ws, state);
+        else { state.timer = setTimeout(retry, 50); state.timer.unref?.(); }
+      };
+      state.timer = setTimeout(retry, 50);
+      state.timer.unref?.();
+    }
+    return true;
+  }
+  // An unicast, reply, combat event or phase change always follows the preceding snapshot.
+  if (state.pending) flushLatest(ws, state);
   return queueRaw(ws, wireVersionOf(ws) === WIRE_VERSION ? frame.compact : frame.json, opts);
 }
 
@@ -318,6 +386,9 @@ export function sendPrepared(ws, frame, opts) {
  * @returns {boolean} true when the frame was queued
  */
 export function sendRaw(ws, data, { droppable = false } = {}) {
+  if (!canQueue(ws, { droppable })) return false;
+  const state = deliveries.get(ws);
+  if (state?.pending) flushLatest(ws, state);
   // Stored end-of-match frames and lobby summaries use legacy JSON; replay through the same negotiated boundary.
   if (wireVersionOf(ws) === WIRE_VERSION && typeof data === 'string') {
     try { data = JSON.stringify(encodeWire(JSON.parse(data), 's2c')); } catch { /* legacy fallback */ }
@@ -325,20 +396,35 @@ export function sendRaw(ws, data, { droppable = false } = {}) {
   return queueRaw(ws, data, { droppable });
 }
 
-function queueRaw(ws, data, { droppable = false } = {}) {
-  if (!ws || ws.readyState !== WS_OPEN || typeof data !== 'string') return false;
+function canQueue(ws, { droppable = false } = {}) {
+  if (!ws || ws.readyState !== WS_OPEN) return false;
   try {
     const queued = ws.bufferedAmount;
     if (queued > NET_DEFAULTS.hardBufferBytes) {
       if (!emergencySockets.has(ws)) ws.terminate();
       return false;
     }
-    if (droppable && queued > NET_DEFAULTS.snapDropBytes) return false;
-    ws.send(data, onSendDone);
+    if (droppable && queued > NET_DEFAULTS.snapDropBytes) { deliveryOf(ws).dropped++; return false; }
     return true;
   } catch {
     return false;
   }
+}
+
+function queueRaw(ws, data, opts) {
+  if (typeof data !== 'string' || !canQueue(ws, opts)) return false;
+  const state = deliveryOf(ws);
+  const id = {};
+  const at = performance.now();
+  if (state.inFlight.size < 64) state.inFlight.set(id, at);
+  try {
+    ws.send(data, (err) => {
+      state.inFlight.delete(id);
+      state.sendMs.add(Math.max(0, performance.now() - at));
+      onSendDone(err);
+    });
+    return true;
+  } catch { state.inFlight.delete(id); return false; }
 }
 
 /** True for frames that may be skipped under backpressure (only battle snapshots). */
@@ -351,6 +437,7 @@ export const isDroppable = (msg) => !!msg && msg.t === 'b.snap';
  * @returns {boolean}
  */
 export function send(ws, msg) {
+  if (!canQueue(ws, { droppable: isDroppable(msg) })) return false;
   return sendPrepared(ws, prepareMessage(msg), { droppable: isDroppable(msg) });
 }
 
@@ -580,6 +667,8 @@ export class Network {
     this.connsPerKey = new Map();
     this.closed = false;
     this.emergency = { active: false, reason: null, since: 0, retryAt: 0 };
+    this.metrics = createConnectionMetrics();
+    this._lastDiagnosticLog = -Infinity;
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
     this.heartbeatTimer.unref?.();
     const sweepMs = Math.max(20, Math.min(15_000, Math.floor(this.opts.reconnectWindowMs / 4)));
@@ -589,6 +678,18 @@ export class Network {
 
   /** Number of open sockets. */
   get connectionCount() { return this.conns.size; }
+
+  diagnostics() {
+    let queuedBytes = 0, maxSendMs = 0, coalesced = 0, dropped = 0;
+    for (const ws of this.conns.keys()) {
+      const sample = deliveryMetrics(ws);
+      queuedBytes += sample.queuedBytes;
+      maxSendMs = Math.max(maxSendMs, sample.sendMs ?? 0);
+      coalesced += sample.coalesced;
+      dropped += sample.dropped;
+    }
+    return { ...this.metrics.snapshot(), queuedBytes, maxSendMs, coalesced, dropped, ...this.congestion() };
+  }
 
   /** A tiny non-droppable notice goes before match resyncs; never disconnect existing players. */
   setEmergency(state) {
@@ -716,7 +817,14 @@ export class Network {
     if (reason) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, reason)); return; }
 
     if (msg.t === 'ping') {
-      const pong = { t: 'pong', c: msg.c, s: now };
+      const { queuedBytes, sendMs } = deliveryMetrics(conn.ws);
+      const d = { ...this.metrics.snapshot(), queuedBytes, sendMs };
+      const pong = { t: 'pong', c: msg.c, s: now, d };
+      if ((d.loopMs >= 100 || d.handlerMs >= 100 || queuedBytes >= STATE_QUEUE_BYTES || sendMs >= 250)
+          && now - this._lastDiagnosticLog >= 30000) {
+        this._lastDiagnosticLog = now;
+        this.log.warn('[net] delivery delayed', this.diagnostics());
+      }
       if (validRid(rid)) pong.rid = rid;
       this.reply(conn, pong);
       return;
@@ -729,6 +837,7 @@ export class Network {
     if (heavy && !conn.heavy.take(now)) { this.reply(conn, errorMsg(ERR.RATE, rid, `${msg.t} too often`)); return; }
 
     let res;
+    const handlingAt = performance.now();
     try {
       // client-side combat reports (b.progress / b.result, DESIGN §14) belong to the running match like 'g.*' intents:
       // handed to the lobby's match router when the handler has one (server/lobby.js routeGame)
@@ -738,11 +847,16 @@ export class Network {
       this.log.error(`[net] handler crashed on ${msg.t}`, e);
       res = { error: ERR.INTERNAL };
     }
+    this.metrics.handler.add(performance.now() - handlingAt);
     if (res && typeof res.then === 'function') {
       // an answer that has to wait (DESIGN §32.6: a room whose match runs in a match host worker answers once the worker
       // has — server/lobby.js keeps each such room's messages in order): sent when it settles; a rejection is INTERNAL.
       // A vanilla room never answers this way, so its replies go out exactly as before
-      Promise.resolve(res).then((r) => this.answer(conn, msg, rid, r), (e) => {
+      Promise.resolve(res).then((r) => {
+        this.metrics.handler.add(performance.now() - handlingAt);
+        this.answer(conn, msg, rid, r);
+      }, (e) => {
+        this.metrics.handler.add(performance.now() - handlingAt);
         this.log.error(`[net] handler failed on ${msg.t}`, e);
         this.answer(conn, msg, rid, { error: ERR.INTERNAL });
       });
@@ -911,6 +1025,7 @@ export class Network {
     this.closed = true;
     clearInterval(this.heartbeatTimer);
     clearInterval(this.sweepTimer);
+    this.metrics.close();
     for (const conn of this.conns.values()) {
       conn.close(code, reason);
       const t = setTimeout(() => { try { conn.ws.terminate(); } catch { /* ignore */ } }, 1000);

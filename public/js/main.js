@@ -255,6 +255,7 @@ function wireNet() {
     store.set({
       connection: {
         status: snap.status, ping: snap.ping, attempt: snap.attempt, retryAt: snap.retryAt,
+        quality: snap.quality,
         lastError: snap.lastError, everOnline: cur.everOnline || snap.status === 'online',
       },
     });
