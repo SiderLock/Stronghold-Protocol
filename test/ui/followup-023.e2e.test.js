@@ -127,19 +127,25 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       }
     } finally { await ctx.close(); }
   });
-  test('co-op opening reroll shows a unanimous vote, clears stale readiness and can be rejected', { timeout: 45000 }, async () => {
+  test('co-op opening reroll shows a unanimous vote, clears stale readiness and can be rejected', { timeout: 60000 }, async (t) => {
     const ctx = await browser.createBrowserContext();
+    const evidence = path.resolve(CACHE, `pr857-reroll-edge-${Date.now()}`);
+    mkdirSync(evidence, { recursive: true });
+    t.diagnostic(`Edge screenshots: ${evidence}`);
     try {
       const host = await pageIn(ctx), guest = await pageIn(ctx);
       const code = await host.evaluate(async () => {
         const { net, store } = globalThis.__SP__;
-        await net.request('room.create', { mode: 'coop', difficulty: 'NORMAL' });
+        await net.request('room.create', { mode: 'coop', difficulty: 'NORMAL', capacity: 20 });
+        for (let i = 0; i < 18; i++) await net.request('room.addBot');
         return store.get().room.code;
       });
       await guest.evaluate(async (code) => {
         const { net } = globalThis.__SP__;
         await net.request('room.join', { code }); await net.request('room.ready', { ready: true });
       }, code);
+      const spectator = await pageIn(ctx, true);
+      await spectator.evaluate((code) => globalThis.__SP__.net.request('room.spectate', { code }), code);
       await host.evaluate(() => globalThis.__SP__.net.request('room.start', {}));
       for (const p of [host, guest]) await p.waitForFunction(() => globalThis.__SP__.store.get().match.public?.phase === 'INFO_CHECK', { polling: 50 });
       await guest.evaluate(() => globalThis.__SP__.net.request('g.infoReady', { setupRevision: 0 }));
@@ -169,6 +175,46 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       await guest.click('.brief-reroll .btn--danger');
       await host.waitForFunction(() => !globalThis.__SP__.store.get().match.public.rerollVote, { polling: 50 });
       assert.equal(await host.evaluate(() => globalThis.__SP__.store.get().match.public.setupRevision), 1);
+      // A guest asks the host to start the vote (GitHub #854): the ask lists for the host and changes nothing—
+      // the host still starts the vote, and both players agree to it.
+      await guest.bringToFront();
+      // The guest's own tab may still render the rejected vote: wait until its panel is back to the single ask button.
+      await guest.waitForFunction(() => {
+        const el = document.querySelector('.brief-reroll');
+        const buttons = el ? el.querySelectorAll('button') : [];
+        return buttons.length === 1 && !buttons[0].disabled;
+      }, { polling: 50 });
+      await guest.click('.brief-reroll button');
+      await host.waitForFunction(() => (globalThis.__SP__.store.get().match.public.rerollRequests || []).length === 1, { polling: 50 });
+      assert.equal(await host.evaluate(() => globalThis.__SP__.store.get().match.public.setupRevision), 1);
+      assert.equal(await guest.evaluate(() => !!document.querySelector('.brief-reroll button[disabled]')), true);
+      assert.equal(await guest.evaluate(() => globalThis.__SP__.store.get().room.seats.find((p) => p?.playerId === globalThis.__SP__.net.playerId).seat), 19);
+      assert.equal(await spectator.$('.brief-reroll'), null, 'a spectator has no request button');
+      await host.bringToFront();
+      await host.waitForFunction(() => document.querySelector('.brief-reroll__players')?.textContent.includes('申请重刷本局'));
+      await host.screenshot({ path: path.join(evidence, 'host-request-desktop.png') });
+      await guest.setViewport({ width: 844, height: 390 });
+      await guest.bringToFront();
+      await guest.screenshot({ path: path.join(evidence, 'guest-request-phone.png') });
+      assert.equal(await guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Wait out the documented server anti-burst interval before the host's next proposal.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await host.bringToFront();
+      await host.click('.brief-reroll button');
+      await spectator.waitForSelector('.brief-reroll');
+      assert.equal(await spectator.$$eval('.brief-reroll button', (buttons) => buttons.length), 0, 'a spectator sees a read-only vote');
+      await spectator.screenshot({ path: path.join(evidence, 'spectator-vote-phone.png') });
+      await guest.waitForSelector('.brief-reroll .btn--primary');
+      await guest.bringToFront();
+      await Promise.all([
+        host.waitForFunction(() => globalThis.__SP__.store.get().match.public?.setupRevision === 2, { polling: 50 }),
+        guest.click('.brief-reroll .btn--primary'),
+      ]);
+      // The host's frame can land a tick before the guest's, so wait for both facts instead of reading a raw race.
+      await guest.waitForFunction(() => {
+        const p = globalThis.__SP__.store.get().match.public;
+        return p.setupRevision === 2 && !p.rerollVote;
+      }, { polling: 50 });
     } finally { await ctx.close(); }
   });
   test('operator voice selection persists across reload and follows global after reset', async () => {

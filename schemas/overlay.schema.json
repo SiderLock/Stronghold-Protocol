@@ -721,6 +721,57 @@
             }
           },
           "additionalProperties": false
+        },
+        "tokens": {
+          "type": "object",
+          "description": "The summons this skin restyles, by token id (the installation's own tokens key, e.g. token_10031_swire2_gdtrap): each mapping brings the model that summon wears while its owner wears this skin. Up to 64; the model is required, so a mapping without one changes nothing and is refused whole.",
+          "maxProperties": 64,
+          "propertyNames": {
+            "$ref": "#/$defs/assetKey"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/tokenSkinRecord"
+          }
+        },
+        "voice": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (Chinese dub) by slot, the same slots and values as audio.voice[<charId>]: worn, the skin's line plays for a slot it has and the operator's own line stands in for one it lacks."
+        },
+        "voiceJp": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (Japanese dub) by slot. A player whose language is Japanese is asked for this tree before the skin's Chinese lines."
+        },
+        "voiceEn": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (English dub) by slot."
+        },
+        "voiceKr": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines (Korean dub) by slot."
+        },
+        "voiceNative": {
+          "$ref": "#/$defs/voiceRecord",
+          "description": "The skin's own battle lines in the operator's own-language dub, by slot."
+        }
+      },
+      "additionalProperties": false
+    },
+    "tokenSkinRecord": {
+      "description": "One summon restyled by a skin: the appearance's id (metadata for the pickers; this layer never resolves it) and the battle model the skin gives that token. The model is required and is ONE Spine model, the same kind the manifest's tokens[<tokenId>].spine is (a summon has no Front/Back pair); its path stays inside the overlay's limit (chars.<charId>.skins.<skin>.tokens.<tokenId>.spine).",
+      "type": "object",
+      "required": [
+        "spine"
+      ],
+      "properties": {
+        "tokenSkinId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The appearance's own id, 1-64 characters: metadata only, never looked up by the client."
+        },
+        "spine": {
+          "$ref": "#/$defs/spine",
+          "description": "The model this summon wears while its owner wears the skin, or a reference to one. Required: a mapping without a model changes nothing."
         }
       },
       "additionalProperties": false

@@ -5,7 +5,7 @@
 //
 //   start()                                  the worker creates the match and starts it (the worker may still be booting:
 //                                            the host queues the messages; the match exists for the lobby at once)
-//   handle / setLoadout / requestSetupReroll / cancelSetupReroll → Promise of the match's answer ({ ok } | { error, detail })
+//   handle / setLoadout / requestSetupReroll / askSetupReroll / cancelSetupReroll → Promise of the match's answer ({ ok } | { error, detail })
 //                                            — the lobby answers the request when it settles (server/net.js)
 //   onDisconnect / onReconnect / onLeave / addSpectator / removeSpectator → posted, no answer
 //   dispose()                                posted; nothing of this match reaches the lobby afterwards
@@ -121,6 +121,7 @@ export class MatchProxy {
   handle(playerId, msg) { return this._request('handle', [playerId, msg]); }
   setLoadout(playerId, loadout, ops) { return this._request('setLoadout', [playerId, loadout, ops]); }
   requestSetupReroll(playerId, revision) { return this._request('requestSetupReroll', [playerId, revision]); }
+  askSetupReroll(playerId, revision) { return this._request('askSetupReroll', [playerId, revision]); }
   cancelSetupReroll(playerId, voteId) { return this._request('cancelSetupReroll', [playerId, voteId]); }
   onDisconnect(playerId) { this._notify('onDisconnect', [playerId]); }
   onReconnect(playerId) { this._notify('onReconnect', [playerId]); }

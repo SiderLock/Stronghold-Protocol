@@ -290,6 +290,7 @@ export class PSys {
     this.inv = mat4();
     this._invOk = false;
     this.scale = [1, 1, 1]; // scale of the scaling mode
+    this.displayScale = 1;  // whole-effect tile conversion, including Shape mode (which ignores authored size scales)
     // sizes in the system's own units, drawn × the scaling mode's scale of the frame (a local-space system that scales
     // them: sizeScale); a world-space system's (and Shape mode's) are as born
     this.liveScale = def.space !== 1 && def.scalingMode !== 2;
@@ -305,7 +306,7 @@ export class PSys {
   get alive() { return this.playing && (this.emitting || this.count > 0 || this.orphans.length > 0 || this.pending.length > 0); }
 
   /** The factor of axis k (0 x, 1 y, 2 z) the stored sizes are drawn at: the scaling mode's scale now (liveScale), else 1. */
-  sizeScale(k) { return this.liveScale ? Math.abs(this.scale[k]) : 1; }
+  sizeScale(k) { return this.liveScale ? Math.abs(this.scale[k]) : this.def.scalingMode === 2 ? this.displayScale : 1; }
 
   /** Replace a curve field for this instance only (clip bindings, §33.10 'ParticleSystem' paths). */
   overrideField(path, value) {
@@ -387,6 +388,7 @@ export class PSys {
 
   /** The render matrix and emitter position of this frame (see the header). */
   setFrame(frame) {
+    this.displayScale = Number.isFinite(frame.displayScale) && frame.displayScale > 0 ? frame.displayScale : 1;
     this.m.set(frame.m);
     this._invOk = false;
     this.scale[0] = frame.scale[0]; this.scale[1] = frame.scale[1]; this.scale[2] = frame.scale[2];
@@ -501,7 +503,11 @@ export class PSys {
       this.accDist -= nd;
     }
     const total = n + nd;
-    for (let i = 0; i < total; i++) {
+    // Some authored systems request millions per second to keep just one particle alive (Cetsyr's outfit S3
+    // flowers). _spawn rejects a full system before touching RNG/state; stop those no-op calls here. Keep the
+    // original total for birth age/position, and still consume the rate/burst bookkeeping below when full.
+    const cap = Math.min(def.maxParticles, SYSTEM_CAP);
+    for (let i = 0; i < total && this.count < cap; i++) {
       // spread over the step: the i-th of n is (n − i) / n of the step old, placed along the emitter's motion
       const f = (i + 1) / total;
       this._spawn(tau, (1 - f) * span, f, 0, 0, null);
@@ -519,7 +525,7 @@ export class PSys {
         if (tf < la - 1e-9 && !(la === 0 && tf <= 1e-9)) continue; // passed while not emitting (a late start)
         if (B.prob < 1 && this.rng.next() >= B.prob) continue;
         const c = Math.round(B.count.at(Math.min(1, tf / D), this.rng.next()) * this.emissionScale);
-        for (let i = 0; i < c; i++) this._spawn(tau, Math.max(0, lb - tf), 1, i, c, null);
+        for (let i = 0; i < c && this.count < cap; i++) this._spawn(tau, Math.max(0, lb - tf), 1, i, c, null);
       }
     }
   }
@@ -529,7 +535,8 @@ export class PSys {
    * rot, life } of the parent.
    */
   _emitAt(count, x, y, z, inherit) {
-    for (let i = 0; i < count; i++) this._spawn(Math.min(1, this.time / this.def.duration), 0, 1, i, count, inherit, x, y, z);
+    const cap = Math.min(this.def.maxParticles, SYSTEM_CAP);
+    for (let i = 0; i < count && this.count < cap; i++) this._spawn(Math.min(1, this.time / this.def.duration), 0, 1, i, count, inherit, x, y, z);
   }
 
   /** Sub-emitter trigger from a parent particle (death / birth): bursts of this system at the point. */
@@ -617,7 +624,7 @@ export class PSys {
       }
       px = _v3[0]; py = _v3[1]; pz = _v3[2];
       mat4Dir(m, vx, vy, vz, _v3);
-      if (def.scalingMode === 2) { const l0 = Math.hypot(vx, vy, vz), l1 = Math.hypot(_v3[0], _v3[1], _v3[2]) || 1; _v3[0] *= l0 / l1; _v3[1] *= l0 / l1; _v3[2] *= l0 / l1; }
+      if (def.scalingMode === 2) { const l0 = Math.hypot(vx, vy, vz) * this.displayScale, l1 = Math.hypot(_v3[0], _v3[1], _v3[2]) || 1; _v3[0] *= l0 / l1; _v3[1] *= l0 / l1; _v3[2] *= l0 / l1; }
       vx = _v3[0]; vy = _v3[1]; vz = _v3[2];
     }
     // inherit velocity (initial): the emitter's world velocity × curve
@@ -659,7 +666,7 @@ export class PSys {
     let r = this.cr[i], g = this.cg[i], b = this.cb[i], a = this.ca[i];
     if (this.def.color) { this.def.color.at(t, hashRand(this.seed[i], RF.COLOR_OL), _c4); r *= _c4[0]; g *= _c4[1]; b *= _c4[2]; a *= _c4[3]; }
     out.r = r; out.g = g; out.b = b; out.a = a;
-    out.size = this.sx[i] * this.sizeScale(0) * (this.sizeX ? this.sizeX.at(t, hashRand(this.seed[i], RF.SIZE_OL)) : 1);
+    out.size = this.sx[i] * this.sizeScale(0) / this.displayScale * (this.sizeX ? this.sizeX.at(t, hashRand(this.seed[i], RF.SIZE_OL)) : 1);
     out.rot = this.rz[i];
     out.life = Math.max(0, this.life[i] - this.age[i]) / Math.max(1e-6, this.life[i]);
     return out;

@@ -30,6 +30,9 @@ making one, in Chinese). How to set up, test and send a change: [CONTRIBUTING.md
   match in memory — rounds, shop, economy, bots, validation. This fork additionally reads private announcement files
   and explicit owner-notification commands from disk ([ANNOUNCEMENTS.md](ANNOUNCEMENTS.md)); game state stays in memory.
   Plugin authoring writes folders and locks to disk; the studio key persists too. Gameplay content sets use separate match children (§3).
+- Vanilla matches can send detached AI preview inputs and oversized-result replays to `server/match/rehearsalPool.js`
+  and `rehearsalWorker.js`. Only the result/index comes back; economy, deadlines, networking and settlement stay in
+  the parent. Failures retain the existing sliced path. Configuration: [SERVER_SETTINGS.md](SERVER_SETTINGS.md#计算进程).
 - **The browser** loads native ES modules with no bundler and no build step; the libraries are vendored into
   `public/vendor/` by `tools/vendor.mjs` on `npm install`.
 - **The battle simulation** (`server/sim/`) is pure ESM without any Node API, served read-only at `/sim/`. Both sides
@@ -97,6 +100,7 @@ so old imports keep working: `public/js/ui/gameLogic.js` (`public/js/ui/gameLogi
 | `server/net.js` | sessions and reconnect tokens, rate limits, message validation |
 | `server/bandwidthEmergency.js`, `server/match/freezeScheduler.js` | Linux egress/demand congestion detection and conditional 120-second retry; reversible HTTP/download admission protection and match-local timer freezing. See [ASSET_CACHE.md](ASSET_CACHE.md#带宽紧急保护) |
 | `server/lobby.js` | rooms, seats, AI seats, spectators; starts a `Match` |
+| `server/lobbySeats.js` | waiting-room seat exchanges, identity-bound human consent, expiration and stale-request cleanup; host authority stays independent of seat position |
 | `server/lobbyDiscovery.js`, `shared/lobbyDiscovery.js` | lobby subscriptions, changed-only paged room summaries, atomic fastest matching; shared page size and update interval |
 | `server/data.js` | loads `data/*.json` once (frozen) |
 | `server/plugins/` | the plugin system (PLUGINS.md, DESIGN §32): `registry.js` finds the language packs of `public/i18n/`, the pack folders of `packs/` and the plugins of `plugins/`, validates them (a cosmetic plugin's asset overlay too, its files hashed), answers `/packs/index.json`, `/plugins/index.json` and which files may be served, re-reads the folders when they change; `identity.js` computes the vanilla content hash `cs` from the served sim, shared code and data at start (`/cs/<cs16>/index.json`, `/healthz`, `welcome`, `room.state`); `visualSet.js` the visual sets of cosmetic plugins — a room's or a player's, named by `vs` — served at `/vs/<vs16>/overlay.json` (the composition and each plugin's writes: the browser composes the art itself, `public/js/assets.js`), their files at `/p/<id>/<hash8>/<path>`; `contentSet.js` builds a content set of data plugins (C1, DESIGN §32.5); `roomSets.js` turns a room's plugin list into its visual set and its content set, `contentSets.js` keeps the content sets rooms hold (by `cs`, the concurrent limit, `/cs/<cs16>/…`), `policy.js` reads the server owner's `plugins/config.json` (P1c, DESIGN §32.6) |
@@ -178,6 +182,8 @@ public/assets/ ─────────▶ public/js/render/, public/js/audio
   the sim through `server/sim/simdata.js`, which turns every record into a frozen engine def.
 - **In the browser**, `public/js/data.js` fetches the same files once per page for the UI, and the battle runner loads
   its own frozen copies for the sim (`loadBrowserSim` → `setSimData`), so both sides simulate from the same data.
+  Automatic sim warming starts after the briefing / strategy draft / boot phases; actual battle and rehearsal
+  requests still load it on demand. This leaves opening-page images the bandwidth first.
 - **Languages.** Chinese is the source language; every other language is a pack — `public/i18n/<code>.json` (UI
   strings) and optionally `data/i18n/<code>.json` (game texts), listed by the server at `/packs/index.json`
   (`server/packs.js`; PACKS.md). The English game texts come from the official EN client (`tools/build-i18n.mjs` →

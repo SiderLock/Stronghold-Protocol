@@ -312,11 +312,32 @@ export class FxWiring {
   skinOf(u) { return u && u.skin && this.idx ? this.idx.skins[u.skin] || null : null; }
 
   /**
+   * The appearance a view wears: `info.skin` is the OUTFIT id (the one the cards, the portrait and the voice use — see
+   * docs/SKINS.md), not the Spine model's own skin name `skinOf` reads for the mount points above. Null for a view
+   * without one (a tile, a map-position effect, a unit in its default appearance).
+   */
+  outfitOf(v) { return v && v.info && typeof v.info.skin === 'string' && v.info.skin ? v.info.skin : null; }
+
+  /**
+   * 官方时装特效 (docs/SKINS.md): the effect key an outfit replaces, from index.json's `skinFx[<skinId>].replace` — the
+   * client's `CharacterSkinHooker` pairs, extracted by tools/local-extract/fx.py. A key with no pair for this outfit,
+   * an outfit nobody extracted, or a replacement the library does not hold (a variant missing from an installation)
+   * keeps the base key: the effect then plays as it always did, never silently drops.
+   * @param {string} k a lower-cased effect key @param {string|null} outfit @returns {string}
+   */
+  skinFxKey(k, outfit) {
+    const rep = outfit && this.idx ? this.idx.skinFx?.[outfit]?.replace : null;
+    const to = rep && Object.hasOwn(rep, k) ? lc(rep[k]) : null;
+    return to && this.ofx?.lib?.has?.(to) ? to : k;
+  }
+
+  /**
    * Where a view stands, as mounts.js reads it: board feet + facing, the view itself (its model's bones: the
    * BoneFollower points) and the camera's tilt (the plane the drawn model faces).
    */
   pose(v) {
-    return { x: v.x, y: v.y, z: (v.z || 0) + (v.hover || 0), left: (v.visFacing ?? v.facing ?? 1) < 0, back: typeof v._wantsBack === 'function' ? !!v._wantsBack() && !!v.entryBack : false, view: v, tilt: this._camTilt() };
+    return { x: v.x, y: v.y, z: (v.z || 0) + (v.hover || 0), left: (v.visFacing ?? v.facing ?? 1) < 0, back: typeof v._wantsBack === 'function' ? !!v._wantsBack() && !!v.entryBack : false, view: v, tilt: this._camTilt(),
+      scale: Number.isFinite(v.effectScale) && v.effectScale > 0 ? v.effectScale : 1 };
   }
 
   /** The battle camera's tilt (degrees from straight down), or undefined (mounts.js SKELETON_TILT). */
@@ -354,6 +375,9 @@ export class FxWiring {
     for (const v of views) {
       const u = this.unitOf(v);
       if (!u) continue;
+      // 官方时装特效 (docs/SKINS.md): the variants this view's outfit uses, so the first cast does not wait for a fetch
+      const rep = this.idx?.skinFx?.[this.outfitOf(v)]?.replace;
+      if (rep) for (const to of Object.values(rep)) if (to) keys.add(lc(to));
       for (const m of u.modes || []) {
         walk(m.attack);
         walk(m.combat);   // index v2: the blow on a blocker (most enemies' only attack)
@@ -505,7 +529,12 @@ export class FxWiring {
    */
   playOn(key, v, o = {}) {
     let k = lc(key);
-    if (!k || !this.ofx.lib.has(k)) return null;
+    if (!k) return null;
+    // 官方时装特效 (docs/SKINS.md): an outfit may replace the effect's key. The ATTACKER's outfit decides when the effect
+    // belongs to an attack that reached someone else (`o.skinFrom`), the view's own otherwise — a hit variant on the
+    // target is still the attacker's outfit, which is what the client's hooker is attached to.
+    k = this.skinFxKey(k, this.outfitOf(o.skinFrom || v));
+    if (!this.ofx.lib.has(k)) return null;
     if (k === YU_WALL_SOURCE) {
       const wall = new YuWall(this, v);
       this.walls.add(wall);
@@ -528,7 +557,8 @@ export class FxWiring {
     const pos = P.fmp ? mountPoint(skin, P.fmp.mount, pose) : spawnPoint(skin, P.spawn, pose);
     const ground = (v.z || 0);
     if (P.onGround) pos[2] = -ground;
-    const place = { pos, groundZ: -ground, yaw: 0, mirror: false, flipY: false, mountRot: null, rootRot: null };
+    const place = { pos, groundZ: -ground, yaw: 0, mirror: false, flipY: false, mountRot: null, rootRot: null,
+      scale: P.body && v.info ? pose.scale : 1 };
     this._rotate(P, place, skin, pose);
     this._orient(def, place, pose, o, v);
     const opts = { track: o.track || null, data: o.data ?? null, loop: !!o.loop, important: !!o.important, skip: o.skip > 0 ? o.skip : 0, owner: v };
@@ -537,7 +567,7 @@ export class FxWiring {
     // a condition; a prefab with chained effects (OnPlayEmitter: system.js FxHandle._start hands them this track) has
     // one for them
     const stick = !!o.stick;
-    if (!o.track && (P.follow || P.keep || stick || !def || def.direction || def.pause || def.onPlay?.length)) {
+    if (!o.track && (P.follow || P.keep || stick || !def || def.direction || def.pause || def.onPlay?.length || def.onFinish?.length)) {
       let d = def;
       const at0 = [pose.x, pose.y, pose.z], kept = new WeakMap(), chained = new Map();
       opts.track = (fx) => {
@@ -571,6 +601,8 @@ export class FxWiring {
           }
         }
         const G = Q.fmp ? Q : P;
+        // Once a descriptor arrives (or an emitter starts a child), use its own body / ground placement.
+        fx.scale = Q.body && v.info ? p.scale : 1;
         if (G.follow) {
           mountPoint(skin, G.follow.mount, p, fx.anchor);
           if (G.onGround) fx.anchor[2] = -(v.z || 0);
@@ -623,7 +655,8 @@ export class FxWiring {
       else rotKind = spawnRotation(spawn);
     }
     const keep = !follow && (!!o.follow || !!def?.holdByOwner);
-    return { spawn, fmp, follow, rotKind, rotFollow, loaded: !!def, onGround: GROUND_SPAWNS.has(spawn) && !fmp, keep };
+    const body = fmp ? fmp.mount === 0 || !!mountKind(fmp.mount) : spawn === 1 || !!spawnKind(spawn);
+    return { spawn, fmp, follow, rotKind, rotFollow, loaded: !!def, onGround: GROUND_SPAWNS.has(spawn) && !fmp, keep, body };
   }
 
   /**
@@ -1250,10 +1283,10 @@ export class FxWiring {
     const go = () => {
       const now = this.ofx.time;
       if (tgt && !tgt.destroyed) {
-        for (const k of proj.onHit || []) this.playOn(k, tgt, {});
+        for (const k of proj.onHit || []) this.playOn(k, tgt, { skinFrom: src || undefined });
         if (rows) {
           const own = new Set((proj.onHit || []).map(lc));
-          for (const h of rows) if (!own.has(lc(h.k))) this.playOn(h.k, tgt, { flipFrom: src || undefined, toward: h.along && src ? beyond(src, tgt) : undefined });
+          for (const h of rows) if (!own.has(lc(h.k))) this.playOn(h.k, tgt, { skinFrom: src || undefined, flipFrom: src || undefined, toward: h.along && src ? beyond(src, tgt) : undefined });
         }
         const id = tgt.id ?? tgt.info?.id;
         this.arrived.set(id, now);

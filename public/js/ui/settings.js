@@ -27,7 +27,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html, Modal, Button, Icon, MicroLabel, confirmDialog } from './components.js';
 import { GIcon } from './gameComponents.js';
-import { createStore, useStore, loadPref, savePref, store } from '../store.js';
+import { useStore, savePref, store } from '../store.js';
+import { settingsStore } from './settingsStore.js';
+export { settingsStore } from './settingsStore.js';
 import { sanitizeSettings, HOTKEY_ACTIONS, DEFAULT_HOTKEYS, hotkeyLabel, rebindHotkey, isDefaultHotkeys, captureHotkey, VOICE_LANGS, TEXT_SIZES } from './gameLogic.js';
 import { audio } from '../audio.js';
 import { openGuide } from './guide.js';
@@ -50,14 +52,12 @@ import { hasAnySkinChoices } from './skins.js';
 import { fxAvailable } from '../render/vfx/available.js';
 import { resolveOfficialFx } from '../render/vfx/tier.js';
 import { ScreenFitSection } from './screenFit.js';
-import { askPersistStorage, importSupport, storagePersisted } from '../assetCache.js';
+import { askPersistStorage, importSupport, storagePersisted, assetCache } from '../assetCache.js';
 import { assetImport, pruneImportedAssets } from '../assetPack.js';
+import { backgroundFillAllowed } from '../assetPlan.js';
 import { cosmetics } from '../cosmetics.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
-
-/** Settings store: { bgm, sfx, voice, voiceLang, voiceNative, voiceOverrides, muted, damageNumbers, officialDamageNumbers, ammoEnergyCount, combatMetrics, prepDeployFold, quality, textSize, keys }. */
-export const settingsStore = createStore(sanitizeSettings(loadPref('settings', null)));
 
 /**
  * 设置 →「文字大小」: put the step on <html data-text> — css/theme.css turns it into the text root `--t`
@@ -109,16 +109,17 @@ function Slider({ label, micro, value, onInput, icon }) {
   </label>`;
 }
 
-function Toggle({ label, micro, value, onChange }) {
+function Toggle({ label, micro, value, onChange, testId }) {
   return html`<div class="set-row">
     <span class="set-row__label">${label}<${MicroLabel}>${micro}<//></span>
-    <button type="button" class=${`set-toggle${value ? ' is-on' : ''}`} role="switch" aria-checked=${value ? 'true' : 'false'}
+    <button type="button" class=${`set-toggle${value ? ' is-on' : ''}`} role="switch" aria-label=${label} aria-checked=${value ? 'true' : 'false'} data-testid=${testId}
       onClick=${() => onChange(!value)}><i></i><span>${value ? tc('toggle', '开启') : tc('toggle', '关闭')}</span></button>
   </div>`;
 }
 
 /** Display order only: 低 / 中 / 高, the same direction as 官方特效 关 / 精简 / 完整. Stored values stay high | medium | low. */
 const QUALITY = [['low', N_('低')], ['medium', N_('中')], ['high', N_('高')]];
+const FRAME_LIMIT = [[30, '30 FPS'], [60, '60 FPS'], [0, N_('不限')]];
 /**
  * 官方特效 (0.3.0, render/vfx): the official battle effects the server's owner extracted from their own client (the
  * server serves them: every player of that server sees the owner's extraction) — normal attacks, projectiles, hits,
@@ -404,6 +405,17 @@ const PRUNE_NOTES = {
 };
 
 function StorageSection() {
+  const prefs = useSettings();
+  const [renderState, setRenderState] = useState(() => assetCache.getState());
+  const [clearing, setClearing] = useState(false);
+  const [clearResult, setClearResult] = useState(null);
+  useEffect(() => assetCache.subscribe(setRenderState), []);
+  const clearRender = async () => {
+    updateSettings({ renderCache: false }); setClearing(true);
+    try { setClearResult(await assetCache.configureRendering(false, { clear: true })); }
+    catch { setClearResult(false); }
+    finally { setClearing(false); }
+  };
   const [state, setState] = useState(null);  // a PERSIST_NOTES key, null while the browser is asked
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -445,6 +457,17 @@ function StorageSection() {
           loading=${busy} onClick=${ask}>${state === 'on' ? t('已持久保存') : t('申请持久保存')}<//>` : null}
       </span>
     </div>
+    <${Toggle} label=${t('允许本地缓存与后台补齐')} micro="LOCAL CACHE" value=${prefs.renderCache} testId="render-cache-toggle"
+      onChange=${(v) => updateSettings({ renderCache: v })} />
+    <p class="set-hint">${t('先加载当前玩家需要的素材，再后台补齐其余画面素材，供下次对局复用。最多占用 2 GiB；关闭后停止补齐，已有导入包不受影响。')}</p>
+    <${Button} variant="ghost" size="sm" disabled=${clearing || !globalThis.isSecureContext || !globalThis.caches} loading=${clearing} onClick=${clearRender}
+      data-testid="render-cache-clear">${t('关闭并清理对局缓存')}<//>
+    ${clearResult !== null ? html`<p class="set-hint" role="status" data-testid="render-cache-clear-note">${clearResult
+      ? t('已关闭并清理对局缓存。') : t('已关闭缓存；清理未完成，请重新打开页面后重试。')}</p>` : null}
+    ${prefs.renderCache && !renderState.renderCacheReady ? html`<p class="set-hint" role="status">${t('本地缓存需要 https 或 localhost 及浏览器支持；更新后可能需要重新打开页面才能启用。')}</p>` : null}
+    ${prefs.renderCache && renderState.renderCacheFull ? html`<p class="set-hint" role="status">${t('缓存不可用、空间不足或已达到上限，后台补齐已停止，当前对局可继续。')}</p>` : null}
+    ${prefs.renderCache && renderState.renderCacheReady && renderState.policy && !backgroundFillAllowed(renderState.policy)
+      ? html`<p class="set-hint" role="status">${t('服主已限制在线补齐，后台队列暂停；本局实际使用的素材仍会缓存。')}</p>` : null}
     <p class="set-hint">${t('导入的素材包保存在这个浏览器里。手动清除网站数据会删除它们；Safari 约 7 天没打开本站也可能清除。')}</p>
     ${state ? html`<p class=${cx('set-keys__note', state !== 'on' && state !== 'off' && 'is-warn')} role="status" aria-live="polite"
       data-testid="storage-note">${t(PERSIST_NOTES[state])}</p>` : null}
@@ -512,6 +535,16 @@ export function SettingsModal({ open, onClose }) {
             class=${s.quality === id ? 'is-on' : ''} onClick=${() => updateSettings({ quality: id })}>${t(label)}</button>`)}
         </div>
       </div>
+      <div class="set-row" data-testid="frame-limit">
+        <span class="set-row__label">${t('帧率上限')}<${MicroLabel}>FRAME RATE<//></span>
+        <div class="set-seg" role="radiogroup" aria-label=${t('帧率上限')}>
+          ${FRAME_LIMIT.map(([id, label]) => html`<button key=${id} type="button" role="radio" aria-checked=${s.frameLimit === id ? 'true' : 'false'}
+            class=${s.frameLimit === id ? 'is-on' : ''} onClick=${() => updateSettings({ frameLimit: id })}>${t(label)}</button>`)}
+        </div>
+      </div>
+      <p class="set-hint">${t('限制战场与小人预览的画面刷新率，可减少发热和耗电；不改变战斗速度。实际帧率取决于设备性能。')}</p>
+      <${Toggle} label=${t('自动调整渲染分辨率')} micro="ADAPTIVE RESOLUTION" value=${s.adaptiveResolution} onChange=${(v) => updateSettings({ adaptiveResolution: v })} />
+      <p class="set-hint">${t('开启后，移动端持续卡顿时会降低棋盘与角色画面的分辨率，流畅后逐步恢复；界面文字不变。关闭后固定使用所选画质。')}</p>
       ${fxOk ? html`<div class="set-row" data-testid="official-fx">
         <span class="set-row__label">${t('官方特效')}<${MicroLabel}>OFFICIAL FX<//></span>
         <div class="set-seg" role="radiogroup" aria-label=${t('官方特效')}>
@@ -551,4 +584,15 @@ export function SettingsButton({ class: cls, size = 'sm', variant = 'ghost', lab
   return html`<${Button} variant=${variant} size=${size} square=${square} class=${cx('settings-btn', cls)} onClick=${() => setOpen(true)}
       title=${t('设置')} aria-label=${t('设置')} data-testid="settings-btn"><${GIcon} name="gear" class="btn__icon" />${square ? null : label}<//>
     ${open ? html`<${SettingsModal} open=${true} onClose=${() => setOpen(false)} />` : null}`;
+}
+
+/** Settlement shortcut to the same informed opt-in, without making the player search the full settings page. */
+export function AssetStorageButton({ class: cls }) {
+  const [open, setOpen] = useState(false);
+  return html`<${Button} variant="ghost" size="sm" class=${cls} onClick=${() => setOpen(true)} data-testid="settle-storage">
+      <${GIcon} name="gear" class="btn__icon" />${t('素材存储')}<//>
+    ${open ? html`<${Modal} open=${true} onClose=${() => setOpen(false)} title=${t('素材存储')} width="7.4rem"
+      actions=${html`<${Button} variant="primary" onClick=${() => setOpen(false)}>${t('完成')}<//>`}>
+      <${StorageSection} />
+    <//>` : null}`;
 }

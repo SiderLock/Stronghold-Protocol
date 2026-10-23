@@ -25,7 +25,7 @@ const V1_EXTENSIONS = Object.freeze({
 // Published v1 has no new numeric IDs: these post-v1 business types deliberately use its JSON fallback.
 const V1_JSON_FALLBACK = Object.freeze({
   c2s: ['room.chat', 'room.setMatchmaking', 'lobby.join', 'lobby.spectate', 'b.rehearsalResult',
-    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins',
+    'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins', 'room.requestSeat', 'room.answerSeat', 'room.requestReroll',
     // 0.3.1 business types (skins / unequip rule / plugin offers / test console) — post-v1, JSON fallback
     'room.skins', 'g.unequip', 'g.offer', 'g.offerRefresh', 'g.test'],
   s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel'],
@@ -184,7 +184,7 @@ function noPublicExtensions(message) {
     const known = new Set(fields.map(nameOf));
     for (const k of Object.keys(v)) assert.ok(k === 't' || known.has(k)
       || (fields === WIRE_RECORDS.card && k === 'soldOut')
-      || (path === 'm.public' && ['emergencyFrozen', 'emergencyFrozenAt', 'emergencyReason', 'bossPairs'].includes(k)),
+      || (path === 'm.public' && ['emergencyFrozen', 'emergencyFrozenAt', 'emergencyReason', 'bossPairs', 'rerollRequests'].includes(k)),
       `${path}.${k} needs an explicit position or declared v1 extension`);
     for (const field of fields) if (typeof field !== 'string' && Object.hasOwn(v, field[0])) {
       const [key, type] = field;

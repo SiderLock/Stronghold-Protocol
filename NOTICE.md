@@ -25,6 +25,8 @@ Copyright (C) 2026 Stronghold-Protocol contributors
 
 （大意：允许把本项目与 pixi-spine 中的 Spine Runtimes 组合后再分发；Spine Runtimes 本身仍受其自己的许可证约束。）
 
+本 fork 的增量来源、参考作者及采用范围见 [来源与致谢](docs/REFERENCES.md)。致谢、公开镜像或上游包含某内容均不能替代其权利人的授权。2026-10-23 分支整合不新增游戏素材、提取产物或素材包；历史已跟踪内容仍按下节区分权利。
+
 ## 2. 不属于本项目、不受 GPL 约束的内容
 
 《明日方舟》及「卫戍协议」相关的全部**名称、角色、美术、Spine 模型、界面图、音乐音效、文本与游戏数据**，版权归上海鹰角网络科技有限公司及其授权方（Yostar 等）所有。具体包括：
@@ -40,7 +42,7 @@ Copyright (C) 2026 Stronghold-Protocol contributors
 
 ## 3. 仅限非商业用途
 
-- 本项目仅供**学习、研究和个人非商业娱乐**。
+- 本项目以**学习、研究和个人非商业娱乐**为目标。用途说明不构成游戏素材的使用或分发许可，仍须符合权利人的授权和适用条款。
 - 游戏素材与数据的权利人没有授权本项目或其使用者进行任何商业使用，因此包含或依赖这些素材的一切内容——Release 完整包、架设的服务器、截图、录像与直播等——都**不得用于任何形式的盈利**。包括但不限于：
   - 出售或付费分发；
   - 收费开服、付费房间或会员；
@@ -65,8 +67,9 @@ Copyright (C) 2026 Stronghold-Protocol contributors
 **English summary.** Unofficial, non-commercial fan remake; not affiliated with or endorsed by Hypergryph or Yostar.
 The project's own code is GPL-3.0-or-later (with the Spine Runtimes linking permission above). All Arknights names,
 art, models, audio and data — including everything under `public/assets/` in the release bundle — are © Hypergryph /
-Yostar and their licensors, are **not** covered by the GPL, and may be used for study and personal non-commercial
-purposes only: no selling, paid distribution, paid hosting, ads, donations or any other monetisation. Rights holders
+Yostar and their licensors and are **not** covered by the GPL. The project is intended for study and personal
+non-commercial use; this purpose statement grants no asset-use or redistribution rights. No selling, paid distribution,
+paid hosting, ads, donations or any other monetisation. Rights holders
 can request removal through a GitHub issue and the content will be taken down. No warranty of any kind.
 The English UI strings were seeded from GitHub PR #70 by @YuriRestia (credited, released with the project under
 GPL-3.0-or-later); the English game texts (`data/i18n/en.json`) are official EN client data like `data/*.json`.

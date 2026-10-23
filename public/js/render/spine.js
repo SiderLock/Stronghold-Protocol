@@ -50,6 +50,8 @@
 // skill with its own idle clip (those attacks go straight back to that idle). The skill's end clip closes the skill,
 // not each attack while it runs.
 
+import { optimizeSpineTransforms } from './spineTransforms.js';
+
 const clampN = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 /** Longest wind-up compression (× the rhythm speed) when the look-ahead is shorter than the natural wind-up. */
@@ -395,6 +397,7 @@ export class SpineActor {
     this.durations = entry.animations || {};
     this.spine = new P.spine.Spine(spineData);
     this.spine.autoUpdate = false;
+    optimizeSpineTransforms(this.spine);
     this.names = new Set((spineData.animations || []).map((a) => a.name));
     /**
      * Clipping attachments render as stencil masks (≈1.5 ms of GPU each per frame on tiled GPUs): such skeletons

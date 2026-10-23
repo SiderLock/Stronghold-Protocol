@@ -11,11 +11,13 @@
 //
 // Everything is optional except the diffuse atlas: a missing map or mesh only drops that feature (e.g. no normal
 // map → flat shading of the atlas; no crate mesh → a procedural box). URLs come from data/local-assets.json only
-// (assets.localUrl) — nothing is guessed. Results are cached per page.
+// (assets.localUrl) — nothing is guessed. Scene packs are bounded to two per asset store.
 
 import { resolveUvTable } from './atlas.js';
 import { parseObj } from './obj.js';
 import { runtimeURL } from '../../runtime.js';
+import { trackAssetDemand } from '../../assetPriority.js';
+import { prepareSceneInWorker, resetSceneWorker } from './sceneWorkerClient.js';
 
 export const THREE_URL = '/vendor/three.module.js';
 
@@ -303,10 +305,25 @@ export function sceneGroupRects(chunks) {
 }
 
 async function fetchBuffer(url) {
-  try { const r = await fetch(url, { cache: 'no-cache' }); return r.ok ? await r.arrayBuffer() : null; } catch { return null; }
+  return trackAssetDemand(Promise.resolve().then(async () => {
+    try { const r = await fetch(url, { cache: 'no-cache' }); return r.ok ? await r.arrayBuffer() : null; } catch { return null; }
+  }));
 }
 
-const sceneCache = new Map();
+// A download manager can replace a successful binary fetch with an empty response. One explicit, complete range
+// bypasses interception in affected hosts. Normal transfers retain compression/cache behaviour; never accept a fragment.
+async function retryEmptyBuffer(url, bytes) {
+  if (!Number.isSafeInteger(bytes) || bytes <= 0) return null;
+  try {
+    const r = await fetch(url, { cache: 'no-cache', headers: { Range: `bytes=0-${bytes - 1}` } });
+    if (!r.ok) return null;
+    if (r.status === 206 && r.headers.get('Content-Range') !== `bytes 0-${bytes - 1}/${bytes}`) return null;
+    const buf = await r.arrayBuffer();
+    return buf.byteLength === bytes ? buf : null;
+  } catch { return null; }
+}
+
+let sceneCache = new WeakMap();
 
 /** Does the local-art manifest list the official scene of `stageId`? (manifest only) */
 export async function sceneListed(assets, stageId) {
@@ -320,19 +337,27 @@ export async function sceneListed(assets, stageId) {
  * (`images.tex`, sRGB) and normal / metallic-gloss (`images.data`, linear) textures + the reflection atlas
  * `images.env`). A missing texture, lightmap page or atlas only drops that map; a missing or malformed scene
  * gives null (→ the procedural board). scene.json `version` stays the mesh layout (SCENE_VERSION).
+ * With `areas`, the initial visible mesh merge runs in one shared worker; failure keeps the cached page fallback.
  * @returns {Promise<object|null>}
  */
-export function loadScenePack(assets, stageId) {
-  if (typeof stageId !== 'string' || !stageId) return Promise.resolve(null);
-  if (sceneCache.has(stageId)) return sceneCache.get(stageId);
+export function loadScenePack(assets, stageId, { areas = null } = {}) {
+  if (typeof stageId !== 'string' || !stageId || !assets || typeof assets !== 'object') return Promise.resolve(null);
+  let cache = sceneCache.get(assets);
+  if (!cache) { cache = new Map(); sceneCache.set(assets, cache); }
+  if (cache.has(stageId)) {
+    const hit = cache.get(stageId); cache.delete(stageId); cache.set(stageId, hit);
+    return hit;
+  }
   const pending = (async () => {
     if (!(await sceneListed(assets, stageId)) || typeof assets.image !== 'function') return null;
     const url = (g, n) => { const u = assets.localUrl(g, n); return typeof u === 'string' && u ? encodeURI(u) : null; };
     const group = sceneGroup(stageId);
-    const [doc, buf] = await Promise.all([fetchJson(url(group, 'scene')), fetchBuffer(url(group, 'bin'))]);
+    const [doc, initialBuffer] = await Promise.all([fetchJson(url(group, 'scene')), fetchBuffer(url(group, 'bin'))]);
+    const buf = initialBuffer?.byteLength === 0 ? await retryEmptyBuffer(url(group, 'bin'), doc?.binBytes) : initialBuffer;
     if (!isObj(doc) || doc.version !== SCENE_VERSION || !buf) return null;
-    const chunks = parseSceneChunks(doc, buf);
+    let chunks = parseSceneChunks(doc, buf);
     if (!chunks || !chunks.length) return null;
+    const geometryPromise = areas ? prepareSceneInWorker(doc, buf, areas) : Promise.resolve(null);
     const img = async (u) => {
       if (!u) return null;
       const i = await assets.image(u, { retry: true }).catch(() => null);
@@ -351,14 +376,25 @@ export function loadScenePack(assets, stageId) {
     const tex = {}, data = {};
     names.forEach((n, i) => { if (texList[i]) tex[n] = texList[i]; });
     dataNames.forEach((n, i) => { if (dataList[i]) data[n] = dataList[i]; });
-    return { key: `${url(group, 'scene')}#${doc.binBytes | 0}`, stage: stageId, doc, chunks, groups: sceneGroupRects(chunks), images: { tex, data, lm, env } };
+    const geometry = await geometryPromise;
+    // A failed worker may own the transferred buffer. Reacquire it once, without reloading the textures.
+    if (!geometry && buf.byteLength === 0) {
+      let restored = await fetchBuffer(url(group, 'bin'));
+      if (restored?.byteLength === 0) restored = await retryEmptyBuffer(url(group, 'bin'), doc.binBytes);
+      chunks = parseSceneChunks(doc, restored);
+      if (!chunks?.length) return null;
+    }
+    return { key: `${url(group, 'scene')}#${url(group, 'bin')}`, stage: stageId, doc, chunks: geometry?.chunks || chunks,
+      groups: geometry?.groups || sceneGroupRects(chunks), prepared: geometry?.prepared,
+      images: { tex, data, lm, env } };
   })().catch((err) => { console.warn('[board3d] scene load failed', err); return null; }).then((pack) => {
-    if (!pack && sceneCache.get(stageId) === pending) sceneCache.delete(stageId);
+    if (!pack && cache.get(stageId) === pending) cache.delete(stageId);
     return pack;
   });
-  sceneCache.set(stageId, pending);
+  cache.set(stageId, pending);
+  if (cache.size > 2) cache.delete(cache.keys().next().value);
   return pending;
 }
 
 /** Forget the cached pack and the three.js import attempt (tests / hot reload). */
-export function resetBoardPack() { cached = null; threePromise = null; threeFailures = 0; sceneCache.clear(); }
+export function resetBoardPack() { cached = null; threePromise = null; threeFailures = 0; sceneCache = new WeakMap(); resetSceneWorker(); }

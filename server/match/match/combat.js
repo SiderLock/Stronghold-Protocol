@@ -16,7 +16,9 @@ export class MatchCombat {
   /** Construct a battle; a constructor failure yields a finished stand-in (clean result) and is logged. */
   newBattle(opts, { preview = false } = {}) {
     const full = { data: this.ds, content: this.battleContent, logger: this.log, ...opts, ...morphBattleOpt(this.rules),
-      ...(preview ? { logger: {}, quiet: true } : {}) };
+      // AI rehearsal consumes results only; retaining unused render events adds allocation/GC work
+      // precisely when many seats start their next prep together.
+      ...(preview ? { logger: {}, quiet: true, recordEvents: false } : {}) };
     try {
       return new this.BattleClass(full);
     } catch (e) {
@@ -121,7 +123,7 @@ export class MatchCombat {
   /** Aggregate a finished field's content/engine errors (battle.errors: unique records) for diagnostics. */
   _collectSimErrors(f, res) {
     this.simErrors += Number(res && res.errors) || 0;
-    const list = f && f.battle && Array.isArray(f.battle.errors) ? f.battle.errors : [];
+    const list = f && f.battle && Array.isArray(f.battle.errors) ? f.battle.errors : f?.workerErrors || [];
     for (const e of list) {
       if (!e || typeof e !== 'object') continue;
       const key = `${e.label}|${e.who || ''}|${e.message}`;

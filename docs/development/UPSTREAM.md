@@ -1,10 +1,10 @@
 # 上游同步与素材更新
 
-作者仓库在本地 `package.json` 中登记为 `sganggs/Stronghold-Protocol`；当前 `origin` 指向用户 fork `LongQianChen/Stronghold-Protocol`。两个来源不能混淆。本文件给出流程，不表示已经联网拉取、推送或更新线上服务器。
+作者仓库在本地 `package.json` 中登记为 `sganggs/Stronghold-Protocol`，当前远程名为 `upstream`；当前 `origin` 是用户自己的 `SiderLock/Stronghold-Protocol`，`pr` 指向多人基础来源 `LongQianChen/Stronghold-Protocol`。以每次操作时的 `git remote -v` 为准。本文件给出流程，不表示已经推送或更新线上服务器。
 
 ## 1. 先记录真实基线和范围
 
-新建合并任务记录，写入目标版本、作者来源 URL/远程名、完整目标 SHA、当前分支和 HEAD，以及当前工作区改动。明确授权覆盖哪些操作和远程分支；远程 `master` 不作修改。
+新建本地合并任务记录，写入目标版本、作者来源 URL/远程名、完整目标 SHA、当前分支和 HEAD，以及当前工作区改动。明确授权覆盖哪些操作和远程分支；作者仓库的 `upstream/master` 不作修改。用户明确授权时可以向自己 fork 的 `origin/master` 整合并推送，不能把两个 master 混为一谈。
 
 从已有本地引用获取历史时注明「本地缓存，未确认远端最新」。获取新版本前核实来源；不要把 fork 的 `origin/master` 名称当作它始终等于作者最新 master 的证明。
 
@@ -73,3 +73,11 @@ Windows 上解释器名称依实际环境选择。镜像、代理、素材补齐
 记录合并来源、合并提交、后续适配提交、验证结果和未完成事项，再更新本目录基线及索引。功能提交、素材状态与部署状态分开写。
 
 多人服务器正在使用时，记录真实部署版本、时间、是否重启、已有房间如何处理及可用的回退版本；这些操作须在任务授权内。没有实际部署证据时填写「未部署」或「未验证」，不把本地提交或用户推送成功当成已上线的证明。
+
+## 6. 本 fork 的逐级公开整合
+
+用户于 2026-10-23 确认 `feat/skin-enhance → feat/IncreasePlayerCapacity → dev → master`，并授权推送到 SiderLock fork。此次源版本为 `215ad0c57cd5ff6b3678f6498a752d8774c4276f`，本 fork master 基线为 `85bc37c84bf28f751f19c26bc0e5111027272b8f`。
+
+源功能历史中已有新增私人过程记录，普通 merge 会把其对象带入目标。先保存本地 Git bundle 与源功能分支，再以本 fork master 为父提交，生成净化的容量分支整合提交；它仍是远程容量分支的后继，无需强推。dev 先补齐本 fork master 的既有历史，再 squash 接入净化内容；master 随后合并 dev。原皮肤分支保留，源提交与参考作者另在公开来源文档注明。
+
+每次推送前检查目标分支相对原 master 新增的每个提交及 blob，确认没有新素材、私人记录、配置或报告；同时检查最终目录。只检查最终删除状态或 `.gitignore` 不足以避免历史泄漏。既有 master 的资源和历史不改写；来源与提取步骤见 [REFERENCES.md](../REFERENCES.md) 和 [LOCAL_ASSET_EXTRACTION.md](../LOCAL_ASSET_EXTRACTION.md)。三条目标引用均使用普通快进推送，不使用 force，也不向作者仓库推送。

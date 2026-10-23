@@ -996,10 +996,11 @@ export function createBattleRunner(deps) {
       if (!phase || ['PREP', 'ROUND_START', 'SP_DRAFT', 'RESULT', 'LOBBY', 'INFO_CHECK', 'BAND_DRAFT', 'BATTLE_CHECK'].includes(phase)) {
         if (entries.size || pending.size) clear({ keepMetrics: !resetMetrics });
       }
-      // warm the simulation up as soon as a match runs (the first b.start then starts at once) — on the room's content set
-      // when it plays one (DESIGN §32.6)
+      // Warm during preparation, leaving briefing/draft images the bandwidth first. An actual b.start or rehearsal
+      // still calls ensureSim directly, including reconnects and the room's plugin content set (DESIGN §32.6).
       const roomCs = s && s.room && s.room.content && s.room.content.vanilla === false ? s.room.content.cs : null;
-      if (phase && phase !== 'LOBBY' && (!simP || simCs !== (roomCs || null))) ensureSim(roomCs).catch(() => {});
+      if (phase && !['LOBBY', 'INFO_CHECK', 'BAND_DRAFT', 'BATTLE_CHECK', 'RESULT'].includes(phase)
+        && (!simP || simCs !== (roomCs || null))) ensureSim(roomCs).catch(() => {});
     }));
   }
   if (doc && typeof doc.addEventListener === 'function') {

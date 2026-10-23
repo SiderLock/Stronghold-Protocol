@@ -299,6 +299,8 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 
 ## 致谢与数据来源
 
+本 fork 的皮肤、特效、性能与联机参考作者及采用范围见 **[来源与致谢](docs/REFERENCES.md)**；素材准备见 **[本地提取参考](docs/LOCAL_ASSET_EXTRACTION.md)**。本次分支整合只发布源码与说明，不上传提取产物或游戏素材包。上游同步不改变素材的权利归属，也不自动授权再次分发。
+
 - 游戏数据：[Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)。
 - 素材来源：[yuanyan3060/ArknightsGameResource](https://github.com/yuanyan3060/ArknightsGameResource)、[fexli/ArknightsResource](https://github.com/fexli/ArknightsResource)、[isHarryh/Ark-Models](https://github.com/isHarryh/Ark-Models)、[ArknightsAssets/ArknightsAssets2](https://github.com/ArknightsAssets/ArknightsAssets2)；字体来自 [TimWangZi/The-font-of-Arknights](https://github.com/TimWangZi/The-font-of-Arknights) 与 Google Fonts（Noto Sans SC）。详见 [docs/ASSETS.md](docs/ASSETS.md)。
 - 规则核对参考：[PRTS 明日方舟中文 Wiki](https://prts.wiki/)。

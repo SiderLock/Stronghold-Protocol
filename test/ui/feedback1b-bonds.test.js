@@ -138,3 +138,21 @@ test('hidden-layer bonds show activation and tiers without a stack badge or laye
     .find((v) => v.props?.name === DATA.bonds.yanShip.name);
   assert.equal(disc.props.layers, 12, 'stacking bonds keep their badge');
 });
+
+test('叙拉古 popup identifies deployment values and the game-time duration, including when watching another player', () => {
+  for (const owner of [null, 'teammate']) {
+    const pop = BondPopup({ bondId: 'siracusaShip', entry: { active: true, count: 6, tier: 2, layers: 450 },
+      priv: { board: [], hand: [] }, owner, onClose() {} });
+    assert.match(textOf(pop), /按当前层数部署时/);
+    assert.match(textOf(pop), /每次部署时确定/);
+    assert.match(textOf(pop), /新增层数不会延长/);
+    assert.match(textOf(pop), /2 倍速下的现实用时约为一半/);
+    const timing = [...walk(pop)].find((v) => v.props?.['data-bond-timing'] === 'deployment');
+    assert.equal(timing?.props.role, 'note');
+  }
+  const off = BondPopup({ bondId: 'siracusaShip', off: true, onClose() {} });
+  assert.doesNotMatch(textOf(off), /按当前层数部署时|每次部署时确定/);
+  const other = BondPopup({ bondId: 'sargonShip', onClose() {} });
+  assert.match(textOf(other), /当前效果/);
+  assert.doesNotMatch(textOf(other), /每次部署时确定/);
+});

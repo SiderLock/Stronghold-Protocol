@@ -63,7 +63,7 @@ export class MatchPhases {
     group.turnDeadline = 0;
     group.turnSeconds = 0;
     group.token++;
-    if (this._testDraftHolds) this._testDraftHolds.delete(String(group.token - 1 ?? ''));
+    if (this._testDraftHolds) this._testDraftHolds.delete(String(group.token - 1));
     if (this._testDraftHolds) this._testDraftHolds.delete(String(group.id ?? ''));
   }
 

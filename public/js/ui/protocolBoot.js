@@ -32,7 +32,7 @@ let bootArt = null;
 export const bootArtReady = () => bootArt === true;
 
 /**
- * Fetch the sprites when the match screen opens (screens/game.js, once per page; the band draft before BATTLE_CHECK
+ * Fetch the sprites after the briefing (screens/game.js, once per page; the band draft before BATTLE_CHECK
  * leaves them time). A missing pack never turns ready.
  */
 export function preloadBootArt() {
@@ -44,6 +44,7 @@ export function preloadBootArt() {
   let left = urls.length;
   for (const src of urls) {
     const img = new Image();
+    img.fetchPriority = 'low';
     img.onload = () => { left -= 1; if (left === 0) bootArt = true; };
     img.onerror = () => { left = -1; };
     img.src = src;

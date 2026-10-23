@@ -5,6 +5,7 @@ import { html, Button, Modal, confirmDialog } from './components.js';
 import { assetCache } from '../assetCache.js';
 import { store, selectRoute } from '../store.js';
 import { t } from '../../../shared/i18n.js';
+import { settingsStore } from './settingsStore.js';
 
 const viewers = new Set();
 let opened = false;
@@ -222,4 +223,12 @@ export function installAssetCache() {
   const follow = () => assetCache.setPlaying(selectRoute(store.get()) === 'game');
   follow(); store.subscribe(follow);
   assetCache.initialize().catch(() => {});
+  let consentWrites = Promise.resolve();
+  const configure = () => { consentWrites = consentWrites.then(() => assetCache.configureRendering(settingsStore.get().renderCache)); };
+  configure();
+  settingsStore.subscribe((next, prev) => { if (next.renderCache !== prev.renderCache) configure(); });
+  globalThis.navigator?.serviceWorker?.addEventListener('controllerchange', configure);
+  globalThis.navigator?.serviceWorker?.addEventListener('message', ({ data }) => {
+    if (data?.type === 'ASSET_CACHE_RENDER_CLEARED' && settingsStore.get().renderCache) settingsStore.set({ renderCache: false });
+  });
 }

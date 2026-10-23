@@ -3,6 +3,7 @@
 // A URL already stored by a local import (assetPack.js) is marked done and not requested again.
 import { mediaUrl } from './media.js';
 import { listImportedPaths } from './assetCache.js';
+import { createAssetTransfer, releaseAssetReader } from '../../shared/assetCache.js';
 
 /**
  * Collect only same-origin art files, including all Spine pages and optional local scenes.
@@ -25,7 +26,8 @@ export function collectAssetUrls(...manifests) {
   return [...urls].sort((a, b) => Number(a.startsWith('/media/')) - Number(b.startsWith('/media/')) || a.localeCompare(b));
 }
 
-/** A bounded, pausable download queue. A file counts only after its entire body arrives. */
+/** A bounded, pausable download queue. A file counts only after its entire body arrives.
+ * timeoutMs bounds inactivity, so a slow file that keeps delivering bytes can finish. */
 export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.fetch(...args),
   concurrency = 4, timeoutMs = 60000, retries = 2, lookupImported = listImportedPaths } = {}) {
   let state = { phase: 'idle', total: 0, done: 0, bytes: 0, failures: [], localMissing: false, cached: 0 };
@@ -38,54 +40,54 @@ export function createAssetDownload({ fetch: doFetch = (...args) => globalThis.f
     for (const listener of listeners) listener(state);
   };
 
+  async function requestOnce(url, json, optional) {
+    const transfer = createAssetTransfer({ signal: controller.signal, timeoutMs });
+    let reader = null, complete = false;
+    try {
+      const response = await transfer.wait(doFetch(url, { signal: transfer.signal, cache: json ? 'no-cache' : 'default' }));
+      transfer.progress();
+      reader = response.body?.getReader?.() || null;
+      if (optional && response.status === 404) return null;
+      if (!response.ok || response.status === 206) throw Object.assign(new Error('Asset request failed'), { status: response.status });
+      // Static hosts sometimes send their HTML fallback with status 200 for missing art.
+      if (/text\/html/i.test(response.headers.get('content-type') || ''))
+        throw Object.assign(new Error('Unexpected HTML response'), { status: 'html' });
+      if (json && !reader) { const value = await transfer.wait(response.json()); complete = true; return value; }
+      let size = 0;
+      const chunks = [];
+      if (reader) {
+        for (;;) {
+          const { done, value } = await transfer.wait(reader.read());
+          if (done) break;
+          if (value.byteLength) transfer.progress();
+          size += value.byteLength;
+          if (json) chunks.push(value);
+          else { state = { ...state, bytes: state.bytes + value.byteLength }; emit(); }
+        }
+      } else {
+        size = (await transfer.wait(response.arrayBuffer())).byteLength;
+        state = { ...state, bytes: state.bytes + size };
+      }
+      complete = true;
+      if (json) {
+        const body = new Uint8Array(size); let offset = 0;
+        for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+        return JSON.parse(new TextDecoder().decode(body));
+      }
+      if (!size) throw Object.assign(new Error('Empty asset response'), { status: 'empty' });
+    } finally { releaseAssetReader(reader); transfer.close({ abort: !complete }); }
+  }
+
   async function request(url, json = false, optional = false) {
     for (let attempt = 0; ; attempt++) {
-      const abort = new AbortController();
-      const cancel = () => abort.abort();
-      controller.signal.addEventListener('abort', cancel, { once: true });
-      if (controller.signal.aborted) cancel();
-      const timer = setTimeout(cancel, timeoutMs);
-      try {
-        const response = await doFetch(url, { signal: abort.signal, cache: json ? 'no-cache' : 'default' });
-        if (optional && response.status === 404) { await response.body?.cancel(); return null; }
-        if (!response.ok || response.status === 206) {
-          await response.body?.cancel();
-          throw Object.assign(new Error('Asset request failed'), { status: response.status });
-        }
-        // Static hosts sometimes send their HTML fallback with status 200 for missing art.
-        if (/text\/html/i.test(response.headers.get('content-type') || '')) {
-          await response.body?.cancel();
-          throw Object.assign(new Error('Unexpected HTML response'), { status: 'html' });
-        }
-        if (json) return await response.json();
-        let size = 0;
-        if (response.body?.getReader) {
-          const reader = response.body.getReader();
-          try {
-            for (;;) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              size += value.byteLength;
-              state = { ...state, bytes: state.bytes + value.byteLength };
-              emit();
-            }
-          } finally { reader.releaseLock(); }
-        } else {
-          size = (await response.arrayBuffer()).byteLength;
-          state = { ...state, bytes: state.bytes + size };
-        }
-        if (!size) throw Object.assign(new Error('Empty asset response'), { status: 'empty' });
-        return;
-      } catch (error) {
+      try { return await requestOnce(url, json, optional); }
+      catch (error) {
         if (paused) throw error;
         const transient = !error.status || error.status >= 500 || [408, 429].includes(error.status);
         if (!transient || attempt >= retries) throw Object.assign(error, { url });
-        // Keep retries bounded and avoid hammering a struggling server.
+        // The previous request has already released its reader and connection before this backoff.
         await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
         if (paused) throw error;
-      } finally {
-        clearTimeout(timer);
-        controller.signal.removeEventListener('abort', cancel);
       }
     }
   }

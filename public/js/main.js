@@ -55,6 +55,7 @@ import { AnnouncementHost, installAnnouncements } from './ui/announcements.js';
 import { UrgentAnnouncementHost, installUrgentAnnouncements } from './ui/urgentAnnouncements.js';
 import { AssetCacheHost, installAssetCache } from './ui/assetCache.js';
 import { installDeviceSupport } from './ui/device.js';
+import { gpu } from './ui/glInfo.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost } from './screens/stats.js';
 import { installRehearsal } from './battle/rehearsal.js';
@@ -254,6 +255,7 @@ function wireNet() {
     store.set({
       connection: {
         status: snap.status, ping: snap.ping, attempt: snap.attempt, retryAt: snap.retryAt,
+        quality: snap.quality,
         lastError: snap.lastError, everOnline: cur.everOnline || snap.status === 'online',
       },
     });
@@ -467,6 +469,11 @@ async function boot() {
   await Promise.all([waitForFonts(1200), connectWhenReady, langReady]);
   const root = document.getElementById('app');
   render(html`<${App} />`, root);
+  // 星愿 / Twinkstar and other Chromium builds with a broken GPU/driver pairing cannot make a WebGL context at all
+  // (their own forum's fix is "close hardware acceleration"): say so once instead of leaving a blank battle field.
+  if (!gpu.webgl) {
+    setTimeout(() => toast(t('这个浏览器无法创建 WebGL 画面，战斗会退到简化视图。可以试试：在浏览器设置里关闭「硬件加速」后重启浏览器，或更新显卡驱动，或用 Chrome / Edge 最新版打开。'), 'warn', { ttl: 30000 }), 1500);
+  }
 
   const splash = document.getElementById('boot');
   if (splash) {

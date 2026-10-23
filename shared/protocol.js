@@ -533,9 +533,14 @@ export const C2S = {
   'room.kick': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: isId },
   // Transfer names a current human, never a position that may have changed while the dialog was open.
   'room.transferHost': { playerId: isId },
+  'room.requestSeat': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: (v) => v === null || isId(v) },
+  'room.answerSeat': { requestId: isId, accept: isBool },
   'room.start': {},
   'room.rerollSetup': { setupRevision: (v) => isInt(v, 0, 2 ** 31) },
   'room.cancelReroll': { voteId: (v) => isInt(v, 1, 2 ** 31) },
+  // 申请重刷 (GitHub #854): a non-host asks the host to start the vote (server/match/match/setupVote.js
+  // askSetupReroll) — no setup changes; m.public.rerollRequests lists the pendings
+  'room.requestReroll': { setupRevision: (v) => isInt(v, 0, 2 ** 31) },
   // operator loadout (DESIGN §16): stored per session/seat; accepted until the match leaves INFO_CHECK — `ops` (0.2.2):
   // the per-operator 潜能 / 练度 (absent = none set: every operator at 潜能 6, 精英2 Lv.60)
   'room.loadout': { entries: isLoadoutEntries, ops: isLoadoutOps, $optional: ['ops'] },

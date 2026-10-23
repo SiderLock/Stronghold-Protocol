@@ -2961,6 +2961,46 @@ test('盐风主教昆图斯: 2 highest-DEF targets + neural; 崩坍 / 大潮 / �
 });
 const ROCK = 1.3;
 
+test('盐风主教昆图斯: 大潮 keeps its cooldown and one hit per wave through a long third form', () => {
+  // Official level_act1autochess_h07_04: TidewaterG2 CD 3.5, no cast-count limit;
+  // Doom initial CD 999. Run 300 game seconds (> 2 real minutes at the match's 2x speed).
+  const tpl = W.act1autochess_h07_04;
+  const h = bossArena({ units: [{ chessId: 't_wall', row: 12, col: 4 }], captureNoisy: true, hooks: ['damaged', 'lpLoss'],
+    setup(b) { b.opts.templateId = 'act1autochess_h07_04'; b.enemyOverrides = tpl.overrides; } });
+  h.step();
+  const e = put(h, 'enemy_1521_dslily', [3, 10], { tag: 'boss' });
+  const hits = () => h.hooksOf('damaged').filter((c) => c.source === e && c.dmg.type === 'arts');
+  h.run(44);
+  assert.equal(hits().length, 0, 'no tide before the first-form initial cooldown');
+  h.run(21);
+  assert.equal(hits().length, 1);
+  assert.ok(Math.abs(hits()[0].t - 45) <= h.TICK, 'first wave at the configured initial cooldown');
+
+  const g1At = h.b.time;
+  h.b.sharedBoss.hp = h.b.sharedBoss.maxHp * 0.6;
+  h.run(60);
+  const g1 = hits().slice(1);
+  assert.equal(g1.length, 2, 'second form uses its own initial cooldown');
+  assert.ok(g1[0].t - g1At >= 15 - h.TICK);
+  approx(g1[1].t - g1[0].t, 35);
+
+  const before = hits().length;
+  const tidesBefore = h.eventsOf('fx').filter((f) => f[1] === 'tide').length;
+  h.b.sharedBoss.hp = h.b.sharedBoss.maxHp * 0.3;
+  h.run(300);
+  const g2 = hits().slice(before);
+  assert.ok(g2.length > 40, 'third form continues beyond a short burst');
+  assert.ok(g2.at(-1).t - g2[0].t > 240, 'observed for more than two real minutes at 2x');
+  for (let i = 1; i < g2.length; i++) {
+    assert.ok(g2[i].t - g2[i - 1].t >= 3.5 - h.TICK, 'a full cooldown between damaging waves');
+  }
+  for (const c of g2) approx(c.amount, 480 * 1.7 * 0.2, 1e-6, 'one third-form damage packet');
+  assert.equal(h.eventsOf('fx').filter((f) => f[1] === 'tide').length - tidesBefore, g2.length, 'one hit per wave on this target');
+  assert.equal(h.hooksOf('lpLoss').length, 0, 'retain the real multiplayer Doom override');
+  assert.ok(e.alive && h.unit('t_wall').alive && !h.b.finished);
+  assert.ok(h.invariants());
+});
+
 test('卢西恩: evades 40 % while unblocked, ignores 40 % DEF, neural on hit; blinks past its blocker leaving a 不祥幻影', () => {
   const h = bossArena({ units: [{ chessId: 't_wall', row: 9, col: 6 }], chess: { t_wall: WALL('t_wall', { def: 500 }) }, captureNoisy: true, hooks: ['damaged'] });
   h.step();

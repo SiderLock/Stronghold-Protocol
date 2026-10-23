@@ -21,6 +21,9 @@ cooldown. It respects the SFX/mute settings; a stale asynchronous decode cannot 
 All downloaded game assets the client needs are listed in **`data/assets.json`**. Game-art requests must use that manifest.
 The original project icons below are shipped static files, not downloaded game assets.
 
+Player-authorized current-first loading and cross-match visual-file caching in this fork are documented in
+[Asset loading](development/ASSET_LOADING.md). This optional cache does not replace verified imports or admission checks.
+
 ## Original project application icons (#413)
 
 By the maintainer's revised decision of 2026-10-10, **沿用 0.2.x 的薄荷绿城堡并精修**.
@@ -232,6 +235,7 @@ The research JSONs in `docs/research/` (03, 05, 07) define **which** ids are nee
 | Enemy Spine (PC build, premultiplied alpha) | isHarryh/Ark-Models `models_enemies/{key}/`, file names from `models_data.json` | `spine/enemy/{enemyId}/{stem}.*` |
 | Enemy Spine that no dump carries (灼热源石虫 / 炽焰源石虫) | the local client only (`tools/local-extract/extract.py ENEMY_SPINES`, optional); never downloaded and never required: an overlay of the web alias (`enemies[id].spineLocal`) | `local/spine/enemy/{enemyId}/{stem}.*` (listed in `data/local-assets.json`) |
 | Original token Spine overlays (40 summons: most 自选 summons, 凯瑟琳's 爬行号·防护单元, 凛御银灰's 风雪之眼, 香槟炸弹) | local-client extraction (`tools/local-extract/extract.py TOKEN_SPINES`, optional); the original overlay is preferred, with any listed web model retained as fallback | `local/spine/token/{tokenId}/{stem}.*` (listed in `data/local-assets.json`) |
+| Official outfits (时装; 443 with a battle model on the 2026-10 client) | local-client extraction (`tools/local-extract/skins.py`, optional); the metadata sidecar is merged into the served manifest, the files live under `public/assets/local/` — see [SKINS.md](SKINS.md#本机提取的官方时装-installation-outfits) | `local/skins/{charId}/{skin}/{front,back}/*`, `portrait.png`, `illust.png` + `data/local-skins.json` |
 | Official trap models: 射击台 and 阻隔工事 (`trap_1105_accrate` = renderer `crate`, #663) | `arts/maps/common/trap/trap_110.ab`, `tools/local-extract/extract.py --only mesh/trap_110`; only `trap_1106_achplat` and `trap_1105_accrate`, their materials and textures. Crate: 636 vertices / 344 triangles, own UVs, 1024² DXT1 texture; battle prefab scale 0.01, X rotation −90°. Texture copies use lossy WebP quality 95. Without the crate mesh or texture the 3D board keeps `s_common_box_01` + atlas (procedural box if that mesh is absent); 2D keeps its atlas crops | `local/mesh/trap_110/{trap_1106_achplat,trap_1105_accrate}.obj`, `TX_*.png` / `.webp`, `materials.json`, `prefab.json` (listed in `data/local-assets.json`) |
 | Official battlefield scenes (one per battlefield: meshes, lightmaps, albedo textures; DESIGN §15, DESIGN §30.21) | the scene bundles `scenes/activities/<season>/level_<stage>/…` (`tools/local-extract/extract.py --only scene`, optional). The client carries them only while the season runs; off season `tools/local-extract/fetch_scenes.py` downloads the bundles of the in-season version `26-04-13-12-31-42_e9b560` from the official CDN into `.cache/official-scenes/` (33 bundles, 22,801,308 bytes compressed on the Android list, md5-checked), and the materials / textures still come from the local client's theme bundles. The 0.2.5 full release zip includes the extracted files under `public/assets/local/scene/` when the maintainer extracted them before packaging; a lite zip and a source install may fetch and extract them (`node tools/setup.mjs --scenes`). The repository never stores the bundles or the extracted files. Normal, metallic-gloss and emission copies are lossless WebP (emission only when the material's `_EMISSION` keyword is on; lossy 4:2:0 was turning saturated lights grey); albedo and lightmaps stay lossy quality 95; `env` stays PNG. An extract whose manifest `scene` record is older than this version, including the previous lossless normal/gloss extract, is stale, and setup asks once. Answering yes on that version-only prompt runs `extract.py --only scene`, the same as a first extract; answering no is remembered. A partial set (some battlefields missing) still does not start that extract from a typed yes. Without a scene the 3D board draws its procedural metal tiles | `local/scene/{stageId}/scene.json`, `scene.bin`, `lm{i}.*`; `local/scene/tex/{texture}.*` (listed in `data/local-assets.json`) |
 | Official battle effects (特效: the particle systems, meshes and textures of hits, projectiles, casts, status loops and skills; DESIGN §33) | the local client only (`tools/local-extract/extract.py --only fx --fx-set used`, opt-in: a plain extraction leaves them out); never downloaded, and not in the release zips while `tools/package.mjs FULL_ZIP_FX` is off | `local/fx/index.json`, `local/fx/textures.json`, `local/fx/prefabs/{key}.json`, `local/fx/tex/{key}.webp` (and `tex/half/`), `local/fx/mesh/{key}.json` (listed in their own `data/local-fx.json`, not in `data/local-assets.json`) |
@@ -727,6 +731,27 @@ or partial response is never counted as successful. A missing optional local man
 base manifest or any listed missing file prevents successful completion. Server owners still install missing art
 with setup; this button only transfers files already supplied by the server.
 
+For streamed art and JSON manifests, the 60-second timeout measures **inactivity**: response headers and each nonempty body chunk
+restart it. A continuously progressing download may take longer than 60 seconds without being aborted and
+downloaded again. A stalled body still times out, and pause still aborts immediately. Fetch and read promises race
+the deadline even when the transport ignores abort; reader cleanup does not await a stuck stream cancellation.
+Hosts without a readable body stream remain bounded while their whole body is read. This does not add byte-range
+resume or a permanent offline guarantee. Regression: `test/ui/asset-download.test.js`;
+maintenance evidence: DEV-20261022-01 (local notes).
+
+The verified online pre-cache Worker uses the same 60-second inactivity deadline per file. A transient failed file
+goes behind healthy queued files, with at most two retries. Exhausted failures retain verified siblings and publish
+their final counts; the player can retry missing files in the same page. Pause, quota, stale directory, owner disable
+and emergency errors cancel and settle all active lanes before another operation starts. Files are still committed
+only after complete length / SHA-256 verification; identical content is requested once.
+
+The server's shared transfer limiter reads at most one 8 KiB quantum per response independently, then accounts
+actual writes through its existing aggregate and per-IP token budgets. One pending disk read does not hold the
+global scheduler. Preparation, pending reads, socket backpressure and final flushing are canceled after 60 seconds
+without progress; healthy bandwidth-budget waits are excluded. File-hash preparation reports progress too.
+Existing 24-global / 2-per-IP defaults, admission and byte ceilings remain in force. Regression:
+`test/cache-limiter-stall.test.js`, `test/asset-cache-pack-worker.test.js`, `test/asset-transfer.browser.test.js`.
+
 ## Importing a local asset pack
 
 The title screen's **导入素材包** button (`public/js/ui/assetImport.js`), beside 下载完整素材, opens its own dialog. Opening it requests nothing from the server and never starts the download queue; the manifests are read once an import starts. It imports art the player already has: the example asset pack `node tools/package.mjs --assets` writes (one folder holding `public/assets/…`, `public/fonts/…` and a `README.txt`; the maintainer offers it for download outside the GitHub release), a setup `public/assets` folder, or a published full zip whose paths contain `public/assets/`. The page reads a zip's central directory in the browser, and a picked or dropped zip File slice by slice, so a whole pack (some 700 MB) is never held in memory at once. Method 0 (stored) is copied. Method 8 is inflated with `DecompressionStream('deflate-raw')`. Any other method, and an encrypted entry, is counted and skipped. Nothing is uploaded.
@@ -735,7 +760,7 @@ Verification uses the served manifests (`GET /data/assets.json`, and `GET /data/
 
 Accepted bytes go into Cache Storage under the name `sp-imported-assets-v1`, at the hashed `/assets/` or `/fonts/` URL and, for audio, also at the `/media/~<hash>/…` URL playback requests. As an import ends, the pathnames it stored are added to one JSON entry of that cache, `/sp-imported-index.json`, which the dialog's count and the download queue read: Chrome refuses `Cache.keys()` for a cache of more than about 15,000 entries ("Operation too large"), and a whole pack stores some 43,000. A file already present in the pre-cache (`sp-asset-cache-v1`, matched by the file's **full** SHA-256) is not written a second time: its path goes into `/sp-imported-borrowed.json` and the shared worker serves the pre-cache bytes. The result line reports those files as 复用.
 
-**One service worker per scope.** `public/asset-cache-sw.js` (a module service worker) is registered by `public/js/assetCache.js` at scope `/`; it serves both the pre-cache catalog and the title screen's imported cache, and answers the `ASSET_CACHE_*` messages. Registering a second worker at the same scope (`/sw.js` in 0.3.0) replaced this one and broke the pre-cache: every message to a classic worker timed out. `/sw.js` stays in the tree only as the classic fallback for browsers without module service workers (registered when the module registration is refused) and for pages loaded from an earlier deployment; `public/js/main.js` no longer registers it. The merged worker intercepts same-origin GET whose path matches `/assets/~<16 hex>/`, `/fonts/~<16 hex>/` or `/media/~<16 hex>/`: a pinned catalog hit is served from the pre-cache, otherwise a verified import hit is served, otherwise the request goes to the network. A request with a `Range` header is not answered from the imported cache. HTML, scripts, `/data/`, `/sim/` and `/ws` are never handled.
+**One service worker per scope.** `public/asset-cache-sw.js` (a module service worker) is registered by `public/js/assetCache.js` at scope `/`; it serves both the pre-cache catalog and the title screen's imported cache, and answers the `ASSET_CACHE_*` messages. Registering a second worker at the same scope (`/sw.js` in 0.3.0) replaced this one and broke the pre-cache: every message to a classic worker timed out. `/sw.js` stays in the tree only as the classic fallback for browsers without module service workers (registered when the module registration is refused) and for pages loaded from an earlier deployment; `public/js/main.js` no longer registers it. The merged worker intercepts same-origin GET whose path matches `/assets/~<16 hex>/`, `/fonts/~<16 hex>/` or `/media/~<16 hex>/`: a pinned catalog hit is served from the pre-cache, otherwise a verified import hit is served, otherwise the request goes to the network. A URL that is **not** one of the pinned catalog's aliases still reuses the pre-cache when it names a content hash the catalog knows under the plain path with the **same** hash (`cachedHashAlias`): the cache is keyed by content hash, so those bytes are already verified — an open page (or a post-deploy alias form the page's pinned directory never listed) does not download a file the player pre-cached. A differing hash is never substituted into a `~hash` URL. A request with a `Range` header is not answered from the imported cache. HTML, scripts, `/data/`, `/sim/` and `/ws` are never handled.
 
 `worker-src 'self' blob:` was already the site policy (`server/http/csp.js`). `'self'` is what the worker needs. `blob:` stays for the simulation worker the page already starts. No remote worker origin is added, and `SIM_WORKER_CSP` does not gain this worker.
 
@@ -773,7 +798,7 @@ The project's code is GPL-3.0-or-later (`LICENSE`); none of the items below is c
   - [isHarryh/Ark-Models](https://github.com/isHarryh/Ark-Models) (ArkUnpacker). Not for commercial use.
   - [ArknightsAssets/ArknightsAssets2](https://github.com/ArknightsAssets/ArknightsAssets2) (ArknightsStudio)
   - [Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)
-- **Spine runtime.** pixi-spine is MIT-licensed. It embeds Spine Runtime code under the [Spine Runtimes License](http://esotericsoftware.com/spine-runtimes-license), which formally expects a Spine Editor licence. This is commonly tolerated for non-commercial fan tools, and the Spine Runtimes License must be credited (`THIRD-PARTY-NOTICES.md`). The project's GPL carries an additional permission (section 7) to combine it with the Spine Runtimes (`NOTICE.md`).
+- **Spine runtime.** pixi-spine is MIT-licensed. It embeds Spine Runtime code under the [Spine Runtimes License](http://esotericsoftware.com/spine-runtimes-license), which formally expects a Spine Editor licence. Follow the applicable Spine Editor and Spine Runtimes licence terms and retain their notices (`THIRD-PARTY-NOTICES.md`); non-commercial use and attribution do not substitute for a required licence. The project's GPL carries an additional permission (section 7) to combine it with the Spine Runtimes (`NOTICE.md`).
 - **Fonts.**
   - **Bender:** © Jovanny Lemonad (Oleg Zhuravlev, Ivan Gladkikh). Free for personal and commercial use.
   - **Novecento Wide:** © Jan Tonellato / Synthview. Free licence.
@@ -794,3 +819,16 @@ each selected bank separately; `attacks`/`hits` and `attackMix`/`hitMix` use mat
 manifest instead of importing an older PR's full JSON, preserving JP voices and current operators. See DESIGN §34.3.
 
 The 40th local token model is the original champagne bomb (`token_10031_swire2_gdtrap`, §29.5), extracted from the official `btl_pfb_tokens_0.ab` through `TOKEN_SPINES`. Its web fallback is retained. Failed board-pack/image requests can retry after connectivity/visibility recovers; a failed three.js module gets at most two fresh-URL retries per page because browser module failures are cached. Successful resources remain cached.
+
+## 浏览器能力探测 (public/js/ui/glInfo.js)
+
+战斗画面完全依赖 WebGL（小人走 PIXI、3D 棋盘走 three.js）。国内一些 Chromium 浏览器（例如星愿 / Twinkstar，
+Chromium 98，官方论坛就记录了 GPU 与显卡驱动冲突导致黑屏、需要关掉「硬件加速」）会**创建不出 WebGL 上下文**，
+或在对局中途丢失上下文。
+
+- `gpuProfile()` 在启动时探测一次：`webgl`（0/1/2）、`software`（渲染器名命中 SwiftShader / llvmpipe / Basic Render
+  等软件光栅化）、`renderer`、`probed`（有没有 canvas 可问——Node / 测试环境不会因此被误判成「没有 WebGL」）。
+- **首次进入的默认档位**：软件渲染或没有 WebGL 时，`settingsStore` 首次运行默认 `quality: 'low'` + `officialFx: 'off'`，
+  避免一开局就用重档位把弱 GPU 拖崩；玩家自己存过设置则完全尊重其选择。
+- **可见提示**：完全没有 WebGL 时大厅弹一次 30 秒警告（关闭硬件加速 / 更新显卡驱动 / 换 Chrome·Edge）；渲染引擎
+  回退到 `fallbackField`（简化视图）时再弹一次说明。提示文案在四个语言包里（docs/I18N.md）。

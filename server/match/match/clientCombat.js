@@ -28,6 +28,8 @@ export class MatchClientCombat {
   _clearFieldTimers(f) {
     if (!f || !f.cc) return;
     for (const k of ['deadlineTimer', 'doneTimer', 'waitTimer', 'sliceTimer', 'verifyTimer']) if (f[k]) { this.cancel(f[k]); f[k] = null; }
+    f.workerTask?.cancel();
+    f.workerTask = null;
     f.job = null;
     f.verifyJob = null;
   }
@@ -174,6 +176,38 @@ export class MatchClientCombat {
     // the former authority (still online after a timeout / an invalid result) stops reporting and keeps its view
     if (prev) this.sendTo(prev, { t: 'b.end', battleId: f.battleId, fieldId: f.fieldId, reason: 'takeover' });
     if (f.kind === 'boss' || f.kind === 'hidden') { this._bossServerRun(f); return; }
+    // A large real result deliberately yields instead of truncating leaks / overflowing the wire.
+    // Replaying the entire battle at its end must not compete with pings and next-round prep on the main loop.
+    if (reason === 'oversized-result' && this.rehearsalPool && !f.workerTried) {
+      f.workerTried = true;
+      const task = this.rehearsalPool.submit({ kind: 'headless', spec: f.spec });
+      if (task) {
+        f.workerTask = task;
+        const valid = () => !this.disposed && !this.ended && !f.done && f.workerTask === task && this.fields.includes(f);
+        task.promise.then(output => {
+          if (!valid()) return;
+          this.later(0, () => {
+            if (!valid()) return;
+            f.workerTask = null;
+            f.workerErrors = output.errors;
+            for (const failure of output.failures) this.reportError(`field ${f.fieldId} step`, new Error(failure));
+            f.result = output.result;
+            f.resultSource = 'server';
+            f.timeline = output.timeline;
+            f.endGt = output.time;
+            this._armRelease(f);
+          });
+        }, error => {
+          if (!valid()) return;
+          f.workerTask = null;
+          this.log.warn?.(`[match ${this.roomCode}] battle replay fallback: ${error.message}`);
+          this.later(0, () => {
+            if (!this.disposed && !this.ended && !f.done && this.fields.includes(f)) this._runOnServer(f, 'worker-fallback');
+          });
+        });
+        return;
+      }
+    }
     const job = new HeadlessJob(this._specBattle(f.spec), { onError: (e) => this.reportError(`field ${f.fieldId} step`, e), players: f.players });
     f.job = job;
     f.battle = job.battle;

@@ -12,6 +12,7 @@ const QUANTUM = 8 * 1024;
 const TICK_MS = 20;
 const BURST_SECONDS = 0.1;
 const IDLE_CLIENT_MS = 2_000;
+const STALL_TIMEOUT_MS = 60_000;
 
 function rate(value, fallback) {
   if (value === null || String(value).trim().toLowerCase() === 'unlimited') return Infinity;
@@ -37,6 +38,8 @@ function publicRate(value) { return Number.isFinite(value) ? value : null; }
 export class CacheDownloadLimiter {
   constructor(opts = {}) {
     this.opts = assetCacheLimitOptions(opts);
+    this.stallTimeoutMs = opts.stallTimeoutMs ?? STALL_TIMEOUT_MS;
+    if (!Number.isSafeInteger(this.stallTimeoutMs) || this.stallTimeoutMs < 1) throw new RangeError('invalid asset cache stall timeout');
     for (const name of ['maxDownloads', 'maxDownloadsPerClient']) {
       if (!Number.isSafeInteger(this.opts[name]) || this.opts[name] < 1) throw new RangeError(`invalid asset cache ${name}`);
     }
@@ -102,6 +105,7 @@ export class CacheDownloadLimiter {
     let resolve;
     const done = new Promise((r) => { resolve = r; });
     const job = { client, networkKey, handle: null, buffer: null, res: null, size: 0, position: 0, blocked: false, released: false,
+      reading: false, chunk: null, progressAt: now,
       started: false, ending: false, aborted: false,
       cleanup: null, resolve, done };
     client.jobs.add(job);
@@ -111,19 +115,20 @@ export class CacheDownloadLimiter {
       job.res = res;
       const onClose = () => release();
       const onError = () => release();
-      const onDrain = () => { job.blocked = false; this.schedule(); };
+      const onDrain = () => { job.blocked = false; job.progressAt = performance.now(); this.schedule(); };
       res.once('close', onClose); res.once('finish', onClose); res.once('error', onError); res.on('drain', onDrain);
       job.cleanup = () => { res.off('close', onClose); res.off('finish', onClose); res.off('error', onError); res.off('drain', onDrain); };
       if (res.destroyed || res.writableFinished) release();
     };
     if (response) attach(response);
+    this.schedule(); // preparation can stall before stream() ever starts
     const start = (handle, buffer, res, size) => {
       // A file can finish preparing after an emergency abort, including after a subsequent resume.
       // Its old lease must never start sending again.
       if (job.released) { if (job.aborted && !res.destroyed) res.destroy(); return done; }
       if (job.started) throw new Error('asset cache lease already streaming');
       if (job.res && job.res !== res) throw new Error('asset cache lease response changed');
-      job.handle = handle; job.buffer = buffer; job.size = size; job.started = true;
+      job.handle = handle; job.buffer = buffer; job.size = size; job.started = true; job.progressAt = performance.now();
       if (!job.res) attach(res);
       if (res.destroyed || res.writableEnded) release();
       else this.schedule();
@@ -131,6 +136,7 @@ export class CacheDownloadLimiter {
     };
     return {
       release,
+      touch: () => { if (!job.released) job.progressAt = performance.now(); },
       get released() { return job.released; },
       stream: (handle, res, size) => start(handle, null, res, size),
       // The immutable catalog body uses the exact same scheduler, byte budget, slots and backpressure
@@ -163,6 +169,7 @@ export class CacheDownloadLimiter {
   release(job) {
     if (job.released) return;
     job.released = true;
+    job.chunk = null; job.buffer = null;
     job.cleanup?.();
     job.client.jobs.delete(job);
     job.client.idleAt = performance.now();
@@ -177,11 +184,41 @@ export class CacheDownloadLimiter {
     this.timer.unref?.();
   }
 
+  abort(job) {
+    if (job.released) return;
+    job.aborted = true;
+    job.res?.destroy(); this.release(job);
+  }
+
+  /** One bounded read per response. Its completion never holds the shared scheduler or sends prepaid bytes. */
+  read(job) {
+    job.reading = true;
+    const length = Math.min(QUANTUM, job.size - job.position);
+    const buffer = Buffer.allocUnsafe(length);
+    let reading;
+    try { reading = job.handle.read(buffer, 0, length, job.position); }
+    catch { job.reading = false; this.abort(job); return; }
+    Promise.resolve(reading).then(({ bytesRead }) => {
+      job.reading = false;
+      if (job.released) return;
+      if (bytesRead !== length) { this.abort(job); return; }
+      job.chunk = buffer;
+      job.progressAt = performance.now();
+      // Re-enter after disk completion, without adding a 20 ms delay to every 8 KiB chunk. Tokens are consumed
+      // only by writes below, so late reads cannot exceed either the current aggregate or per-client budget.
+      this.pump();
+    }, () => { job.reading = false; this.abort(job); });
+  }
+
   async pump() {
     if (this.closed || this.tripped || this.pumping) return;
     this.pumping = true;
     try {
       const now = performance.now();
+      for (const client of this.clients.values()) for (const job of [...client.jobs]) {
+        // Waiting for configured bandwidth is healthy; only blocked IO/preparation/flushes have a stall deadline.
+        if ((!job.started || job.reading || job.blocked || job.ending) && now - job.progressAt >= this.stallTimeoutMs) this.abort(job);
+      }
       this.tokens = this.opts.totalBps === Infinity ? Infinity
         : Math.min(Math.max(1, this.opts.totalBps * BURST_SECONDS), this.tokens + (now - this.updatedAt) * this.opts.totalBps / 1000);
       this.updatedAt = now;
@@ -199,9 +236,11 @@ export class CacheDownloadLimiter {
         let job = null;
         for (let i = 0; i < jobs.length; i++) {
           const candidate = jobs[client.cursor++ % jobs.length];
-          if (!candidate.released && !candidate.ending && (candidate.handle || candidate.buffer) && !candidate.blocked) { job = candidate; break; }
+          if (!candidate.released && !candidate.ending && !candidate.reading
+            && (candidate.handle || candidate.buffer) && !candidate.blocked) { job = candidate; break; }
         }
         if (!job || client.tokens < 1) { misses++; continue; }
+        if (job.handle && !job.chunk) { this.read(job); misses++; continue; }
         const length = Math.floor(Math.min(QUANTUM, this.tokens, client.tokens, job.size - job.position));
         if (length <= 0) {
           if (job.position >= job.size) { job.ending = true; job.res.end(); }
@@ -210,20 +249,19 @@ export class CacheDownloadLimiter {
         }
         misses = 0;
         try {
-          const buffer = job.buffer ? job.buffer.subarray(job.position, job.position + length) : Buffer.allocUnsafe(length);
-          // The file is opened and verified by assetCache.js; at most one small disk read is pending here.
-          const bytesRead = job.buffer ? length : (await job.handle.read(buffer, 0, length, job.position)).bytesRead;
-          if (job.released) continue;
-          if (bytesRead !== length) throw new Error('asset cache file changed during transfer');
+          const bytesRead = job.buffer ? length : Math.min(length, job.chunk.length);
+          const buffer = job.buffer ? job.buffer.subarray(job.position, job.position + bytesRead) : job.chunk.subarray(0, bytesRead);
           this.tokens -= bytesRead; client.tokens -= bytesRead;
-          job.blocked = !job.res.write(buffer.subarray(0, bytesRead));
+          job.blocked = !job.res.write(buffer);
+          if (job.chunk) job.chunk = bytesRead === job.chunk.length ? null : job.chunk.subarray(bytesRead);
+          job.progressAt = performance.now();
           if (job.blocked) this.backpressureEvents++;
           job.position += bytesRead;
           this.bytesWritten += bytesRead;
           // Retain the response until finish/close so emergency abort also cancels its final buffered quantum.
           if (job.position === job.size) { job.ending = true; job.res.end(); }
         } catch {
-          job.res.destroy(); this.release(job);
+          this.abort(job);
         }
       }
     } finally { this.pumping = false; this.schedule(); }
