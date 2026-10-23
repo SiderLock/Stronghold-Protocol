@@ -51,7 +51,7 @@ test('host transfer and guarded AI removal validate identity fields and twentiet
   assert.notEqual(validateC2S({ t: 'room.removeBot', seat: MAX_SEATS, playerId: 'ai_123' }), null);
 });
 
-test('transfer swaps real waiting seats and retains readiness plus complete player settings', (t) => {
+test('transfer preserves waiting seats, readiness and complete player settings', (t) => {
   const { lobby, player, room, join } = harness(t);
   const host = player('Host');
   const guest = player('Guest');
@@ -67,8 +67,8 @@ test('transfer swaps real waiting seats and retains readiness plus complete play
   originalGuest.ready = true;
   assert.deepEqual(lobby.transferHost(host, { playerId: guest.playerId }), { ok: true });
   assert.equal(r.hostId, guest.playerId);
-  assert.equal(r.seats[0], originalGuest);
-  assert.equal(r.seats[1], originalHost);
+  assert.equal(r.seats[0], originalHost);
+  assert.equal(r.seats[1], originalGuest);
   assert.equal(originalHost.ready, false, 'former host must ready before the new host starts');
   assert.equal(originalGuest.ready, true);
   assert.deepEqual(originalGuest.ops, { guest: 2 });
@@ -80,7 +80,7 @@ test('transfer swaps real waiting seats and retains readiness plus complete play
   error(lobby.start(guest), ERR.NOT_READY);
   assert.deepEqual(lobby.ready(host, { ready: true }), { ok: true });
   assert.deepEqual(lobby.start(guest), { ok: true });
-  assert.equal(r.match.originalSeats[0].playerId, guest.playerId);
+  assert.equal(r.match.originalSeats[1].playerId, guest.playerId);
 });
 
 test('transfer refuses non-hosts, AI, observers, offline humans, self, absent and stale identities', (t) => {
@@ -108,23 +108,18 @@ test('transfer refuses non-hosts, AI, observers, offline humans, self, absent an
   error(lobby.transferHost(host, { playerId: replacement.playerId }), ERR.NOT_HOST);
 });
 
-test('waiting migration puts connected human at P1, swapping an AI or filling an empty P1 safely', (t) => {
+test('waiting migration selects a connected human without moving any remaining seat', (t) => {
   const { lobby, player, room, join, bot } = harness(t);
   const host = player('Host'); const a = player('Offline'); const b = player('Online');
   const r = room(host); join(r, a); join(r, b);
   a.connected = false; r.seatOf(a.playerId).connected = false;
   lobby.removeMember(r, host.playerId);
   assert.equal(r.hostId, b.playerId);
-  assert.equal(r.seats[0]?.playerId, b.playerId);
-  assert.equal(r.seats[2], null);
+  assert.equal(r.seats[0], null);
+  assert.equal(r.seats[2]?.playerId, b.playerId);
   const ai = bot(r, b);
-  // Reproduce the pre-feature state: P1 held an AI and host was elsewhere.
-  const hostSeat = r.seats[0];
-  r.seats[0] = ai; ai.seat = 0;
-  r.seats[2] = hostSeat; hostSeat.seat = 2;
-  lobby.promoteHostSeat(r);
-  assert.equal(r.seats[0], hostSeat);
-  assert.equal(r.seats[2], ai);
+  assert.equal(r.seats[0], ai, 'an AI can occupy P1 while the host remains at P3');
+  assert.equal(r.seats[2]?.playerId, b.playerId);
   consistentSeats(r);
 });
 
@@ -135,8 +130,8 @@ test('twentieth-seat transfer preserves every other member and guarded stale AI 
   const target = player('Last'); join(r, target);
   const before = r.seats.slice();
   assert.deepEqual(lobby.transferHost(host, { playerId: target.playerId }), { ok: true });
-  assert.equal(r.seats[0]?.playerId, target.playerId);
-  assert.equal(r.seats[19]?.playerId, host.playerId);
+  assert.equal(r.seats[0]?.playerId, host.playerId);
+  assert.equal(r.seats[19]?.playerId, target.playerId);
   for (let i = 1; i < 19; i++) assert.equal(r.seats[i], before[i]);
   consistentSeats(r);
   error(lobby.removeBot(target, { seat: 1, playerId: before[2].playerId }), ERR.BAD_TARGET);
@@ -145,7 +140,7 @@ test('twentieth-seat transfer preserves every other member and guarded stale AI 
   assert.deepEqual(lobby.removeBot(target, { seat: 2 }), { ok: true });
 });
 
-test('running migration keeps immutable battle roster; match end promotes waiting host and applies latest AI limit', (t) => {
+test('running migration and match end retain seats while applying the latest AI limit', (t) => {
   const { lobby, player, room, join, bot } = harness(t);
   const host = player('Host'); const guest = player('Guest'); const r = room(host, 20);
   join(r, guest);
@@ -163,8 +158,8 @@ test('running migration keeps immutable battle roster; match end promotes waitin
   assert.deepEqual(match.originalSeats, before, 'fixed grouping input never changes mid-match');
   match.end();
   assert.equal(r.match, null);
-  assert.equal(r.seats[0]?.playerId, guest.playerId);
-  assert.equal(r.seats[1], null);
+  assert.equal(r.seats[0], null);
+  assert.equal(r.seats[1]?.playerId, guest.playerId);
   assert.equal(r.seats.filter((s) => s?.isBot).length, 2);
   consistentSeats(r);
 });

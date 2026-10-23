@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Browser-test fixture; injected by test/helpers/skinPreviewFixture.js. -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Skin preview · 卫戍协议：盟约</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
+  <link rel="stylesheet" href="/css/theme.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/screens/loadout.css" />
+  <style>
+    html, body { margin: 0; min-height: 100%; background: #0a0e0d; color: #c3cbc7; font: 13px/1.4 "Noto Sans SC", system-ui, sans-serif; }
+    .sp-dev { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 12px 40px; }
+    .sp-dev__bar { font: 11px/1 Bender, Oxanium, monospace; letter-spacing: .08em; color: #4ed8af; text-transform: uppercase; }
+    .sp-dev__status { font: 12px/1.4 ui-monospace, monospace; color: #8a948f; }
+    .sp-dev__status.is-bad { color: #e0796a; }
+    .sp-dev__hint { max-width: 40rem; color: #8a948f; font-size: 12px; text-align: center; }
+    #app { display: flex; justify-content: center; }
+  </style>
+</head>
+<body>
+  <div class="sp-dev">
+    <div class="sp-dev__bar">Skin model preview · dev</div>
+    <div id="app"></div>
+    <div class="sp-dev__status" id="status">loading…</div>
+    <div class="sp-dev__hint">
+      ?char=&lt;charId&gt;&amp;skin=&lt;skinId&gt; · hooks: window.__skinPreview.show(charId[, skinId]) / .clear() / .state()
+    </div>
+  </div>
+  <script type="module" src="./skin-preview.js"></script>
+</body>
+</html>

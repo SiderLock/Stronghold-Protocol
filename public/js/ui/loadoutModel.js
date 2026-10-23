@@ -13,7 +13,7 @@
 // 精英2 Lv.60) are kept; stored beside the entries (`sp.pref.loadout` = { v: 1, entries, ops }; an older stored loadout
 // has none = the defaults) and sent with `room.loadout { entries, ops }` (shared/protocol.js checkLoadoutOps).
 
-import { loadoutOptions, checkLoadout, checkLoadoutOps, resolveLoadout, MODULE_NONE, LOADOUT_LIMITS } from '../../../shared/protocol.js';
+import { loadoutOptions, checkLoadout, checkLoadoutOps, resolveLoadout, MODULE_NONE, LOADOUT_LIMITS, SKIN_LIMITS, isCharId, isSkinId } from '../../../shared/protocol.js';
 import { isPotential, isCultivate, POTENTIAL_DEFAULT, CULTIVATE_DEFAULT } from '../../../shared/potential.js';
 import { t, N_ } from '../../../shared/i18n.js';
 
@@ -167,16 +167,40 @@ export const LOADOUT_EXPORT_KIND = 'stronghold.loadout';
 export const LOADOUT_IMPORT_MAX_BYTES = 256 * 1024;
 
 /**
- * Portable payload of a loadout, as downloaded / copied by 导出 — with the per-operator 潜能 / 练度 (`ops`, 0.2.2; an
- * older build reading it ignores the field).
- * @param {Record<string, any>} entries `room.loadout.entries`
- * @param {{ now?: number, ops?: Record<string, any> }} [o]
+ * The skin choices a portable payload may carry: `{ [charId]: skinId }` — what `sp.pref.skins` holds and what C2S
+ * `room.skins` sends (ui/skins.js). Both halves pass the wire's own validators (`isCharId` / `isSkinId`) and the map is
+ * capped by `SKIN_LIMITS.entries`, exactly like a stored selection; a junk pair is dropped rather than refusing the file
+ * (this is one operator's appearance, not the point of the payload). Absent or empty means "this payload says nothing
+ * about appearances": an older export leaves the current choices alone, and an outfit this build does not have simply
+ * falls back to the operator's own model (`spineEntry`).
+ * @param {any} raw @param {Set<string>|null} [only] keep these operator ids (the 自选编队 envelope carries its picks')
+ * @returns {Record<string, string>}
  */
-export function exportPayload(entries, { now = Date.now(), ops = {} } = {}) {
+export function cleanSkins(raw, only = null) {
+  const out = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  for (const [charId, skinId] of Object.entries(raw)) {
+    if (Object.keys(out).length >= SKIN_LIMITS.entries) break;
+    if (!isCharId(charId) || !isSkinId(skinId)) continue;
+    if (only && !only.has(charId)) continue;
+    out[charId] = skinId;
+  }
+  return out;
+}
+
+/**
+ * Portable payload of a loadout, as downloaded / copied by 导出 — with the per-operator 潜能 / 练度 (`ops`, 0.2.2; an
+ * older build reading it ignores the field) and 时装 (`skins`, an optional companion: an installation with no cosmetic
+ * layers exports nothing here, so its payload stays exactly what it was).
+ * @param {Record<string, any>} entries `room.loadout.entries`
+ * @param {{ now?: number, ops?: Record<string, any>, skins?: Record<string, string> }} [o]
+ */
+export function exportPayload(entries, { now = Date.now(), ops = {}, skins = {} } = {}) {
   const clean = {};
   for (const [id, e] of Object.entries(entries || {})) if (isObj(e)) clean[id] = { ...e };
   const cleanOps = {};
   for (const [id, e] of Object.entries(ops || {})) if (isObj(e)) cleanOps[id] = { ...e };
+  const cleanSkin = cleanSkins(skins);
   return {
     kind: LOADOUT_EXPORT_KIND,
     v: LOADOUT_VERSION,
@@ -184,6 +208,7 @@ export function exportPayload(entries, { now = Date.now(), ops = {} } = {}) {
     count: Object.keys(clean).length,
     entries: clean,
     ops: cleanOps,
+    ...(Object.keys(cleanSkin).length ? { skins: cleanSkin } : {}),
   };
 }
 
@@ -218,8 +243,10 @@ export function parseImport(input) {
   if (kind && kind !== LOADOUT_EXPORT_KIND) return { ok: false, error: t('这不是干员调配的数据') };
   const entries = parseStored(raw);
   const ops = isObj(raw.ops) ? parseStoredOps(raw) : null;
-  if (!Object.keys(entries).length && !(ops && Object.keys(ops).length)) return { ok: false, error: t('里面没有有效的调配条目') };
-  return ops ? { ok: true, entries, ops } : { ok: true, entries };
+  const skins = cleanSkins(raw.skins);
+  const hasSkins = Object.keys(skins).length > 0;
+  if (!Object.keys(entries).length && !(ops && Object.keys(ops).length) && !hasSkins) return { ok: false, error: t('里面没有有效的调配条目') };
+  return { ok: true, entries, ...(ops ? { ops } : {}), ...(hasSkins ? { skins } : {}) };
 }
 
 // ---- options & choices ---------------------------------------------------------------------------------------------

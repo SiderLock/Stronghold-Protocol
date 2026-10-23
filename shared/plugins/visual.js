@@ -12,7 +12,9 @@
 // a plugin may write (ASSET_CONTAINERS), each record in the manifest's own shape:
 //   chars[charId]            { avatar, avatarE2, portrait, portraitE2, illust: image, spine: { front, back: Spine },
 //                              skins: { <skin id>: { name, group: text, avatar, avatarE2, portrait, portraitE2, illust:
-//                              image, spine: { front, back: Spine } } } }
+//                              image, spine: { front, back?: Spine }, tokens: { <token id>: { tokenSkinId?: text,
+//                              spine: Spine } }, voice / voiceJp / voiceEn / voiceKr / voiceNative:
+//                              { <slot>: audio or a list of 1–16 } } } } }
 //   enemies[key]             { icon: image, spine: Spine }          tokens[id]  { avatar: image, spine: Spine }
 //   bonds / items / bands / skills / modules / ui[key], prof.icon / large / battlecard / sub[key]     image
 //   audio.bgm[lobby|prep|combat|unite|boss], audio.bossBgm[bossId]     a track { loop, intro? }: replaced as a whole
@@ -26,9 +28,18 @@
 // takes at most 64 skins; `name` is a text of 1–64 characters (the skin's name) and `group` one of 0–64 (its series, as
 // that file writes them — an outfit the plugin itself adds may have no series; every operator skin of the official table
 // has one, so this is room for a plugin's own entry, not the state of the manifest), the rest of a skin's record the
-// operator's own kinds and fields. A reference from a skin is resolved against the entry's own skin of the same key, so
+// operator's own kinds and fields. A skin may also restyle the operator's summons: its `tokens` map holds one record per
+// token id — `{ tokenSkinId?: text, spine }`, where `spine` is ONE model (the same kind the manifest's
+// `tokens[<tokenId>].spine` is: skel / atlas / textures / anims — a summon has no Front/Back pair) — and that model is
+// REQUIRED (a mapping without one would change nothing); at most 64 per skin, and the token id is an entry key the
+// installation's `tokens` container can hold. A skin may also carry its own battle lines under the same five trees as the
+// operator (`voice` — Chinese —, `voiceJp`, `voiceEn`, `voiceKr`, `voiceNative`): each is a map of slots of the same
+// shape as `audio.voice[<charId>]` (a sound or a list of 1–16), the player's language asks the matching tree first, and
+// a slot the skin lacks falls back to the operator's own line (public/js/audio.js voiceLine).
+// A reference from a skin is resolved against the entry's own skin of the same key, so
 // it means something only once the installation's manifest carries `skins` itself (the committed data/assets.json of this
-// version has none); until then only the operator's own record can be referenced.
+// version has none); until then only the operator's own record can be referenced. A token mapping is never a reference:
+// it has to bring its own model.
 // A value is a path inside the plugin folder (an image .png .jpg .webp, audio .mp3 .ogg), a Spine object
 // `{ skel, atlas, textures?, pma? }` (.skel and .atlas side by side with one name — pixi-spine finds the atlas next to the
 // skeleton —, the pages inside the atlas's folder, default `<name>.png`; its clip roles, durations, events, hits and
@@ -129,9 +140,11 @@ const short = (v) => { try { return String(JSON.stringify(v)).slice(0, 40); } ca
  * A field's kind: 'image' | 'audio' | 'audioList' (one audio file or a list) | 'track' (a BGM `{ loop, intro? }`, written
  * whole) | 'spine' | 'text' (a line of the manifest, 0–TEXT_MAX characters — 1 at least for a `name`, a skin's series
  * may be empty —, written as it is) — or an object of named
- * fields `{ fields }`, or one whose keys are free `{ each, key, max? }` (a voice slot, a skill index, an operator's
- * skins; `max` the most keys it takes).
- * @typedef {'image' | 'audio' | 'audioList' | 'track' | 'spine' | 'text' | { fields: Record<string, any> } | { each: any, key: RegExp, max?: number }} AssetKind
+ * fields `{ fields, required? }` (`required` names the fields a record must carry: a skin's summon mapping needs its
+ * model), or one whose keys are free `{ each, key, max?, keyName?, keyProblem? }` (a voice slot, a skill index, an
+ * operator's skins; `max` the most keys it takes; `keyProblem` makes a key of the wrong shape a problem instead of a
+ * warning).
+ * @typedef {'image' | 'audio' | 'audioList' | 'track' | 'spine' | 'text' | { fields: Record<string, any>, required?: string[] } | { each: any, key: RegExp, max?: number, keyName?: string, keyProblem?: boolean }} AssetKind
  * @typedef {{ path: string[], record: AssetKind, keys?: string[] }} AssetContainer
  */
 
@@ -143,13 +156,30 @@ const INDEX = /^\d{1,2}$/;
  * in readFields and in locateAssetPath —, so a limit written beside the call would be the one place that forgets it.
  */
 const SKIN_KEY = /^[A-Za-z0-9_][A-Za-z0-9_@#+.-]{0,63}$/;
+/** A token id of a skin's `tokens` map: an entry key of the manifest's `tokens` container (letters, digits, _ . / -). */
+const TOKEN_KEY = /^[A-Za-z0-9_][A-Za-z0-9_./-]{0,127}$/;
+/** A voice tree: a free map of battle slots to a sound or a list of 1–16 (the operator's `audio.voice[<charId>]` shape). */
+const VOICE_TREE = { each: 'audioList', key: SLOT };
 /** The longest text a plugin writes into the manifest (a skin's name or its series). */
 const TEXT_MAX = 64;
 /** The most skins one operator's record takes (the overlay schema's maxProperties). */
 const SKINS_MAX = 64;
+/** The most summons one skin's `tokens` map takes (the overlay schema's maxProperties). */
+const SKIN_TOKENS_MAX = 64;
+/**
+ * One summon restyled by a skin: the id of the appearance (metadata, never resolved by this layer) and the model the
+ * skin gives that token. `spine` is required — a mapping without a model changes nothing on the board — and it is ONE
+ * model of the manifest's own `tokens[<tokenId>].spine` kind (skel / atlas / textures / anims): a summon has no Front /
+ * Back direction pair, so a `{ front, back? }` object is not one.
+ */
+const TOKEN_SKIN_RECORD = { required: ['spine'], fields: { tokenSkinId: 'text', spine: 'spine' } };
 /** One skin of an operator: the pictures and models the operator's own record has, under its key, and its name. */
 const SKIN_RECORD = { fields: { name: 'text', group: 'text', avatar: 'image', avatarE2: 'image', portrait: 'image',
-  portraitE2: 'image', illust: 'image', spine: { fields: { front: 'spine', back: 'spine' } } } };
+  portraitE2: 'image', illust: 'image', spine: { fields: { front: 'spine', back: 'spine' } },
+  tokens: { each: TOKEN_SKIN_RECORD, key: TOKEN_KEY, max: SKIN_TOKENS_MAX, keyProblem: true,
+    keyName: 'key (letters, digits, _ . / -, at most 128 characters)' },
+  // the skin's own battle lines: the same five trees the operator's record uses (the Chinese one is `voice`)
+  voice: VOICE_TREE, voiceJp: VOICE_TREE, voiceEn: VOICE_TREE, voiceKr: VOICE_TREE, voiceNative: VOICE_TREE } };
 const SFX_UNIT = { fields: { attack: 'audio', hit: 'audio', skill: 'audio', die: 'audio', born: 'audio',
   skills: { each: 'audio', key: INDEX }, attacks: { each: 'audio', key: INDEX }, hits: { each: 'audio', key: INDEX } } };
 
@@ -164,12 +194,12 @@ export const ASSET_CONTAINERS = Object.freeze(/** @type {AssetContainer[]} */ ([
   // audio.bgm: the tracks by name — not combatAlts, a list of tracks the client reads by round
   { path: ['audio', 'bgm'], record: 'track', keys: ['lobby', 'prep', 'combat', 'unite', 'boss'] },
   { path: ['audio', 'bossBgm'], record: 'track' },
-  { path: ['audio', 'voice'], record: { each: 'audioList', key: SLOT } },
-  { path: ['audio', 'voiceJp'], record: { each: 'audioList', key: SLOT } },
+  { path: ['audio', 'voice'], record: VOICE_TREE },
+  { path: ['audio', 'voiceJp'], record: VOICE_TREE },
   // the other official dubs of round 40 (DESIGN §32.14.11): English, Korean, the operator's own-language dub
-  { path: ['audio', 'voiceEn'], record: { each: 'audioList', key: SLOT } },
-  { path: ['audio', 'voiceKr'], record: { each: 'audioList', key: SLOT } },
-  { path: ['audio', 'voiceNative'], record: { each: 'audioList', key: SLOT } },
+  { path: ['audio', 'voiceEn'], record: VOICE_TREE },
+  { path: ['audio', 'voiceKr'], record: VOICE_TREE },
+  { path: ['audio', 'voiceNative'], record: VOICE_TREE },
   { path: ['audio', 'sfx', 'ui'], record: 'audio' },
   { path: ['audio', 'sfx', 'battle'], record: 'audio' },
   { path: ['audio', 'sfx', 'units'], record: SFX_UNIT },
@@ -293,6 +323,13 @@ export function readAssetOverlay(assets, { vanilla = null, permissions = null, h
   const readValue = (kind, v, loc) => {
     const at = [...loc.container, loc.key, ...loc.field];
     if (ops.length >= VISUAL_LIMITS.ops) { if (ops.length === VISUAL_LIMITS.ops) list.problem('PLUGIN_LIMIT', `more than ${VISUAL_LIMITS.ops} writes`, { detail: `more than ${VISUAL_LIMITS.ops} writes` }); return; }
+    // A record that must bring its own fields (a skin's summon mapping: its `spine`) never takes a whole-record
+    // reference: the record a reference could name is the operator's own art, not that summon's model. A field inside
+    // the record may still be a reference (readFields below).
+    if (typeof kind === 'object' && 'fields' in kind && kind.required && isObj(v) && has(v, 'ref')) {
+      list.problem('PLUGIN_ASSETS_SHAPE', `${pathText(at)}: this record writes its own ${kind.required.join(', ')}; a reference is not enough`, { at: where(at) });
+      return;
+    }
     if (kind === 'text') {
       // a line of the manifest (a skin's name or series): never a reference, never anything but a short text.
       // A skin's series may be empty (an outfit a plugin itself adds may have no series; every operator skin of the
@@ -366,6 +403,14 @@ export function readAssetOverlay(assets, { vanilla = null, permissions = null, h
       const at = [...loc.container, loc.key, ...loc.field];
       const text = `more than ${kind.max} entries under ${pathText(at)}`;
       list.problem('PLUGIN_LIMIT', text, { at: where(at), detail: text });
+      return;
+    }
+    // Fields a record cannot do without (a skin's summon mapping must bring the model it maps to). Refused whole:
+    // a mapping without its model would write a fragment the client could only ignore.
+    if (kind.required) for (const f of kind.required) {
+      if (has(obj, f)) continue;
+      const at = [...loc.container, loc.key, ...loc.field, f];
+      list.problem('PLUGIN_ASSETS_SHAPE', `${pathText(at)} is a required field`, { at: where(at) });
       return;
     }
       for (const [k, x] of Object.entries(obj)) {

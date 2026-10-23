@@ -4,9 +4,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ERR, PHASE } from '../../shared/constants.js';
 import { makeMatch, checkInvariants } from './harness.js';
+import { encodeWire, decodeWire } from '../../shared/wireCodec.js';
 
 function approveOpening(m) {
+  const asker = m.humans().find((p) => p.playerId !== 'p_0');
+  assert.deepEqual(m.askSetupReroll(asker.playerId, m.setupRevision), { ok: true });
+  assert.deepEqual(m.publicView().rerollRequests, [{ playerId: asker.playerId }]);
+  assert.deepEqual(decodeWire(encodeWire(m.publicView(), 's2c'), 's2c'), m.publicView(), 'nonempty requests survive compact-v1 extensions');
   assert.deepEqual(m.requestSetupReroll('p_0', m.setupRevision), { ok: true });
+  assert.deepEqual(m.publicView().rerollRequests, [], 'the proposal clears requests for every fixed group');
   const voteId = m.setupVote.id;
   for (const ps of m.humans().slice(1)) {
     assert.deepEqual(m.handle(ps.playerId, { t: 'g.rerollVote', voteId, agree: true }), { ok: true });

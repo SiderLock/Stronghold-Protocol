@@ -279,7 +279,7 @@
 /* Keep the connection text and icon controls intact as the status row gains entries. */
 .title-conn__status { display: inline-flex; flex: none; align-items: center; gap: .08rem; white-space: nowrap; }
 .title-conn .title-guide, .title-conn .title-announcements { flex: none; padding-inline: .025rem; font-size: calc(.14 * var(--t)); }
-.title-conn .title-fs, .title-conn .title-settings { flex: none; width: .4rem; height: .4rem; margin-left: 0; }
+.title-conn .title-settings { flex: none; width: .4rem; height: .4rem; margin-left: 0; }
 /* 统计 (the local stats page) beside the language menu in the top-right corner */
 .title-corner__tools { display: flex; align-items: center; justify-content: flex-end; gap: .1rem; margin-bottom: .1rem; }
 .title-corner__tools .title-lang { margin-bottom: 0; }

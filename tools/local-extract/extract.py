@@ -54,7 +54,7 @@ Usage:
                                                           pages, from the PNGs already extracted — e.g. the local art
                                                           copied from a release bundle; needs Pillow)
   .venv/bin/python tools/local-extract/extract.py --only scene [--scenes <dir of in-season bundles>]
-  .venv/bin/python tools/local-extract/extract.py --only fx [--fx-set sample|used] [--fx-keys k1,k2] [--fx-jobs N]
+  .venv/bin/python tools/local-extract/extract.py --only fx [--fx-set sample|used] [--fx-keys k1,k2|@keys.txt] [--fx-jobs N]
   .venv/bin/python tools/local-extract/extract.py --only plugin-art [--plugin-root <installation>]
 
 Writes <out>/**.png|.webp|.skel|.atlas and data/local-assets.json (manifest of what was extracted). With --only, just
@@ -988,7 +988,12 @@ def main():
     if token_ids:
         total += export_token_spines(ab_root, out_root, manifest, print, token_ids)
     if fx_on:
-        keys = [k.strip().lower() for k in args.fx_keys.split(',') if k.strip()]
+        # `--fx-keys @<file>` reads one key per line (or comma separated): a whole-clients' replacement set is far
+        # beyond a command line's length limit
+        raw_keys = args.fx_keys
+        if raw_keys.startswith('@'):
+            raw_keys = Path(raw_keys[1:]).read_text(encoding='utf-8').replace('\n', ',')
+        keys = [k.strip().lower() for k in raw_keys.split(',') if k.strip()]
         total += fx.export_fx(ab_root, out_root, manifest, print, selection=args.fx_set, keys=keys or None,
                               jobs=args.fx_jobs or None, root=ROOT,
                               fx_manifest=Path(args.manifest).with_name(fx.FX_MANIFEST))

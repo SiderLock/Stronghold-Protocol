@@ -639,7 +639,8 @@ export function skillPlan(idx, unitKey, skillId, opts = {}) {
   if (Number.isInteger(skill.mode)) {
     plan.mode = skill.mode;
     plan.modeName = unit?.modes?.[skill.mode]?.name ?? null;
-    attach = attachUses(unit?.modes?.[skill.mode]);
+    const mode = unit?.modes?.[skill.mode];
+    attach = [...attachUses(mode), ...modeAuraUses(mode, unitKey, id)];
   }
   if (typeof skill.rootClass === 'string' && skill.rootClass) plan.rootClass = skill.rootClass;
   const projs = isObj(idx.projectiles) ? idx.projectiles : {};
@@ -690,6 +691,23 @@ export function attachUses(mode) {
   };
   if (isObj(mode)) { walk(mode.attack); if (mode.combat !== mode.attack) walk(mode.combat); }
   return out;
+}
+
+/** Mode AuraAbility buffs missing in older v3 indexes. The fallback transcribes charpack/char_4134_cetsyr.ab,
+ * S3/Body/AuraHeal (2026-10-22): passive buffs on the owner, _buffs on allies; all detach with the mode.
+ * Newly extracted buffUses take precedence, including an intentionally empty array. No art re-download needed.
+ */
+export function modeAuraUses(mode, unitKey, skillId) {
+  const a = mode?.attack;
+  if (Array.isArray(a?.buffUses)) return a.buffUses;
+  if (unitKey !== 'char_4134_cetsyr' || skillId !== 'skchr_cetsyr_3' || a?.class !== 'AuraAbility') return [];
+  const node = a.node || 'Modes/S3/Body/AuraHeal';
+  return [
+    ['cetsyr_buff_02', 'cetsyr_heal', 'targets', '_buffs'],
+    ['cetsyr_skill_03_buff_02', 'cetsyr_s_3[collect_hp_ratio]', 'owner', '_passiveBuffs'],
+    ['cetsyr_skill_03_buff_range_01', 'cetsyr_s_3[cal_hp_ratio]', 'owner', '_passiveBuffs'],
+  ].map(([key, buff, on, field]) => ({ role: 'loop', keys: [key], from: `AuraAbility.${field}`, node, on, buff,
+    life: { type: 'INFINITY' } }));
 }
 
 /** A MountPointType number of its name (mountPointName's inverse: 'MUZZLE' → 2, 'SPECIAL_6' → 12), or null. */
@@ -1332,6 +1350,12 @@ export function chargeKeys(plan) {
  */
 const binding = (o) => Object.freeze({ ...o, ...(o.cover ? { cover: Object.freeze(o.cover) } : {}), ...(o.keys ? { keys: Object.freeze(o.keys) } : {}) });
 export const FX_BINDINGS = Object.freeze({
+  // Official cetsyr_s_3[collect_hp_ratio] ON_BUFF_TRIGGER CreateEffect on BUFF_OWNER.
+  // The kit's existing HP redistribution event supplies this moment (no client timer / guessed pulse).
+  skchr_cetsyr_3: Object.freeze({
+    redistribute: binding({ owner: 'id', during: true, oneshot: true, keys: ['cetsyr_skill_03_burst_01'] }),
+    hpShare: binding({ owner: 'id', during: true, oneshot: true, keys: ['cetsyr_skill_03_burst_01'] }),
+  }),
   // Existing kit event supplies the elimination position (no invented projectile collision or ally trigger).
   skchr_yu_3: Object.freeze({ firewallBlock: binding({ owner: 'id', at: 'point', oneshot: true, keys: ['yu_skill3_annex_01'] }) }),
   // 克莱门莎 S3 (op-clemnt.js bombard): the kit marks an enemy's tile ('lock': id = the enemy, src = her) and strikes it

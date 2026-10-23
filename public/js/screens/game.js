@@ -87,6 +87,9 @@ import { BondStrip, BondPopup } from '../ui/bondStrip.js';
 import { TeamPanel } from '../ui/teamPanel.js';
 import { ShopBar } from '../ui/shopBar.js';
 import { DetailPanel, resolveDetail } from '../ui/detailPanel.js';
+// 皮肤语音 (docs/SKINS.md): the settlement line follows the outfit this seat wears. ui/skins.js is on the boot path
+// already (main.js → screens/loadout.js) and reads only store.js/data.js, so a screen may reach it without the asset store.
+import { skinFor } from '../ui/skins.js';
 import { RewardOverlay } from '../ui/rewardOverlay.js';
 import { FinalAssaultPlate, HiddenCorePlate, EndPlate, preloadBossPlateArt, bossPlateArtReady, finalPlateRows, endPlateOf } from '../ui/bossPlates.js';
 import { DownedPlate, downedDue, preloadDownedArt, downedArtReady } from '../ui/downedPlate.js';
@@ -157,13 +160,19 @@ if (battleRunner) {
 /** Router for the in-match screens. */
 export function GameScreen() {
   const pub = useStore((s) => s.match.public);
+  const assetPrivate = useStore((s) => s.match.private);
   const hasResult = useStore((s) => !!s.match.result);
   const ended = useStore((s) => !!s.room && !s.room.inMatch && !!s.match.public);
   const away = useStore((s) => s.away, Object.is, awayStore);
   const autoplay = useStore((s) => !!(Array.isArray(s.match.public?.players) && s.match.public.players.find((p) => p && p.playerId === s.me.playerId)?.autoplay));
   const gd = useGameData();
-  // 协议启动！'s official sprites (ui/protocolBoot.js), fetched while the briefing and the band draft run
-  useEffect(() => { if (gd.ready) preloadBootArt(); }, [gd.ready]);
+  useEffect(() => {
+    if (gd.ready) import('../assetPreload.js').then(({ warmMatchAssets }) => warmMatchAssets(pub, assetPrivate)).catch(() => {});
+  }, [gd.ready, pub, assetPrivate]);
+  // The briefing's visible icons get the bandwidth first. Warm the later boot screen during the draft.
+  useEffect(() => {
+    if (gd.ready && pub && phaseMode(pub.phase) !== 'briefing') preloadBootArt();
+  }, [gd.ready, pub?.phase]);
   if (!pub || !gd.ready) {
     return html`<div class="screen gload">
       <${Spinner} size="lg" label=${pub ? 'LOADING DATA' : 'ENTERING SIMULATION'} />
@@ -700,13 +709,17 @@ function MatchScreen() {
         // voice, like its 选中 line) and a filled 自选 slot's operator (ownShown), else the chess record's charId
         const charId = resultSpeaker(mine, Math.random, (id) => ownShown(id)?.assets?.voice ?? ownShown(id)?.charId ?? null);
         if (!charId) return;
+        // 皮肤语音 (docs/SKINS.md): this battle is the viewer's own half, so the speaker's outfit is the LOCAL picker's
+        // choice for that operator (what `room.skins` sends). A voice-bank alias (`assets.voice`, e.g. an ILLUST outfit
+        // borrowing another operator's bank) has no selection of its own — it resolves to null and keeps its own lines.
+        const resultSkin = skinFor(charId) || null;
         audio.voice(charId, resultVoiceSlot({
           perfect: !!(mine?.perfect),
           leaked: Array.isArray(mine?.leaked) ? mine.leaked.length : 0,
           killed: mine?.killed ?? msg.result.killed,
           total: mine?.total ?? msg.result.total,
           hard: diff === 'HARD' || diff === 'ABYSS',
-        }));
+        }), { skin: resultSkin });
       } catch { /* ignore */ }
     };
     const offs = [net.on('m.field', onFieldMeta), net.on('b.snap', onSnap), net.on('b.ev', onEv)];
@@ -1771,7 +1784,7 @@ function MatchScreen() {
         bandId=${scoutBandId} bandOwner=${scoutBandOwner}
         onEnemy=${(k, n) => setDetail({ kind: 'enemy', id: k, count: n })} onChess=${(id) => setDetail({ kind: 'chess', id, foreign: true })} />` : null}
 
-      ${bondPop ? html`<${BondPopup} bondId=${bondPop.bondId} entry=${bondPop.entry} priv=${bondPop.priv} banned=${pub?.bannedChess || []} owner=${bondPop.name}
+      ${bondPop ? html`<${BondPopup} bondId=${bondPop.bondId} entry=${bondPop.entry} priv=${bondPop.priv} banned=${pub?.bannedChess || []} owner=${bondPop.name} ownerId=${bondPop.ownerId}
         off=${offBonds.has(bondPop.bondId)} morphMode=${morphMode}
         place=${bpPlace} over=${!!resolved && bpPlace === dSide}
         onClose=${() => setBondOpen(null)} onMember=${(id, items, standInFor, diy) => setDetail({ kind: 'chess', id, owner: bondPop.ownerId, items: items || null, standInFor: standInFor || null, diy: diy || null })} />` : null}

@@ -6,10 +6,10 @@
 //
 // Where the rows come from: ui/skins.js availableSkins, i.e. the COMPOSED asset manifest (`chars[<charId>].skins`,
 // written by a cosmetic plugin's overlay — docs/PLUGINS.md §9). There is no catalogue file and no installer here: a
-// skin either has a model this client resolves (`playable`) or it is art only, and art only rows are not offered.
+// wearable skins have a model or pictures; picture-only outfits keep the default battle model (B6).
 //
 // The section's display rule (docs/SKINS.md) is GLOBAL and comes from ui/skins.js `hasAnySkinChoices`:
-//   * no operator has a wear-able skin (no plugin at all, a plugin that writes only pictures, or only art-only skins) —
+//   * no operator has a wear-able skin (no plugin, no skins records, or only metadata-only skins) —
 //     the section is left out, header included, so an installation without a cosmetic layer looks exactly as before;
 //   * at least one operator has one — EVERY operator shows the section. An operator without a skin of its own gets the
 //     默认 tile alone, with a real picture on it.
@@ -23,8 +23,9 @@
 import { useState } from '../../vendor/hooks.module.js';
 import { html, MicroLabel, Modal } from './components.js';
 import { useStore } from '../store.js';
-import { useData } from '../data.js';
+import { data, useData } from '../data.js';
 import { skinsStore, availableSkins, chosenSkin, hasAnySkinChoices, setSkin, clearSkin, SKINS_KEY } from './skins.js';
+import { SkinModelPreview, previewEntry } from './skinPreview.js';
 import { t } from '../../../shared/i18n.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
@@ -62,6 +63,7 @@ function SkinTile({ row, chosen, onPick, onPreview }) {
     <span class="lo-skin__text">
       <b class="lo-skin__name">${isDefault ? t('默认') : row.name}</b>
       <span class="lo-skin__group">${isDefault ? 'DEFAULT' : row.group || t('时装')}</span>
+      ${row.pictureOnly ? html`<span class="lo-skin__note">${t('仅更换头像与立绘')}</span>` : null}
     </span>
   </button>`;
 }
@@ -112,6 +114,10 @@ export function SkinSection({ charId }) {
   const shown = rows.map((row) => ({ ...row, art: row.portrait || row.avatar || null, face: row.avatar || null }));
   const previewRow = preview ? rows.find((x) => !x.own && x.id === preview) || null : null;
   const previewArt = previewRow ? (previewRow.illust || previewRow.portrait || previewRow.avatar) : null;
+  // 小人预览 (docs/SKINS.md): a row whose operator (or skin) has a model is played live; a picture-only appearance keeps
+  // the enlarged 立绘 it had before — the same choice the battle renderer would make for that row, decided here so the
+  // modal draws one of the two and never both.
+  const previewHasModel = !!previewEntry(data.get('assets'), id, previewRow ? previewRow.id : null);
 
   return html`<section class="lo-sec lo-sec--skin" data-testid="skin-section">
     <header class="lo-sec__head">
@@ -127,7 +133,9 @@ export function SkinSection({ charId }) {
     </div>
     <${Modal} open=${!!previewRow} title=${previewRow ? previewRow.name : t('外观预览')} micro="SKIN PREVIEW"
       onClose=${() => setPreview(null)} width="min(92vw, 900px)">
-      <${SkinPreview} art=${previewArt} name=${previewRow ? previewRow.name : ''} />
+      ${previewHasModel
+        ? html`<${SkinModelPreview} charId=${id} skinId=${previewRow ? previewRow.id : null} art=${previewArt} name=${previewRow ? previewRow.name : ''} />`
+        : html`<${SkinPreview} art=${previewArt} name=${previewRow ? previewRow.name : ''} />`}
     <//>
   </section>`;
 }

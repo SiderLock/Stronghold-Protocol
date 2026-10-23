@@ -14,10 +14,12 @@ import { data } from '../data.js';
 import { audio } from '../audio.js';
 import { store } from '../store.js';
 import { settingsStore } from './settings.js';
+import { t } from '../../../shared/i18n.js';
 
 // 20s: the engine module graph grew with 0.3.0's official effects, and a cold cache on a slow link
 // (or one shared with an asset download) used to exceed 12s and pin the match to the simplified view.
 const LOAD_TIMEOUT_MS = 20000;
+let fallbackNoticed = false;   // the simplified view's notice is shown once per page
 const METHODS = ['setStage', 'setCamera', 'setPrep', 'enterBattle', 'pushSnapshot', 'pushEvents', 'highlightTiles', 'on', 'resize', 'destroy'];
 // direction-step hooks (ui/facingWheel.js): optional — the wheel falls back to the engine's dev hooks when absent;
 // setPen (enemy preview pen list), prepField ({ kind, side, mirror } of the Final Assault prep), stripesUnder (the view
@@ -293,6 +295,14 @@ export function useFieldView(hostRef) {
         if (dead) { view.destroy(); return; }
         viewRef.current = view;
         if (view.kind === 'engine') retries.current = 0;
+        // the engine failed (WebGL refused / lost): the simplified view is correct but the player deserves to know why,
+        // once per page — 星愿 / Twinkstar's documented GPU conflict shows up exactly like this
+        else if (!fallbackNoticed) {
+          fallbackNoticed = true;
+          import('./toasts.js').then(({ toast }) => {
+            try { toast(t('战斗画面渲染失败，已切换到简化视图。若反复出现，请在浏览器设置里关闭「硬件加速」后重启浏览器。'), 'warn', { ttl: 20000 }); } catch { /* ignore */ }
+          }).catch(() => {});
+        }
         // 设置「显示其他玩家的皮肤」 (docs/SKINS.md) needs to know which pieces are this page's own: the identity is on the
         // app store (`me.playerId`, set by welcome), so the view is told it rather than resolving it per frame. Told
         // before the first board arrives — the mount waits for `enterBattle`/`setPrep`, which the game screen calls after.

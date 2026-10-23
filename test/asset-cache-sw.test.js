@@ -13,7 +13,7 @@ const catalog = { schema: 1, version: await helpers.sha256Hex(new TextEncoder().
 const source = (await fs.readFile(new URL('../public/asset-cache-sw.js', import.meta.url), 'utf8'))
   .replace(/import \{[\s\S]*?\} from '\/shared\/assetCache\.js';/, '');
 
-async function fixture({ slowMetadata = false, blockPassive = false } = {}) {
+async function fixture({ slowMetadata = false, blockPassive = false, networkReply = null } = {}) {
   const handlers = new Map(), stores = new Map(), windows = new Map();
   let network = 0, locks = 0, activations = 0;
   const storage = {
@@ -39,6 +39,7 @@ async function fixture({ slowMetadata = false, blockPassive = false } = {}) {
   } } }, async skipWaiting() { activations++; }, addEventListener(name, callback) { handlers.set(name, callback); } };
   const context = vm.createContext({ ...helpers, self, caches: storage, fetch: async () => {
     network++;
+    if (networkReply) return networkReply();
     // Fetch returns decoded bytes, while Content-Length still describes the compressed wire body.
     return new Response(body, { headers: { 'Content-Type': 'text/plain', 'Content-Encoding': 'gzip', 'Content-Length': '7' } });
   }, Request, Response, Headers, URL, Uint8Array, crypto: globalThis.crypto, Date, Promise, Map, Set });
@@ -68,6 +69,64 @@ test('SW advertises its coordination protocol without activating automatically',
   assert.equal(reply.protocol, helpers.ASSET_CACHE_SW_PROTOCOL);
   assert.equal(reply.imported, true);
   assert.equal(f.activations(), 0, 'capability probing must not replace the active worker');
+});
+
+test('render-cache budget and in-flight clearing do not block gameplay or recreate cleared data', async () => {
+  const f = await fixture(); f.addClient('page');
+  await f.message('page', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: true });
+  const cache = await f.storage.open(helpers.RENDER_CACHE_NAME), url = '/assets/~0123456789abcdef/page.png';
+  await cache.put(origin + helpers.RENDER_CACHE_INDEX, Response.json({ bytes: helpers.RENDER_CACHE_LIMIT }));
+  assert.equal(await (await f.fetchFile('page', url)).text(), 'atlas bytes', 'full optional cache never blocks the network response');
+  assert.equal(await cache.match(origin + url), undefined);
+  const streaming = await fixture({ networkReply: () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); } })) });
+  streaming.addClient('page');
+  await streaming.message('page', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: true });
+  const fetch = streaming.fetchFile('page', url);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const cleared = await Promise.race([
+    streaming.message('page', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: false, clear: true }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('clear waited for the stalled network body')), 500)),
+  ]);
+  assert.equal(cleared.ok, true);
+  const response = await fetch;
+  await response.body.cancel();
+  assert.equal(await (await streaming.storage.open(helpers.RENDER_CACHE_NAME)).match(origin + url), undefined);
+});
+
+test('render cache requires per-page consent, survives the next page, respects versions and clears separately', async () => {
+  const f = await fixture(); f.addClient('page'); f.addClient('next');
+  const url = '/assets/~0123456789abcdef/model.atlas';
+  await f.fetchFile('page', url);
+  const cache = await f.storage.open(helpers.RENDER_CACHE_NAME);
+  assert.equal(await cache.match(origin + url), undefined, 'default is no optional disk write');
+  await f.message('page', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: true });
+  await f.fetchFile('page', url);
+  assert.ok(await cache.match(origin + url));
+  const count = f.network();
+  await f.message('next', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: true });
+  assert.equal(await (await f.fetchFile('next', url)).text(), 'atlas bytes');
+  assert.equal(f.network(), count, 'next page reuses disk without a network request');
+  const partial = await f.fetchFile('next', url, { Range: 'bytes=0-4' });
+  assert.equal(partial.status, 206);
+  assert.equal(await partial.text(), 'atlas');
+  await f.fetchFile('next', '/assets/~fedcba9876543210/model.atlas');
+  assert.equal(f.network(), count + 1, 'another content version must not reuse the old file');
+  const imported = await f.storage.open(helpers.IMPORTED_ASSET_CACHE);
+  await imported.put(origin + url, new Response('imported'));
+  assert.equal(await (await f.fetchFile('page', url)).text(), 'imported', 'explicit imported copy wins');
+  await f.message('page', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: false, clear: true });
+  assert.ok(await imported.match(origin + url), 'clear does not remove an imported pack');
+  assert.equal(await (await f.storage.open(helpers.RENDER_CACHE_NAME)).match(origin + url), undefined);
+});
+
+test('render consent survives catalog pinning and its bytes never satisfy strict admission', async () => {
+  const f = await fixture(); f.addClient('page');
+  await f.message('page', { type: 'ASSET_CACHE_RENDER_CONSENT', enabled: true });
+  await f.message('page', { type: 'ASSET_CACHE_PIN', catalog });
+  const url = '/assets/~0123456789abcdef/body.skel';
+  await f.fetchFile('page', url);
+  assert.ok(await (await f.storage.open(helpers.RENDER_CACHE_NAME)).match(origin + url));
+  assert.equal(await (await f.storage.open(helpers.ASSET_CACHE_NAME)).match(origin + helpers.assetContentKey(sha256)), undefined);
 });
 
 test('an explicit idle SW activation preserves catalogs, old page pins and cached contents', async () => {
@@ -175,9 +234,12 @@ test('SW exact hash aliases reuse unchanged full-SHA contents after an explicit 
   await f.fetchFile('updated', '/assets/~0000000000000000/model.atlas');
   assert.equal(f.network(), 1, 'an unrelated hash does not resolve by dropping its segment');
   await f.fetchFile('old', hashUrl);
-  assert.equal(f.network(), 2, 'another page retains its old catalog and does not borrow new aliases');
+  // The old page's catalog does not know the new alias, but it does list the same file under its plain path WITH THE SAME
+  // hash: the bytes are already verified in this cache, so a still-open page reuses them instead of downloading them
+  // again (asset-cache-sw.js cachedHashAlias). A page is never handed bytes with a different hash than its pin.
+  assert.equal(f.network(), 1, 'the same content hash is reused even without the alias');
   assert.equal(await (await f.fetchFile('old')).text(), 'atlas bytes');
-  assert.equal(f.network(), 2, 'the old plain-path pin continues to use its existing verified content');
+  assert.equal(f.network(), 1, 'the old plain-path pin continues to use its existing verified content');
 });
 
 test('the merged SW serves the title screen imported cache when no pinned catalog matches', async () => {

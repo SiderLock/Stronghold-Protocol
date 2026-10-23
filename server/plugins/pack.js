@@ -155,9 +155,23 @@ export function checkPluginFolder(dir, where, { vanilla, dataDir = DATA_DIR } = 
 /**
  * The options a model's roles are resolved with, by the containers whose entries use it (as fetch-assets does): an
  * operator's three skill slots, an enemy's numbered skill clips — a skeleton several kinds of entry use gets both.
+ * A token is `[0]` only, exactly as the install pipeline plans it (`tools/assets/plan.mjs:544,549` pass `[0]`).
  * @param {Set<string>} containers
  */
-const roleOptions = (containers) => ({ skillIndices: containers.has('chars') ? [0, 1, 2] : [0], numberedSkills: containers.has('enemies') });
+export const roleOptions = (containers) => ({ skillIndices: containers.has('chars') ? [0, 1, 2] : [0], numberedSkills: containers.has('enemies') });
+
+/**
+ * The container an overlay op writes through, which picks the rules its model's roles are resolved with. `tokens`
+ * anywhere in the path is a TOKEN model — a top-level `tokens.<t>` summon, or a skin's variant under
+ * `chars.<c>.skins.<k>.tokens.<t>` (the P1 召唤物换装 record) — everything else by its top-level container
+ * (`chars` / `enemies`). `at` is the container tree's path, `[container, key, …]` (shared/plugins/visual.js).
+ * @param {{ at?: string[] }} op
+ * @returns {string|undefined}
+ */
+export function opContainer(op) {
+  const at = Array.isArray(op?.at) ? op.at : [];
+  return at.includes('tokens') ? 'tokens' : at[0];
+}
 
 /**
  * One Spine model's clip data, parsed from its files in the plugin folder (see the header) — the lock's `spine` entry of
@@ -263,7 +277,7 @@ export function buildPluginLock(dir, { vanilla } = {}) {
     if (ov) list.take(ov, { warningsToo: false });
     /** @type {Map<string, Set<string>>} skeleton → the containers of the entries that use it */
     const users = new Map();
-    for (const op of ov?.ops || []) if (op.spine) { if (!users.has(op.spine.skel)) users.set(op.spine.skel, new Set()); users.get(op.spine.skel).add(op.at[0]); }
+    for (const op of ov?.ops || []) if (op.spine) { if (!users.has(op.spine.skel)) users.set(op.spine.skel, new Set()); users.get(op.spine.skel).add(opContainer(op)); }
     for (const op of ov?.ops || []) {
       if (!op.spine || spine[op.spine.skel]) continue;
       const c = skeletonClipData(dir, op.spine, users.get(op.spine.skel));

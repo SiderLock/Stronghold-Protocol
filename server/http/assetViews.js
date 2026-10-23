@@ -24,6 +24,7 @@ import { hash16 } from './assetIndex.js';
 import { noopLog } from './config.js';
 import { mergeLocalChars } from '../plugins/artReferences.js';
 export { mergeLocalChars } from '../plugins/artReferences.js';
+export { mergeLocalSkins };
 
 /** The manifests that have a view, by their name under data/. */
 export const VIEW_MANIFESTS = Object.freeze(['assets.json', 'local-assets.json', 'local-fx.json']);
@@ -44,6 +45,48 @@ export function relOf(url) {
 
 /** Is `o` a Spine object of data/assets.json (`{ skel: '/….skel', atlas, textures? }`)? */
 const isSpine = (o) => isObj(o) && typeof o.skel === 'string' && o.skel.startsWith('/') && /\.skel$/.test(o.skel);
+
+/**
+ * The installation's own outfits (data/local-skins.json, tools/local-extract/skins.py) merged into the served assets
+ * manifest: `chars[<charId>].skins[<official skin id>] = { name, group, avatar?, portrait?, illust?, spine }`.
+ *
+ * Why here and not a cosmetic plugin: a plugin may never carry official game files (docs/PLUGINS.md §9), while the
+ * official outfits are exactly that — so they live with the rest of the official art under `public/assets/local/`
+ * (git-ignored, extracted from the player's own client) and the server serves them as part of the manifest. A record
+ * the committed manifest already holds is left alone (a plugin's overlay is applied later, on the client, and still
+ * wins). Absent file: nothing changes.
+ * @param {any} doc the parsed data/assets.json
+ * @param {any} local the parsed data/local-skins.json
+ * @returns {any} the doc (or a copy with the outfits merged)
+ */
+function mergeLocalSkins(doc, local) {
+  if (!isObj(local) || !isObj(local.skins) || !isObj(doc.chars)) return doc;
+  let added = 0;
+  const chars = { ...doc.chars };
+  for (const [skinId, rec] of Object.entries(local.skins)) {
+    if (!isObj(rec) || typeof rec.charId !== 'string' || typeof skinId !== 'string') continue;
+    const char = isObj(chars[rec.charId]) ? { ...chars[rec.charId] } : null;
+    if (!char) continue;                       // an operator this build does not have (a newer client)
+    const skins = isObj(char.skins) ? { ...char.skins } : {};
+    if (skins[skinId]) continue;               // already described (the committed manifest or another sidecar)
+    const rec2 = { name: typeof rec.name === 'string' ? rec.name : skinId };
+    if (typeof rec.group === 'string' && rec.group) rec2.group = rec.group;
+    for (const k of ['avatar', 'portrait', 'illust']) if (typeof rec[k] === 'string' && rec[k]) rec2[k] = rec[k];
+    if (isSpine(rec.spine?.front)) {
+      // the model is not three paths: the Spine entry carries `pma`, the clip roles the renderer plays (`anims`), the
+      // clip durations, the events, the hit timings and the bounds that place it (tools/local-extract/skin-meta.mjs).
+      // A record without them is refused by public/js/assets.js validSpine and the unit falls back to its own model.
+      rec2.spine = { front: { ...rec.spine.front } };
+      if (isSpine(rec.spine?.back)) rec2.spine.back = { ...rec.spine.back };
+    }
+    if (!rec2.spine && !rec2.portrait && !rec2.illust && !rec2.avatar) continue;   // nothing to show
+    skins[skinId] = rec2;
+    char.skins = skins;
+    chars[rec.charId] = char;
+    added++;
+  }
+  return added ? { ...doc, chars } : doc;
+}
 
 /** The URLs of a Spine object: skeleton, atlas, pages (the `<skel name>.png` when it lists none). */
 function spineUrls(o) {
@@ -142,6 +185,9 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
     // Local operator art also works with SP_ASSET_INDEX=0 and during the initial hash scan.
     const localFile = path.join(dir, 'local-assets.json');
     const localStat = name === 'assets.json' ? await fsp.stat(localFile).catch(() => null) : null;
+    // the installation's own outfits (tools/local-extract/skins.py): a sidecar beside the manifest
+    const skinsFile = path.join(dir, 'local-skins.json');
+    const skinsStat = name === 'assets.json' ? await fsp.stat(skinsFile).catch(() => null) : null;
     const indexed = index?.ready && index.size > 0;
     if (!indexed && !localStat) return null;
     const file = path.join(dir, name);
@@ -150,7 +196,8 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
       if (cache.delete(name)) pushModels();
       return null;
     }
-    const key = `${index?.generation || 0}|${st.size}|${st.mtimeMs}|${localStat?.size || 0}|${localStat?.mtimeMs || 0}`;
+    const key = `${index?.generation || 0}|${st.size}|${st.mtimeMs}|${localStat?.size || 0}|${localStat?.mtimeMs || 0}`
+      + `|${skinsStat?.size || 0}|${skinsStat?.mtimeMs || 0}`;
     const hit = cache.get(name);
     if (hit && hit.key === key) return hit.view;
     let doc;
@@ -162,13 +209,22 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
       pushModels();
       return null;
     }
+    // Both local sidecars merge into the served copy. When hashing is off (a scan still running, or
+    // SP_ASSET_INDEX=0) the view is only worth building if one of them actually changed something — otherwise the
+    // file is served as it is, exactly as before.
+    let merged = doc;
     if (localStat) {
       let local;
       try { local = JSON.parse(await fsp.readFile(localFile, 'utf8')); } catch { /* optional local art */ }
-      const merged = mergeLocalChars(doc, local);
-      if (!indexed && merged === doc) return null;
-      doc = merged;
+      merged = mergeLocalChars(merged, local);
     }
+    if (skinsStat) {
+      let localSkins;
+      try { localSkins = JSON.parse(await fsp.readFile(skinsFile, 'utf8')); } catch { /* optional outfits */ }
+      merged = mergeLocalSkins(merged, localSkins);
+    }
+    if (!indexed && merged === doc) return null;
+    doc = merged;
     // one synchronous step: the view and the model lists the index checks a model's URLs against
     const { doc: out, models, hashed, plain } = rewriteManifest(doc, name, indexed ? index : plainIndex);
     const body = Buffer.from(JSON.stringify(out));

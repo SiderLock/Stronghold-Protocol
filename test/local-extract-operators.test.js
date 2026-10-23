@@ -8,7 +8,7 @@ import { skel } from './helpers/pluginFixtures.js';
 
 function py(code) {
   const source = `import sys,json\nsys.path.insert(0, ${JSON.stringify(path.resolve('tools/local-extract'))})\nimport operators as op, extract as ex\n${code}`;
-  const r = spawnSync('python3', ['-B', '-c', source], { encoding: 'utf8' });
+  const r = spawnSync(process.platform === 'win32' ? 'python' : 'python3', ['-B', '-c', source], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   return JSON.parse(r.stdout);
 }
@@ -121,7 +121,7 @@ class Obj:
  def read(self): return NS(m_Name=self.name,image=Image())
  def read_typetree(self): return {'synthetic':self.name}
 def load(p):
- if 'chararts/' in p: return NS(objects=[Obj('front','MonoBehaviour',1),Obj('back','MonoBehaviour',2)],container={'dyn/char_9001_test/defaultskin.prefab':Obj('prefab')})
+ if '/chararts/' in p.replace('\\\\','/'): return NS(objects=[Obj('front','MonoBehaviour',1),Obj('back','MonoBehaviour',2)],container={'dyn/char_9001_test/defaultskin.prefab':Obj('prefab')})
  suffix='' if 'avatar' in p else '_1'
  return NS(objects=[Obj('char_9001_test'+suffix),Obj('char_9001_test_2'),Obj('char_9001_test_skin#1'),Obj('char_9002_other')])
 sys.modules['UnityPy']=NS(load=load); sys.modules['aklz4']=NS()

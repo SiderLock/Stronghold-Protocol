@@ -52,6 +52,7 @@ import { createContentSets } from './plugins/contentSets.js';
 import { createPluginPolicy } from './plugins/policy.js';
 import { createRoomSets } from './plugins/roomSets.js';
 import { createMatchHosts } from './match/host/index.js';
+import { createRehearsalPool } from './match/rehearsalPool.js';
 import { createTrustedRuntime } from './plugins/trustedRuntime.js';
 import { trustedHostAllowed } from './plugins/trusted.js';
 import { createStudio } from './studio/index.js';
@@ -78,7 +79,7 @@ export {
  *   port?: number, host?: string, quiet?: boolean, log?: object,
  *   publicDir?: string, dataDir?: string, sharedDir?: string, packsDir?: string, pluginsDir?: string,
  *   announcementsDir?: string, serverSettingsDir?: string,
- *   MatchClass?: Function, seedFn?: () => number,
+ *   MatchClass?: Function, seedFn?: () => number, rehearsalWorkers?: number,
  *   lobbyGraceMs?: number, reconnectWindowMs?: number, heartbeatMs?: number, helloTimeoutMs?: number,
  *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number, compactWire?: boolean, runtimeCache?: boolean,
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
@@ -143,7 +144,10 @@ export async function startServer(opts = {}) {
   // an out-of-memory abort in a worker thread ends the whole server)
   const transport = String(process.env.SP_MATCH_HOST || '').trim().toLowerCase() === 'worker' ? 'worker' : 'process';
   const hosts = createMatchHosts({ contents, log, options: { transport, maxWorkers: Math.max(1, policy.get().maxSets), ...(opts.matchHost || {}) } });
-  const { registry, lobby, network } = createSessionStack(opts, { data, log, content, plugins: roomSets, hosts });
+  const rehearsalWorkers = opts.rehearsalWorkers ?? (process.env.SP_REHEARSAL_WORKERS === undefined
+    ? undefined : Number(process.env.SP_REHEARSAL_WORKERS));
+  const rehearsalPool = createRehearsalPool({ data, workers: rehearsalWorkers, log });
+  const { registry, lobby, network } = createSessionStack(opts, { data, log, content, plugins: roomSets, hosts, rehearsalPool });
   const announcementNotices = createAnnouncementNoticeMonitor({ store: announcements, network, log });
   const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, simDir, packsDir, pluginsDir, packs, content,
     runtimeCache: opts.runtimeCache, log, assetIndex, views, visual, contents });
@@ -263,6 +267,7 @@ export async function startServer(opts = {}) {
     assetCache.close();
     announcementNotices.close();
     network.close(); // stop heartbeat/sweep timers of the half-built server
+    rehearsalPool.close();
     assetIndex?.close();
     studio?.close();
     await trustedRuntime?.close();
@@ -286,6 +291,7 @@ export async function startServer(opts = {}) {
       announcementNotices.close();
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       try { hosts.close(); } catch (e) { log.error('[shutdown] match hosts', e); }
+      rehearsalPool.close();
       network.close();
       assetIndex?.close();
       studio?.close();

@@ -1,5 +1,7 @@
 # 紧凑网络协议与带宽维护说明
 
+2026-10-23 收发维护：`pong.d` 使用 v1 既有扩展对象，携带服务器处理、事件循环及该连接的发送等待 / 队列证据，保留原有 `c` / `s` 及所有位置编号。客户端结合发生时间和页面卡顿测量，连续异常才提示；单凭 RTT 不判定用户故障。慢连接下相邻同阶段全量公共状态只保留最新一份，其他消息及阶段 / 时限变化形成顺序屏障。阈值、诊断边界和回归入口见 [网络设计](design/network.md#8-network-protocol-sharedprotocoljs-is-normative)。
+
 本分支使用业务对象与传输编码分开的协议。业务逻辑、校验和 UI 始终使用原来的 `{ t: 'm.public', phase: 'COMBAT', ... }`；紧凑数组只出现在 WebSocket 网络边界。解码恢复完整字段名和枚举字符串，不改变战斗、卡池、机变或联防规则。
 
 入口：[位置与枚举目录](../shared/wireSchema.js)、[纯 ESM 编解码器](../shared/wireCodec.js)、[开发记录](development/records/2026-10-10-09-compact-wire-bandwidth.md)。业务语义仍以 [protocol.js](../shared/protocol.js)、[网络设计](design/network.md)和 [META](META.md) 为准。
@@ -11,6 +13,8 @@
 - 数组布局版本：`WIRE_VERSION = 1`，控制本说明的位置表。改变布局不能只修改业务版本或应用版本。
 
 协议目录中的 ID、字段顺序和枚举编号属于永久约定。**已发布的 v1 不允许重排、删除、复用编号或插入字段；布局变化须引入新 wire 版本并保留旧版解码。** 尚未登记的字段通过扩展对象完整传输；尚未登记的消息保持原 JSON；尚未登记的枚举字符串保持字符串。新增业务字段不会被静默丢弃。
+
+队友申请重刷（[PR #857](https://github.com/sganggs/Stronghold-Protocol/pull/857)、[D041](development/DECISIONS.md#d041)）的 `room.requestReroll {setupRevision}` 沿用 JSON 回退；`m.public.rerollRequests: [{playerId}]` 使用既有扩展对象，空列表也完整保留。登记字段覆盖白名单并验证非空请求及 6 / 9 / 13 / 20 席真实视图往返；v1 指纹不变。
 
 预缓存准入的 `room.create`、`room.join`、`lobby.quickMatch`、`room.spectate` 可选字段 `assetCache: {schema:1,version:<64位SHA>,readyFiles:<整数>,readyBytes:<整数>}`，以及 `welcome` / `lobby.state` 的 `requireAssetCache`，使用既有扩展对象，**没有新增 v1 字段位置**。解码后完整还原同名标准 JSON；新错误码 `ASSET_CACHE_REQUIRED` 依照现有未知枚举字符串规则传输。字段覆盖测试为这四项报告登记明确的扩展白名单，同时保留 v1 指纹和往返测试；不放宽其他字段的目录要求。详见 [准入约定](SERVER_SETTINGS.md#完整预缓存准入) 与 [任务记录](development/records/2026-10-10-12-offline-catalog-admission.md)。
 

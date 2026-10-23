@@ -1,4 +1,5 @@
 // A module Worker with its own response CSP. No fetch: checked content bytes/data arrive from the page.
+import '../ui/compat.js';
 import { createSimWorker } from './simWorkerRuntime.js';
 
 const dispatch = createSimWorker();

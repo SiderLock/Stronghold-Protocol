@@ -381,6 +381,11 @@ spawn rotation (§33.2).
 Only enabled modules are written (InitialModule always); a missing module is off. Field names are Unity's serialized
 names (`ParticleSystem` in a Unity YAML scene); the enum values are Unity's.
 
+Saturated emitters stop attempting births at their existing live-particle cap. Rate accumulators, burst schedules,
+birth age / position and RNG state retain their original semantics; rejected births are not queued for later.
+This also covers burst and sub-emitter births. Some real prefabs request millions per second for a single live
+particle (Cetsyr outfit S2/S3); the renderer must not spend CPU repeatedly rejecting those births.
+
 **System fields**: `lengthInSec` (duration), `looping`, `prewarm` (a looping system starts as if one full duration had
 already run), `startDelay` (MinMaxCurve, s), `playOnAwake`, `simulationSpeed`, `moveWithTransform` (simulation space: 0
 Local — particles move with the system's transform, 1 World — they stay where they were emitted, 2 Custom — relative to

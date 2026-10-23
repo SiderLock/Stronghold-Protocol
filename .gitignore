@@ -17,6 +17,8 @@ public/fonts/
 data/local-assets.json
 # tools/local-extract/fx.py → the official battle effects' file list (DESIGN §33; the files under public/assets/local/fx/)
 data/local-fx.json
+# tools/local-extract/skins.py → the installation's own outfits' metadata (the files under public/assets/local/skins/)
+data/local-skins.json
 # download caches, upstream tables, ledgers, reports, setup state
 .cache/
 # Per-server published announcements and command data; never shipped with source.
@@ -28,6 +30,66 @@ data/local-fx.json
 /public/assets
 /public/fonts
 /.cache
+
+# --- our own art material: made or collected here, NEVER committed --------------------------------
+# The owner's working folders. tools/package.mjs refuses them in a release (its REFUSE list: the
+# owner-only notes and the promo project) and .dockerignore already keeps them out of the image;
+# screenshots, contact sheets and promo edits in them show official art, so they must not reach
+# GitHub either. A path is ignored when it is one of these or lies under one, as in package.mjs.
+pv/
+review/
+handoff/
+3，9，11回合情况/
+# Art upstream's branch already tracks is unaffected: an ignore rule never applies to a path that is
+# in the index, and merging upstream still writes its new files into the worktree and the index
+# (public/icons/, docs/img/, test/fixtures/, plugins/_template/cosmetic/media/ keep working as before).
+# Working files of the drawing, 3D, video and audio tools: kept on this machine, never a shipped asset.
+# Drawing and painting sources
+*.psd
+*.psb
+*.ai
+*.xcf
+*.kra
+*.afdesign
+*.afphoto
+*.procreate
+*.clip
+*.sai
+*.sai2
+*.aseprite
+*.ase
+# Raster masters the client never serves (it ships png / webp / jpg / svg / ico)
+*.tif
+*.tiff
+*.tga
+*.bmp
+*.exr
+# 3D sources and exports
+*.blend
+*.blend1
+*.fbx
+*.obj
+*.ztl
+*.c4d
+*.max
+*.ma
+*.mb
+# Video and its editing projects
+*.mp4
+*.webm
+*.mov
+*.mkv
+*.flv
+*.wmv
+*.aep
+*.prproj
+*.veg
+# Audio masters (the client ships .ogg / .mp3)
+*.flac
+*.aif
+*.aiff
+*.wav
+*.aup
 
 # --- Python (optional local-client extraction) ----------------------------------------------------
 .venv*/
@@ -67,3 +129,25 @@ desktop.ini
 .claude/
 # tools/sim-check.mjs: the corpus and its Node traces for /dev/sim-check.html
 public/dev/simcheck/data/
+
+# --- private maintenance notes, announcements and one-off investigation artifacts -----------------
+# Kept locally. Ignore rules do not remove files from existing commits; publication must audit
+# the outgoing commits as well as the final tree, rather than pushing a private working history.
+/docs/development/records/
+/docs/development/templates/
+/docs/release-notes-*.md
+/scripts/remote-*.sh
+/scripts/notice-*.md
+/scripts/sshpass.py
+/scripts/verify-cat-hash.py
+/scripts/make-unix-bundle.mjs
+/tmp-*
+/tmp-*/
+/public/dev/outfit-probe.html
+/public/dev/outfit-probe.js
+/public/dev/shop-card-preview.html
+/public/dev/skin-flip.html
+/public/dev/skin-flip.js
+/public/dev/skin-preview.html
+/public/dev/skin-preview.js
+/tools/unite-perf.mjs

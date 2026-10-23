@@ -8,7 +8,7 @@ const catalog = { schema: 1, files: [{ url: '/assets/a.png', bytes: 3,
   sha256: 'b'.repeat(64), type: 'image/png', aliases: [] }], totalFiles: 1, totalBytes: 3, complete: true, missing: [] };
 catalog.version = createHash('sha256').update(JSON.stringify({ schema: 1, files: catalog.files })).digest('hex');
 
-function fixture({ storage = {}, secure = true, persistedCatalog = true, fastUpdateTimeout = false, online = false } = {}) {
+function fixture({ storage = {}, secure = true, persistedCatalog = true, fastUpdateTimeout = false, online = false, renderCache = false } = {}) {
   const messages = [], work = [], listeners = new Map(), catalogUpdates = [];
   let catalogReads = 0, statusReads = 0, broken = false, playing = false, ready = 0;
   let updateResponse = () => Response.json({ error: 'ASSET_CACHE_CATALOG_LOCAL_ONLY' }, { status: 403 });
@@ -28,7 +28,7 @@ function fixture({ storage = {}, secure = true, persistedCatalog = true, fastUpd
       metadata.set(origin + assetCacheCatalogKey(data.catalog.version), structuredClone(data.catalog));
     }
     if (data.type === 'ASSET_CACHE_CLEAR') ready = 0;
-    ports[0].postMessage({ ok: true, playing, protocol: ASSET_CACHE_SW_PROTOCOL, imported: true });
+    ports[0].postMessage({ ok: true, playing, protocol: ASSET_CACHE_SW_PROTOCOL, imported: true, renderCache });
   } };
   const registration = { active: sw };
   const environment = {
@@ -94,6 +94,21 @@ test('a summary failure is retryable by explicit checking; reopening never downl
     assert.equal(f.statusReads(), 2);
     assert.equal(f.manager.getState().policy.enabled, false, 'disabled online filling still leaves local import available');
   } finally { f.manager.destroy(); }
+});
+
+test('render-cache consent supports live matches without relaxing import guards or accepting old workers', async () => {
+  const f = fixture({ renderCache: true });
+  const old = fixture();
+  try {
+    assert.equal(await f.manager.configureRendering(true), true);
+    assert.equal(f.manager.getState().renderCacheReady, true);
+    await f.manager.setPlaying(true);
+    assert.equal(await f.manager.configureRendering(false, { clear: true }), true);
+    assert.ok(f.messages.some((m) => m.type === 'ASSET_CACHE_RENDER_CONSENT' && m.clear));
+    assert.equal(f.manager.getState().renderCacheReady, false);
+    assert.equal(await old.manager.configureRendering(true), false, 'older workers need an idle upgrade or a reopened page');
+    assert.ok(!old.messages.some((m) => m.type === 'ASSET_CACHE_RENDER_CONSENT'));
+  } finally { f.manager.destroy(); old.manager.destroy(); }
 });
 
 test('a direct combat reconnect restores the persisted directory before playing and does not download one', async () => {
@@ -427,6 +442,22 @@ test('directory transfer timeout aborts and cancels the stream while preserving 
     assert.equal(f.manager.getState().phase, 'error');
     assert.equal(f.catalogUpdates.length, 1, 'timeout has no automatic retry');
   } finally { f.manager.destroy(); }
+});
+
+test('a directory Fetch or cancellation ignoring abort cannot keep the page operation busy', async () => {
+  for (const kind of ['headers', 'body']) {
+    const f = await outdatedFixture({ fastUpdateTimeout: true });
+    f.updateResponse(() => kind === 'headers' ? new Promise(() => {}) : new Response(new ReadableStream({
+      start(c) { c.enqueue(new TextEncoder().encode('{')); }, cancel: () => new Promise(() => {}),
+    })));
+    try {
+      await assert.rejects(f.manager.updateCatalog(), /ASSET_CACHE_CATALOG_UNAVAILABLE/);
+      assert.equal(f.manager.getState().version, catalog.version);
+      // Another action can start without destroying the manager or refreshing its page.
+      await f.manager.scan();
+      assert.notEqual(f.manager.getState().error, 'ASSET_CACHE_BUSY');
+    } finally { f.manager.destroy(); }
+  }
 });
 
 test('corrupt, oversized and mismatched downloaded directories preserve the existing pin and cache', async () => {

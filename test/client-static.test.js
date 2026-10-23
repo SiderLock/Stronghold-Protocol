@@ -397,6 +397,64 @@ function ws0Pong(sock) {
 }
 
 describe('net.js', () => {
+  test('a stalled WebSocket upgrade times out, retries, and ignores the abandoned socket', async () => {
+    const { CONNECT_TIMEOUT_MS } = await mod('net.js');
+    const { net, timers, sockets, ws } = await makeNet();
+    net.setName('A');
+    const old = ws(), lateOpen = old.onopen;
+    timers.advance(CONNECT_TIMEOUT_MS - 1);
+    assert.equal(sockets.length, 1);
+    assert.equal(old.closedWith, null);
+    timers.advance(1);
+    assert.equal(old.closedWith, 4000);
+    assert.equal(net.status, 'reconnecting');
+    timers.advance(500);
+    assert.equal(sockets.length, 2);
+    old.readyState = 1; lateOpen();
+    assert.equal(net.status, 'reconnecting', 'late open cannot publish a stale connection');
+    ws().open();
+    ws().recv({ t: 'welcome', playerId: 'p', name: 'A' });
+    for (let i = 0; i < 5; i++) { ws0Pong(ws()); timers.advance(4000); }
+    assert.equal(net.status, 'online', 'the established connection has no leftover upgrade clock');
+    net.close();
+  });
+
+  test('network recovery probes an OPEN socket and replaces it if its unanswered ping expired', async () => {
+    const { DEAD_AFTER_MS } = await mod('net.js');
+    let wall = 1_000_000;
+    const { net, ws, timers, sockets } = await onlineNet({ now: () => wall });
+    ws0Pong(ws());
+    net.retryNow();
+    assert.equal(net.status, 'online', 'a healthy socket is probed without reconnecting');
+    wall += DEAD_AFTER_MS + 1; // browser suspended timers while connectivity changed
+    await quiet(() => net.retryNow());
+    assert.equal(ws().closedWith, 4000);
+    assert.equal(net.status, 'reconnecting');
+    timers.advance(500);
+    assert.equal(sockets.length, 2);
+    net.close();
+    net.retryNow();
+    assert.equal(sockets.length, 2, 'manual close remains final');
+  });
+
+  test('welcome cannot flush expired actions before a throttled timeout callback runs', async () => {
+    let wall = 1_000_000;
+    const { net, ws } = await makeNet({ now: () => wall });
+    net.setName('A');
+    const expired = net.request('room.ready', { ready: true }, { timeout: 1000 });
+    const fresh = net.request('room.leave', {}, { timeout: 3000 });
+    wall += 1000;
+    ws().open();
+    ws().recv({ t: 'welcome', playerId: 'p', name: 'A' });
+    await assert.rejects(expired, (e) => e.code === 'TIMEOUT');
+    assert.equal(ws().last('room.ready'), undefined);
+    const sent = ws().last('room.leave');
+    assert.ok(sent, 'an unexpired queued action is still sent once');
+    ws().recv({ t: 'ok', rid: sent.rid });
+    await fresh;
+    net.close();
+  });
+
   test('backoffDelay grows, is capped and jittered', async () => {
     const { backoffDelay, BACKOFF } = await mod('net.js');
     const mid = () => 0.5;

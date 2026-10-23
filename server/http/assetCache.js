@@ -65,7 +65,7 @@ async function openAsset(publicDir, url) {
 }
 
 /** Bounded-memory verification before headers: never silently transfer changed bytes under an old SHA-256. */
-async function verifyAsset(handle, entry, canceled) {
+async function verifyAsset(handle, entry, canceled, progress) {
   const before = await handle.stat();
   if (before.size !== entry.bytes) return false;
   const digest = createHash('sha256');
@@ -75,6 +75,7 @@ async function verifyAsset(handle, entry, canceled) {
     const length = Math.min(buffer.length, entry.bytes - position);
     const { bytesRead } = await handle.read(buffer, 0, length, position);
     if (bytesRead !== length) return false;
+    progress();
     digest.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
   }
@@ -82,7 +83,8 @@ async function verifyAsset(handle, entry, canceled) {
 }
 
 export function createAssetCacheHandler({ publicDir, dataDir, log, limits, trustProxy, buildCatalog = createAssetCacheCatalog,
-  requireAssetCache = () => false, updateNow = () => performance.now() }) {
+  requireAssetCache = () => false, updateNow = () => performance.now(),
+  hashCacheFile = path.resolve(publicDir, '..', '.cache', 'asset-catalog-hashes.json') }) {
   const limiter = new CacheDownloadLimiter(limits);
   const proxy = trustProxy ?? parseTrustProxy(process.env.TRUST_PROXY);
   let pending = null;
@@ -99,7 +101,8 @@ export function createAssetCacheHandler({ publicDir, dataDir, log, limits, trust
   // One immutable catalog per server lifetime, shared by the tiny summary and filling allowlist.
   // Failure is retryable (e.g. setup still copying files); a successful snapshot changes only after restart.
   async function snapshot() {
-    if (!pending) pending = Promise.resolve().then(() => buildCatalog({ publicDir, dataDir })).then((catalog) => {
+    if (!pending) pending = Promise.resolve().then(() => buildCatalog({ publicDir, dataDir, hashCacheFile,
+      onHashStats: stats => log?.info?.('[asset-cache] digest scan', stats) })).then((catalog) => {
       const byUrl = new Map(catalog.files.map((entry) => [entry.url, entry]));
       current = assetCacheSummary(catalog);
       return { catalog, byUrl };
@@ -255,7 +258,8 @@ export function createAssetCacheHandler({ publicDir, dataDir, log, limits, trust
     try {
       handle = await openAsset(publicDir, entry.url);
       if (lease.released || res.destroyed) return;
-      if (!(await verifyAsset(handle, entry, () => lease.released || res.destroyed))) {
+      lease.touch();
+      if (!(await verifyAsset(handle, entry, () => lease.released || res.destroyed, lease.touch))) {
         if (!res.destroyed) failure(req, res, 409, 'ASSET_CACHE_SOURCE_CHANGED'); return;
       }
       if (lease.released || res.destroyed) return;

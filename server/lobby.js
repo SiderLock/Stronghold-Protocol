@@ -5,8 +5,8 @@
 //   * Rooms are keyed by 4-letter codes from an unambiguous alphabet (no I/O, letters only). Join codes are
 //     case-insensitive.
 //   * 'solo' rooms hold exactly one human and never bots. 'coop' rooms offer 4 / 8 / 10 / 16 / 20 seats (humans + AI bots).
-//     Humans and bots take the lowest free seat index. In a waiting room the host occupies seat 0;
-//     host transfer/migration swaps only the host and seat 0. Running matches retain their fixed seats.
+//     Humans and bots take the lowest free seat index. Waiting humans can exchange seats (lobbySeats.js);
+//     host authority follows identity independently of seat position. Running matches retain their fixed seats.
 //   * ▸ Being in a LOBBY room and sending room.create / room.join implicitly leaves it. While your room is
 //     in a match, create/join of another room fails with ROOM_STARTED (send g.leave or room.leave first).
 //   * Host-only: room.setDifficulty, room.setAiPicksLast, room.addBot, room.removeBot, room.kick, room.start.
@@ -169,6 +169,7 @@ import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
 import { LobbyDiscovery } from './lobbyDiscovery.js';
+import { requestSeat, answerSeat, pruneSeatRequests, clearSeatRequests } from './lobbySeats.js';
 import { assetCacheReadinessMatches } from '../shared/assetCache.js';
 import { MatchChat } from './matchChat.js';
 
@@ -287,6 +288,9 @@ export class Room {
     /** @type {(Seat | null)[]} */
     this.capacity = mode === 'solo' ? 1 : capacity;
     this.seats = new Array(this.capacity).fill(null);
+    this.seatRequests = [];
+    this.seatRequestSeq = 0;
+    this.seatRequestTimer = null;
     /** @type {{ playerId: string, name: string, connected: boolean }[]} spectator seats, ≤ MAX_SPECTATORS (header) */
     this.spectators = [];
     /** @type {any} running Match instance */
@@ -349,6 +353,7 @@ export class Room {
       t: 'room.state',
       code: this.code,
       hostId: this.hostId,
+      ...(this.seatRequests.length ? { seatRequests: this.seatRequests.map((r) => ({ ...r })) } : {}),
       maxAiPerRoom: this.maxAiPerRoom,
       mode: this.mode,
       difficulty: this.difficulty,
@@ -389,6 +394,7 @@ export class Lobby {
    *     unofficial?: () => number, hasNotices?: () => boolean, defaults?: () => string[], dataOf?: (cs: string) => any, kittedOf?: (cs: string) => any,
    *     contentInUse?: () => number } | null,
    *   hosts?: { create: (cs: string, opts: object) => any, stats?: () => object } | null,
+   *   rehearsalPool?: ReturnType<typeof import('./match/rehearsalPool.js').createRehearsalPool> | null,
    *   options?: Partial<typeof LOBBY_DEFAULTS>,
    * }} opts
    *   content: the server's vanilla content (server/plugins/identity.js; header "Content identity"); plugins: what a host
@@ -396,7 +402,7 @@ export class Lobby {
    *   plugins", "Gameplay plugins"); hosts: the match hosts a room with gameplay plugins runs its match in
    *   (server/match/host/index.js; none: such a match runs here, unit tests)
    */
-  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, content = null, plugins = null, hosts = null, options = {} }) {
+  constructor({ registry, log = noopLog, MatchClass = DefaultMatch, getData = defaultGetData, now = Date.now, seedFn, content = null, plugins = null, hosts = null, rehearsalPool = null, options = {} }) {
     this.registry = registry;
     /** the vanilla content set every room plays (header "Content identity"), or null */
     this.vanilla = content && isContentHash(content.cs) ? Object.freeze({ cs: content.cs, vanilla: true, plugins: Object.freeze([]) }) : null;
@@ -404,6 +410,7 @@ export class Lobby {
     this.plugins = plugins;
     /** the match hosts (header "Gameplay plugins"), or null */
     this.hosts = hosts;
+    this.rehearsalPool = rehearsalPool;
     this.log = log;
     this.MatchClass = MatchClass;
     this.getData = getData;
@@ -647,7 +654,7 @@ export class Lobby {
    */
   onMessage(session, msg) {
     if (this.emergency.active && (['lobby.quickMatch', 'room.create', 'room.start', 'room.rerollSetup',
-      'room.cancelReroll', 'room.loadout', 'room.ownership', 'room.diy', 'room.chat'].includes(msg.t)
+      'room.cancelReroll', 'room.requestReroll', 'room.loadout', 'room.ownership', 'room.diy', 'room.chat'].includes(msg.t)
       || (msg.t === 'lobby.watch' && msg.on))) return fail(ERR.SERVER_EMERGENCY);
     const room = this.queuedRoom(session);
     if (!room) return this.handleMessage(session, msg);
@@ -729,9 +736,12 @@ export class Lobby {
       case 'room.removeBot': return this.removeBot(session, msg);
       case 'room.kick': return this.kick(session, msg);
       case 'room.transferHost': return this.transferHost(session, msg);
+      case 'room.requestSeat': return requestSeat(this, session, msg);
+      case 'room.answerSeat': return answerSeat(this, session, msg);
       case 'room.start': return this.start(session);
       case 'room.rerollSetup': return this.rerollSetup(session, msg);
       case 'room.cancelReroll': return this.rerollSetup(session, msg, true);
+      case 'room.requestReroll': return this.requestReroll(session, msg);
       case 'room.loadout': return this.loadout(session, msg);
       case 'room.ownership': return this.ownership(session, msg);
       case 'room.diy': return this.diy(session, msg);
@@ -1242,7 +1252,6 @@ export class Lobby {
     }
     this.dropReplay(room, session.playerId);
     room.hostId = playerId;
-    this.promoteHostSeat(room);
     this.broadcastState(room);
     this.log.info(`[lobby] ${room.code} host transferred to ${target.name}`);
     return OK;
@@ -1307,6 +1316,20 @@ export class Lobby {
     const method = cancel ? 'cancelSetupReroll' : 'requestSetupReroll';
     if (!room.match || typeof room.match[method] !== 'function') return fail(ERR.WRONG_PHASE);
     return this.callMatch(room, method, session.playerId, cancel ? msg.voteId : msg.setupRevision) || fail(ERR.INTERNAL);
+  }
+
+  /**
+   * room.requestReroll (GitHub #854): a non-host player asks the host to start the opening reroll.
+   * The lobby only checks room membership — the match owns the pending list, the cooldown and the phase.
+   * Nothing is refreshed here: the host still proposes the vote with room.rerollSetup.
+   */
+  requestReroll(session, msg) {
+    const room = this.roomOf(session);
+    if (!room) return fail(ERR.NOT_IN_ROOM);
+    if (room.spectatorOf(session.playerId)) return fail(ERR.SPECTATOR);
+    if (room.hostId === session.playerId) return fail(ERR.BAD_MSG, 'the host starts the vote directly');
+    if (!room.match || typeof room.match.askSetupReroll !== 'function') return fail(ERR.WRONG_PHASE);
+    return this.callMatch(room, 'askSetupReroll', session.playerId, msg.setupRevision) || fail(ERR.INTERNAL);
   }
 
   /**
@@ -1573,12 +1596,14 @@ export class Lobby {
         ...(modded ? { kitted: this.kittedFor(room) } : {}),
         ...(room.content?.rules ? { rules: room.content.rules } : {}),
         data,
+        ...(!modded && room.test !== true ? { rehearsalPool: this.rehearsalPool } : {}),
         log: this.log,
         now: this.now,
         send: (playerId, msg) => (ctx.live ? this.matchSend(room, ctx, playerId, msg) : false),
         broadcast: (msg) => { if (ctx.live) this.matchBroadcast(room, ctx, msg); },
         onEnd: (summary) => this.onMatchEnd(room, ctx, summary),
       };
+      if (!modded && room.test !== true && seats.some(s => s.isBot)) this.rehearsalPool?.warm();
       // a room with gameplay plugins plays in its content set's match host; every other room here, as always
       const match = modded && this.hosts ? this.hosts.create(room.content.cs, opts) : new this.MatchClass(opts);
       ctx.match = match;
@@ -1627,7 +1652,6 @@ export class Lobby {
     const host = room.hostId ? room.seatOf(room.hostId) : null;
     if (!host || host.isBot || host.left) this.migrateHost(room);
     this.trimBots(room);
-    this.promoteHostSeat(room);
     if (room.activeHumans().length === 0) this.disposeRoom(room, 'empty');
     else {
       this.broadcastState(room);
@@ -1955,24 +1979,10 @@ export class Lobby {
     const pick = humans.find((s) => s.connected) || humans[0] || null;
     const prev = room.hostId;
     room.hostId = pick ? pick.playerId : null;
-    this.promoteHostSeat(room);
     if (pick && prev !== pick.playerId) this.log.info(`[lobby] ${room.code} host → ${pick.name}`);
     // a running match follows the host change: its delegated bot rehearsals fall back to the server and later ones ask
     // the new host (DESIGN §14, Match.setHost)
     if (room.match && room.hostId !== prev) this.callMatch(room, 'setHost', room.hostId);
-  }
-
-  /** Change waiting-room seat order only; a running match owns its original seats and fixed pool groups. */
-  promoteHostSeat(room) {
-    if (room.match || !room.hostId) return;
-    const host = room.seatOf(room.hostId);
-    if (!host || host.isBot || host.left || host.seat === 0) return;
-    const oldIndex = host.seat;
-    const first = room.seats[0];
-    room.seats[0] = host;
-    host.seat = 0;
-    room.seats[oldIndex] = first;
-    if (first) first.seat = oldIndex;
   }
 
   startGrace(room, seat) {
@@ -2006,6 +2016,7 @@ export class Lobby {
   disposeRoom(room, reason) {
     if (room.disposed) return;
     room.disposed = true;
+    clearSeatRequests(room);
     if (this.rooms.get(room.code) === room) {
       this.trustedRuntime?.event('roomClosed', { room: room.toState() });
       this.rooms.delete(room.code);
@@ -2065,6 +2076,7 @@ export class Lobby {
 
   broadcastState(room) {
     if (room.disposed) return;
+    pruneSeatRequests(this, room);
     this.discovery.changed();
     if (this.trustedRuntime) {
       const state = room.toState(), prev = room.trustedPrevious;

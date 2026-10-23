@@ -271,7 +271,7 @@ describe('static http server', () => {
     assert.match(asset.headers.etag, /^"[0-9a-f]{16}"$/);
     const font = await httpReq(srv.port, '/fonts/f.woff2');
     assert.equal(font.headers['cache-control'], 'public, max-age=86400');
-    const assetV = await httpReq(srv.port, '/assets/img/a.png?v=abc');
+    const assetV = await httpReq(srv.port, '/assets/img/a.png?v=0123456789abcdef');
     assert.match(assetV.headers['cache-control'], /immutable/);
     const assetRoot = await httpReq(srv.port, '/assets');
     assert.equal(assetRoot.status, 301, 'directory redirect, not cached content');
@@ -883,13 +883,13 @@ describe('websocket lobby', () => {
     await expectOk(host, { t: 'room.leave' });
     const migrated = await a.waitFor('room.state', (s) => s.hostId !== host.id);
     assert.equal(migrated.hostId, a.id, 'lowest remaining seat becomes host');
-    assert.equal(migrated.seats[0]?.playerId, a.id, 'the waiting-room host moves to P1');
+    assert.equal(migrated.seats[1]?.playerId, a.id, 'host migration preserves the existing seat');
     await b.waitFor('room.state', (s) => s.hostId === a.id);
 
-    // new joiner takes the lowest free seat (1); host stays with A at P1
+    // New joiner takes the lowest free seat (0); A remains host in the original seat.
     const c = await pool.player('C');
     const joined = await joinRoom(c, st.code);
-    assert.equal(seatOf(joined, c.id).seat, 1);
+    assert.equal(seatOf(joined, c.id).seat, 0);
     assert.equal(joined.hostId, a.id);
     await expectOk(a, { t: 'room.addBot' });
     const withBot = await c.waitFor('room.state', (s) => s.seats[3]?.isBot);
@@ -1336,7 +1336,7 @@ describe('lobby timers and match interface', () => {
     await joinRoom(guest, st.code);
     await host.terminate();
     const migrated = await guest.waitFor('room.state', (s) => s.hostId === guest.id, GRACE + 1000);
-    assert.equal(migrated.seats[0]?.playerId, guest.id);
+    assert.equal(migrated.seats[1]?.playerId, guest.id);
     await expectOk(guest, { t: 'room.addBot' });
   });
 

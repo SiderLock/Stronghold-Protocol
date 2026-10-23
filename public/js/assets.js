@@ -51,6 +51,7 @@
 // caller falls back (docs/ASSETS.md "Other fallbacks").
 
 import { runtimeURL, runtimeCacheMode } from './runtime.js';
+import { trackAssetDemand } from './assetPriority.js';
 import { cosmetics, createCosmeticLayers, EMPTY_MANIFEST } from './cosmetics.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -161,8 +162,7 @@ export const EMPTY_SKINS = Object.freeze({});
 /**
  * The appearances of an operator the manifest holds (docs/SKINS.md, the picker's source): `chars[charId].skins`,
  * written by a cosmetic plugin's overlay — `{ [skinId]: { name, group, avatar, …, spine: { front, back? } } }` — or an
- * empty object. A skin whose record carries a usable Spine model is one the renderer can actually wear
- * (`spineEntry(m, charId, { skin })` resolves it); one without is art only.
+ * empty object. A skin may carry a Spine model or pictures only; missing layers use the operator defaults.
  * @returns {Record<string, any>}
  */
 export function skinsOf(m, charId) {
@@ -170,7 +170,54 @@ export function skinsOf(m, charId) {
   return rec && isObj(rec.skins) ? rec.skins : EMPTY_SKINS;
 }
 
-/** Whether a skin record can be worn: it has a Spine model the client resolves (docs/SKINS.md). */
+/**
+ * The operator ids whose record holds a skin key, from one composed manifest (`skinId → charId[]`).
+ *
+ * 召唤物换装 (docs/SKINS.md) needs the reverse of the manifest's own grouping: a summoned token arrives with the SKIN
+ * its summoner wears, and the mapping that says which model that skin gives the token lives under the OPERATOR
+ * (`chars[<charId>].skins[<skinId>].tokens`). A plugin may reuse one key under two operators, so every candidate is
+ * kept and tried in order. Built once per manifest object; the composed manifest is replaced whenever a layer changes.
+ */
+const skinOwners = new WeakMap();
+function skinOwnerMap(m) {
+  let map = skinOwners.get(m);
+  if (map) return map;
+  map = new Map();
+  const chars = get(m, 'chars');
+  if (isObj(chars)) {
+    for (const [charId, rec] of Object.entries(chars)) {
+      const skins = get(rec, 'skins');
+      if (!isObj(skins)) continue;
+      for (const skinId of Object.keys(skins)) {
+        const list = map.get(skinId);
+        if (list) list.push(charId); else map.set(skinId, [charId]);
+      }
+    }
+  }
+  skinOwners.set(m, map);
+  return map;
+}
+
+/**
+ * The model a skin gives a summoned token — `chars[<charId>].skins[<skinId>].tokens[<tokenId>].spine` — or null when
+ * that skin brings no model for this token, in which case the token draws its own (docs/SKINS.md 召唤物换装). The
+ * model is a spine op like `tokens[<tokenId>].spine` itself: a token has no Front / Back pair. The overlay schema
+ * requires it, so an entry without one is not a mapping at all.
+ * @returns {any | null} the skin's model for this token, or null
+ */
+export function tokenSkinSpine(m, tokenId, skinId) {
+  const t = str(tokenId), s = str(skinId);
+  if (!t || !s) return null;
+  for (const charId of skinOwnerMap(m).get(s) || []) {
+    const rec = get(get(m, 'chars'), charId);
+    const skin = get(get(rec, 'skins'), s);
+    const spine = get(get(get(skin, 'tokens'), t), 'spine');
+    if (isObj(spine)) return spine;
+  }
+  return null;
+}
+
+/** Whether a skin record names a Spine model (picture-only outfits are wearable too) (docs/SKINS.md). */
 export const skinHasModel = (skin) => !!skin && isObj(skin.spine) && typeof skin.spine.front === 'object' && skin.spine.front !== null && typeof skin.spine.front.skel === 'string';
 
 /** Skill icon by iconId, or by skillId via `skillsById`. Falls back to the empty skill icon. */
@@ -225,7 +272,8 @@ export function spineEntry(m, id, opts) {
     const wanted = opts && str(opts.skin) ? String(opts.skin) : null;
     if (wanted) {
       const skin = get(get(ch, 'skins'), wanted);
-      if (skin && isObj(skin.spine)) {
+      // B6 (docs/SKINS.md): an unfinished spine map with no Front uses the complete default body.
+      if (skinHasModel(skin)) {
         const sp = (opts && opts.back && isObj(skin.spine.back)) ? skin.spine.back : skin.spine.front;
         if (validSpine(sp)) return sp;
       }
@@ -238,6 +286,13 @@ export function spineEntry(m, id, opts) {
   }
   const tk = get(get(m, 'tokens'), s);
   if (tk) {
+    // 召唤物换装 (docs/SKINS.md): the summoner's skin may bring its own model for this token; a skin that has none (or
+    // none for this token) leaves the token on the model it always drew. A token's model has no Front / Back pair.
+    const wanted = opts && str(opts.skin) ? String(opts.skin) : null;
+    if (wanted) {
+      const skinSpine = tokenSkinSpine(m, s, wanted);
+      if (validSpine(skinSpine)) return skinSpine;
+    }
     const web = validSpine(tk.spine) ? tk.spine : null;
     return (opts && opts.local && localSpineEntry(tk.spineLocal, opts.local, web)) || web;
   }
@@ -287,7 +342,7 @@ export function hasBackSpine(m, id, skinId) {
   const ch = get(get(m, 'chars'), str(id) || '') || get(get(m, 'chars'), baseCharId(id) || '');
   if (!ch) return false;
   const skin = str(skinId) ? get(get(ch, 'skins'), String(skinId)) : null;
-  const src = (skin && isObj(skin.spine)) ? skin.spine : ch.spine;
+  const src = skinHasModel(skin) ? skin.spine : ch.spine;
   return !!(isObj(src) && validSpine(src.back));
 }
 
@@ -772,6 +827,10 @@ export function unloadSpineData(entry, _value, keep) {
 
 /** Spine LRU memory budget: estimated bytes (`spineDataWeight`) of idle skeletons kept while a scene is shown. */
 export const SPINE_IDLE_BYTES = 48 * 1024 * 1024;
+/** Retained decoded images only; live renderers keep their own references when an entry leaves this cache. */
+export const IMAGE_CACHE_BYTES = 64 * 1024 * 1024;
+export const IMAGE_CACHE_MAX = 256;
+export const IMAGE_LOAD_CONCURRENCY = 8;
 /** How long a released skeleton is safe from the weight budget (a prep ⇄ battle switch re-acquires within it). */
 export const SPINE_IDLE_GRACE_MS = 15000;
 /**
@@ -829,6 +888,28 @@ export function createAssets(options) {
   let readyPromise = manifest ? Promise.resolve(manifest) : null;
   const loadImage = opts.loadImage || loadImageElement;
   const images = new Map(); // url → { promise, value }
+  const imageBytes = Math.max(0, opts.imageCacheBytes ?? IMAGE_CACHE_BYTES);
+  const imageMax = Math.max(0, opts.imageCacheMax ?? IMAGE_CACHE_MAX);
+  const imageConcurrency = Math.max(1, opts.imageConcurrency ?? IMAGE_LOAD_CONCURRENCY);
+  const imageQueue = [];
+  let imageActive = 0, retainedImageBytes = 0;
+  const touchImage = (key, rec) => { images.delete(key); images.set(key, rec); };
+  // Eviction only drops the store's reference. Never close/reset an image a board or texture may still draw.
+  function trimImages() {
+    for (const [key, rec] of images) {
+      if (images.size <= imageMax && retainedImageBytes <= imageBytes) break;
+      if (!rec.done) continue;
+      images.delete(key);
+      retainedImageBytes -= rec.bytes;
+    }
+  }
+  function pumpImages() {
+    while (imageActive < imageConcurrency && imageQueue.length) {
+      const run = imageQueue.shift();
+      imageActive++;
+      run().finally(() => { imageActive--; pumpImages(); });
+    }
+  }
   const retryDelays = Array.isArray(opts.retryDelays) ? opts.retryDelays : MANIFEST_RETRY_MS;
   const backoff = Array.isArray(opts.backoff) ? opts.backoff : MANIFEST_BACKOFF_MS;
   const wait = opts.wait || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -950,13 +1031,24 @@ export function createAssets(options) {
     let e = images.get(s);
     if (retry && e?.done && !e.value) { images.delete(s); e = null; }
     if (!e) {
-      e = { value: null, done: false, promise: null };
-      e.promise = Promise.resolve().then(() => loadImage(s)).then(
-        (img) => { e.value = img; e.done = true; if (!img) failed(s); return img; },
-        () => { e.done = true; failed(s); return null; },
-      );
+      e = { value: null, done: false, promise: null, bytes: 0 };
+      e.promise = trackAssetDemand(new Promise((resolve) => {
+        imageQueue.push(async () => {
+          let img = null;
+          try { img = await loadImage(s); } catch { /* image failures retain the existing fallback */ }
+          e.value = img; e.done = true;
+          const width = Number(img?.naturalWidth ?? img?.width) || 0;
+          const height = Number(img?.naturalHeight ?? img?.height) || 0;
+          e.bytes = Number.isFinite(width * height) ? Math.max(0, width * height * 4) : 0;
+          retainedImageBytes += e.bytes;
+          if (!img) failed(s);
+          trimImages();
+          resolve(img);
+        });
+      }));
       images.set(s, e);
-    }
+      pumpImages();
+    } else touchImage(s, e);
     return e.promise;
   }
 
@@ -1035,7 +1127,9 @@ export function createAssets(options) {
      */
     failed,
     /** Already-loaded image element or null (sync). */
-    imageNow(u) { const e = images.get(str(u) || ''); return e && e.done ? e.value : null; },
+    imageNow(u) { const key = str(u) || '', e = images.get(key); if (e) touchImage(key, e); return e && e.done ? e.value : null; },
+    /** Cache ownership, not total browser / GPU memory; pending decodes are separately bounded. */
+    imageStats: () => ({ entries: images.size, bytes: retainedImageBytes, active: imageActive, queued: imageQueue.length }),
     /**
      * Preload URLs; `onProgress(done, total, url)` after each. Resolves to { ok, failed } counts (never rejects).
      */
@@ -1058,7 +1152,7 @@ export function createAssets(options) {
       // a cosmetic plugin's model that fails to load (any of its files) falls back to the installation's: its view loads
       // that one (render/units.js retryAssets) — not while the tab is hidden (a load the hidden tab left hanging times out
       // without the file being at fault: GitHub #68; the view tries again when it is shown)
-      acquire: (entry, o) => (validSpine(entry) ? spine.acquire(entry.skel, entry, o).catch((err) => {
+      acquire: (entry, o) => (validSpine(entry) ? trackAssetDemand(spine.acquire(entry.skel, entry, o)).catch((err) => {
         if (!globalThis.document?.hidden) failed(entry.skel);
         throw err;
       }) : Promise.reject(new Error('no spine entry'))),
