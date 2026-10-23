@@ -65,7 +65,7 @@ async function openAsset(publicDir, url) {
 }
 
 /** Bounded-memory verification before headers: never silently transfer changed bytes under an old SHA-256. */
-async function verifyAsset(handle, entry, canceled) {
+async function verifyAsset(handle, entry, canceled, progress) {
   const before = await handle.stat();
   if (before.size !== entry.bytes) return false;
   const digest = createHash('sha256');
@@ -75,6 +75,7 @@ async function verifyAsset(handle, entry, canceled) {
     const length = Math.min(buffer.length, entry.bytes - position);
     const { bytesRead } = await handle.read(buffer, 0, length, position);
     if (bytesRead !== length) return false;
+    progress();
     digest.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
   }
@@ -257,7 +258,8 @@ export function createAssetCacheHandler({ publicDir, dataDir, log, limits, trust
     try {
       handle = await openAsset(publicDir, entry.url);
       if (lease.released || res.destroyed) return;
-      if (!(await verifyAsset(handle, entry, () => lease.released || res.destroyed))) {
+      lease.touch();
+      if (!(await verifyAsset(handle, entry, () => lease.released || res.destroyed, lease.touch))) {
         if (!res.destroyed) failure(req, res, 409, 'ASSET_CACHE_SOURCE_CHANGED'); return;
       }
       if (lease.released || res.destroyed) return;

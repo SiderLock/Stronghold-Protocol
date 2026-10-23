@@ -8,7 +8,7 @@ import { ownDiyRecord, ownStandIn } from './ui/gameLogic.js';
 import { currentAssetPlan, visualAssetURLs, backgroundFillAllowed } from './assetPlan.js';
 import { createAssetPreloader } from './assetPriority.js';
 import { loadFxList, FX_LIST_URL } from './render/vfx/available.js';
-import { renderAssetKey } from '../../shared/assetCache.js';
+import { renderAssetKey, createAssetTransfer, releaseAssetReader } from '../../shared/assetCache.js';
 
 let current = null, local = null, localPending = false, fx = null, fxLoaded = false;
 let servedAssets = null, servedLocal = null;
@@ -42,32 +42,26 @@ const loader = createAssetPreloader({ load: async (url, { background, signal }) 
     }
     fxLoaded = true; refresh(); return;
   }
-  const abort = new AbortController();
-  const cancel = () => abort.abort();
-  signal?.addEventListener('abort', cancel, { once: true });
-  if (signal?.aborted) cancel();
-  let timer;
-  const progress = () => { clearTimeout(timer); timer = setTimeout(cancel, 30000); };
-  progress();
-  const options = { priority: background ? 'low' : 'high', cache: 'force-cache', signal: abort.signal };
+  const transfer = createAssetTransfer({ signal, timeoutMs: 30000 });
+  const options = { priority: background ? 'low' : 'high', cache: 'force-cache', signal: transfer.signal };
   const consume = async (response) => {
     if (!response.ok) throw new Error(`asset ${response.status}`);
     const reader = response.body?.getReader(); let count = 0;
     if (reader) {
-      try { while (true) { const next = await reader.read(); if (next.done) break; count += next.value.length; progress(); } }
-      finally { reader.releaseLock(); }
-    } else { count = (await response.arrayBuffer()).byteLength; progress(); }
+      try { while (true) { const next = await transfer.wait(reader.read()); if (next.done) break; count += next.value.length; if (next.value.byteLength) transfer.progress(); } }
+      finally { releaseAssetReader(reader); }
+    } else { count = (await transfer.wait(response.arrayBuffer())).byteLength; transfer.progress(); }
     return count;
   };
   try {
-    let count = await consume(await fetch(url, options));
+    let count = await consume(await transfer.wait(fetch(url, options)));
     if (!count) {
       // The same download-manager fallback as the scene loader, using only the manifest's exact size.
       const rec = Object.values((servedLocal || local)?.groups || {}).flatMap((g) => Object.values(g)).find((r) => r?.path === url && r.bytes > 0);
-      if (rec) count = await consume(await fetch(url, { ...options, headers: { Range: `bytes=0-${rec.bytes - 1}` } }));
+      if (rec) count = await consume(await transfer.wait(fetch(url, { ...options, headers: { Range: `bytes=0-${rec.bytes - 1}` } })));
     }
     if (!count) throw new Error('empty asset');
-  } finally { clearTimeout(timer); signal?.removeEventListener('abort', cancel); }
+  } finally { transfer.close(); }
 } });
 
 function refresh() {

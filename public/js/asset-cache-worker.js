@@ -11,7 +11,7 @@ function cancelled() {
 const send = (id, type, value = {}) => self.postMessage({ id, type, ...value });
 
 /** Only a bounded explicit response identifies why an online transfer was refused. */
-async function unavailableCode(response) {
+async function unavailableCode(response, transfer, h) {
   if (!response.body) return 'ASSET_CACHE_DOWNLOAD_FAILED';
   const reader = response.body.getReader();
   const chunks = [];
@@ -19,8 +19,9 @@ async function unavailableCode(response) {
   try {
     while (true) {
       cancelled();
-      const { done, value } = await reader.read();
+      const { done, value } = await transfer.wait(reader.read());
       if (done) break;
+      if (value.byteLength) transfer.progress();
       size += value.byteLength;
       if (size > 4096) return 'ASSET_CACHE_DOWNLOAD_FAILED';
       chunks.push(value);
@@ -32,7 +33,7 @@ async function unavailableCode(response) {
     if (code === 'ASSET_CACHE_EMERGENCY' || code === 'SERVER_EMERGENCY') return 'ASSET_CACHE_EMERGENCY';
     return code === 'ASSET_CACHE_ONLINE_DISABLED' ? code : 'ASSET_CACHE_DOWNLOAD_FAILED';
   } catch { return 'ASSET_CACHE_DOWNLOAD_FAILED'; }
-  finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  finally { h.releaseAssetReader(reader); }
 }
 
 class LimitedWriter extends zip.Writer {
@@ -241,60 +242,86 @@ async function work(message) {
         const now = performance.now();
         if (now - lastReport >= 250) { lastReport = now; report({ waiting: false, speedBps: speed() }); }
       };
-      const queue = catalog.files.filter((entry) => !ready(entry)).sort((a, b) => a.bytes - b.bytes);
+      const queue = [...new Map(catalog.files.filter((entry) => !ready(entry)).map(entry => [entry.sha256, entry])).values()]
+        .sort((a, b) => a.bytes - b.bytes).map(entry => ({ entry, attempt: 0 }));
       let limit = Math.max(1, Math.min(6, Number(message.maxParallel) || 2));
+      const job = active;
       const fetchEntry = async (entry) => {
-        let response;
         for (let retry = 0; retry < 6; retry++) {
           cancelled();
-          response = await fetch(`/api/asset-cache/file?url=${encodeURIComponent(entry.url)}&hash=${entry.sha256}`, {
-            cache: 'no-store', signal: active.abort.signal });
-          if (response.status !== 429) break;
-          // The server is at its per-client lease: give a slot back and wait out the advertised delay.
-          limit = Math.max(1, limit - 1);
-          const seconds = Math.max(1, Math.min(30, Number(response.headers.get('retry-after')) || 3));
-          report({ waiting: true, speedBps: 0 });
-          await sleep(seconds * 1000, active.abort.signal);
-        }
-        if (response.status === 409) throw h.assetCacheError('ASSET_CACHE_STALE_CATALOG');
-        if (response.status === 503) throw h.assetCacheError(await unavailableCode(response));
-        if (response.status === 429) throw h.assetCacheError('ASSET_CACHE_BUSY');
-        if (response.status !== 200 || Number(response.headers.get('content-length')) !== entry.bytes)
-          throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
-        const buffer = new Uint8Array(entry.bytes);
-        const reader = response.body.getReader();
-        let offset = 0;
-        try {
-          while (true) {
+          const transfer = h.createAssetTransfer({ signal: job.abort.signal });
+          let reader = null, wait, body = null;
+          try {
+            const response = await transfer.wait(fetch(`/api/asset-cache/file?url=${encodeURIComponent(entry.url)}&hash=${entry.sha256}`, {
+              cache: 'no-store', signal: transfer.signal }));
+            transfer.progress();
+            if (response.status === 429) {
+              if (retry === 5) throw h.assetCacheError('ASSET_CACHE_BUSY');
+              limit = Math.max(1, limit - 1);
+              wait = Math.max(1, Math.min(30, Number(response.headers.get('retry-after')) || 3)) * 1000;
+              report({ waiting: true, speedBps: 0 });
+            } else {
+              if (response.status === 409) throw h.assetCacheError('ASSET_CACHE_STALE_CATALOG');
+              if (response.status === 503) throw h.assetCacheError(await unavailableCode(response, transfer, h));
+              if (response.status !== 200 || Number(response.headers.get('content-length')) !== entry.bytes || !response.body)
+                throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
+              const buffer = new Uint8Array(entry.bytes);
+              reader = response.body.getReader();
+              let offset = 0;
+              while (true) {
+                cancelled();
+                const chunk = await transfer.wait(reader.read());
+                if (chunk.done) break;
+                if (chunk.value.byteLength) transfer.progress();
+                if (offset + chunk.value.length > entry.bytes) throw h.assetCacheError('ASSET_CACHE_FILE_TOO_LARGE');
+                buffer.set(chunk.value, offset); offset += chunk.value.length; received += chunk.value.length;
+                bump();
+              }
+              if (offset !== entry.bytes) throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
+              body = buffer;
+            }
+          } catch (error) {
+            // Browser Fetch/reader failures use TypeError or a numeric DOMException code, not a storage failure.
+            throw typeof error?.code === 'string' ? error : h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED', error);
+          } finally {
+            h.releaseAssetReader(reader); transfer.close();
+          }
+          if (body) {
             cancelled();
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            if (offset + chunk.value.length > entry.bytes) throw h.assetCacheError('ASSET_CACHE_FILE_TOO_LARGE');
-            buffer.set(chunk.value, offset); offset += chunk.value.length; received += chunk.value.length;
-            bump();
+            try { await store(entry, body); }
+            catch (error) {
+              if (error?.name === 'QuotaExceededError' || typeof error?.code === 'string') throw error;
+              throw h.assetCacheError('ASSET_CACHE_STORAGE_ERROR', error);
+            }
+            bump(); return;
           }
-        } finally { await reader.cancel().catch(() => {}); }
-        if (offset !== entry.bytes) throw h.assetCacheError('ASSET_CACHE_DOWNLOAD_FAILED');
-        await store(entry, buffer);
-        bump();
+          if (wait) await sleep(wait, job.abort.signal);
+        }
       };
-      let next = 0, running = 0;
-      let failed = null;
-      await new Promise((resolve) => {
-        const settle = () => { if (failed || (running === 0 && next >= queue.length)) resolve(); };
-        const launch = () => {
-          if (failed) return;
-          while (running < limit && next < queue.length) {
-            const entry = queue[next++];
-            running++;
-            fetchEntry(entry).then(() => { running--; settle(); launch(); },
-              (error) => { running--; failed = failed || error; settle(); });
-          }
-          settle();
-        };
-        launch();
-      });
-      if (failed) throw failed;
+      let next = 0, running = 0, failed = null, fatal = null;
+      const lane = async () => {
+        while (!fatal && next < queue.length) {
+          if (running >= limit) return;
+          const { entry, attempt } = queue[next++];
+          if (ready(entry)) continue;
+          running++;
+          try { await fetchEntry(entry); }
+          catch (error) {
+            const code = typeof error?.code === 'string' ? error.code : '';
+            if (job.paused || error?.name === 'QuotaExceededError'
+              || ['ASSET_CACHE_STALE_CATALOG', 'ASSET_CACHE_EMERGENCY', 'ASSET_CACHE_ONLINE_DISABLED', 'ASSET_CACHE_STORAGE_ERROR'].includes(code)) {
+              fatal = fatal || error; job.abort.abort();
+            } else if (attempt < 2 && (!code || code === 'ASSET_CACHE_DOWNLOAD_FAILED')) {
+              // Do not make healthy files wait through every retry of a stalled file.
+              queue.push({ entry, attempt: attempt + 1 });
+            } else failed = failed || error;
+          } finally { running--; }
+        }
+      };
+      // Settle every lane before publishing the index or accepting another operation. A rejected sibling must
+      // not leave downloads holding server slots or write into a later operation's global `active` state.
+      await Promise.all(Array.from({ length: limit }, () => lane()));
+      if (fatal || failed) throw fatal || failed;
     } else if (message.action === 'import') {
       if (!(message.file instanceof Blob)) throw h.assetCacheError('ASSET_CACHE_ZIP_INVALID');
       const reader = new zip.ZipReader(new zip.BlobReader(message.file), { useWebWorkers: false, checkSignature: true });
@@ -361,8 +388,9 @@ async function work(message) {
   } finally {
     // The SW prune reads this instead of Cache.keys(), which cannot list a full pack.
     await writeCacheIndex(cache, ownHashes, h);
+    // A failed file must still publish healthy siblings already verified and written to the cache.
+    report({ speedBps: 0, waiting: false });
   }
-  report({ speedBps: 0, waiting: false });
 }
 
 function sleep(ms, signal) {

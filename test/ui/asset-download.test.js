@@ -64,6 +64,23 @@ test('a stalled stream times out after its last bytes; empty chunks do not exten
   assert.equal(queue.get().failures.length, 1);
 });
 
+test('a Fetch ignoring abort cannot hold the queue; the same page retries only missing files', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const calls = []; let repaired = false;
+  const queue = createAssetDownload({ concurrency: 1, retries: 0, lookupImported: async () => new Set(),
+    fetch: fixture({ a: '/assets/a', b: '/assets/b' }, url => {
+      calls.push(url);
+      return url === '/assets/a' && !repaired ? new Promise(() => {}) : file();
+    }) });
+  const running = queue.start(); await flush();
+  t.mock.timers.tick(60000); await running;
+  assert.equal(queue.get().phase, 'partial'); assert.equal(queue.get().done, 1);
+  assert.deepEqual(calls, ['/assets/a', '/assets/b']);
+  repaired = true; await queue.start();
+  assert.equal(queue.get().phase, 'complete'); assert.equal(queue.get().done, 2);
+  assert.deepEqual(calls, ['/assets/a', '/assets/b', '/assets/a']);
+});
+
 test('all model pages/local scenes/fonts are deduplicated; audio matches the playback URL', () => {
   const urls = collectAssetUrls({ a: { skel: '/assets/~1234567890abcdef/model.skel', atlas: '/assets/model.atlas',
     textures: ['/assets/one.png', '/assets/two.png'] }, b: '/assets/one.png', audio: '/assets/~1234567890abcdef/audio/bgm/a.mp3',

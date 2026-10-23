@@ -731,12 +731,26 @@ or partial response is never counted as successful. A missing optional local man
 base manifest or any listed missing file prevents successful completion. Server owners still install missing art
 with setup; this button only transfers files already supplied by the server.
 
-For streamed art, the 60-second timeout measures **inactivity**: response headers and each nonempty body chunk
+For streamed art and JSON manifests, the 60-second timeout measures **inactivity**: response headers and each nonempty body chunk
 restart it. A continuously progressing download may take longer than 60 seconds without being aborted and
-downloaded again. A stalled body still times out, and pause still aborts immediately. JSON manifests and hosts
-without a readable body stream remain bounded while their whole body is read. This does not add byte-range
+downloaded again. A stalled body still times out, and pause still aborts immediately. Fetch and read promises race
+the deadline even when the transport ignores abort; reader cleanup does not await a stuck stream cancellation.
+Hosts without a readable body stream remain bounded while their whole body is read. This does not add byte-range
 resume or a permanent offline guarantee. Regression: `test/ui/asset-download.test.js`;
 maintenance evidence: DEV-20261022-01 (local notes).
+
+The verified online pre-cache Worker uses the same 60-second inactivity deadline per file. A transient failed file
+goes behind healthy queued files, with at most two retries. Exhausted failures retain verified siblings and publish
+their final counts; the player can retry missing files in the same page. Pause, quota, stale directory, owner disable
+and emergency errors cancel and settle all active lanes before another operation starts. Files are still committed
+only after complete length / SHA-256 verification; identical content is requested once.
+
+The server's shared transfer limiter reads at most one 8 KiB quantum per response independently, then accounts
+actual writes through its existing aggregate and per-IP token budgets. One pending disk read does not hold the
+global scheduler. Preparation, pending reads, socket backpressure and final flushing are canceled after 60 seconds
+without progress; healthy bandwidth-budget waits are excluded. File-hash preparation reports progress too.
+Existing 24-global / 2-per-IP defaults, admission and byte ceilings remain in force. Regression:
+`test/cache-limiter-stall.test.js`, `test/asset-cache-pack-worker.test.js`, `test/asset-transfer.browser.test.js`.
 
 ## Importing a local asset pack
 

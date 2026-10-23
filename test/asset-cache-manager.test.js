@@ -444,6 +444,22 @@ test('directory transfer timeout aborts and cancels the stream while preserving 
   } finally { f.manager.destroy(); }
 });
 
+test('a directory Fetch or cancellation ignoring abort cannot keep the page operation busy', async () => {
+  for (const kind of ['headers', 'body']) {
+    const f = await outdatedFixture({ fastUpdateTimeout: true });
+    f.updateResponse(() => kind === 'headers' ? new Promise(() => {}) : new Response(new ReadableStream({
+      start(c) { c.enqueue(new TextEncoder().encode('{')); }, cancel: () => new Promise(() => {}),
+    })));
+    try {
+      await assert.rejects(f.manager.updateCatalog(), /ASSET_CACHE_CATALOG_UNAVAILABLE/);
+      assert.equal(f.manager.getState().version, catalog.version);
+      // Another action can start without destroying the manager or refreshing its page.
+      await f.manager.scan();
+      assert.notEqual(f.manager.getState().error, 'ASSET_CACHE_BUSY');
+    } finally { f.manager.destroy(); }
+  }
+});
+
 test('corrupt, oversized and mismatched downloaded directories preserve the existing pin and cache', async () => {
   for (const kind of ['tampered', 'bad-json', 'header-limit', 'decoded-limit', 'wrong-version']) {
     const f = await outdatedFixture();
