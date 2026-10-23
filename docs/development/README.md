@@ -24,7 +24,7 @@
 
 ## 当前基线
 
-2026-10-23 CI 维护：按 GitHub run39753489125 的真实失败逐项复现，修复共享模块路径、预览翻译标记、草案定时器 lint 和插件类型收窄；纠正 Windows 路径与测试响应/清理夹具。HTTP/CSP 断言遵循 D022 及现有 Worker 策略，公开索引不链接未提交的私人记录，文档检查增加干净检出约束。DEV-20261023-03 保存日志和验证状态；未推送或部署。
+2026-10-23 CI 维护：按 GitHub run39753489125 的真实失败逐项复现，修复共享模块路径、预览翻译标记、草案定时器 lint 和插件类型收窄；纠正 Windows 路径与测试响应/清理夹具。HTTP/CSP 断言遵循 D022 及现有 Worker 策略，公开索引不链接未提交的私人记录，文档检查增加干净检出约束。修复提交 `31a7875a` 经用户授权推送到临时 `fix/ci-repair`；后续测试只使用 GitHub Actions，本机及 WSL 测试已停止。GitHub 启动接口返回 HTTP 422 / `Actions has been disabled for this repository.`，仓库设置却为 `enabled: true`、工作流为 `active`，临时分支未生成 CI run，尚无 GitHub 验证结果。[GitHub 官方说明](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)建议对此类平台禁用状态联系支持复核。DEV-20261023-03 保存日志和验证状态；本次 CI 修复未部署。
 
 2026-10-23 素材停滞恢复已上线（运行代码 `de0bda58`）：服务端将磁盘读取从共享调度循环隔离，单请求无进度时回收名额；预缓存、标题下载及后台补齐增加可脱离底层挂起请求的截止机制。失败素材后置有限重试，健康文件继续、已校验缓存保留，原页面可以重试。09:53 无玩家、无对局时部署，健康恢复3.34秒，902运行文件、完整目录及公网HTTPS/WSS核验通过；09:54合并公告置顶，桌面/移动视口全文无截断。行为与验证边界见 [素材文档](../ASSETS.md)，DEV-20261023-02 留存跨客户端 Edge 及运维证据；未推送。
 
