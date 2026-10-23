@@ -12,6 +12,10 @@ spec.loader.exec_module(rc)
 
 
 class PublicationBoundaryTest(unittest.TestCase):
+    def test_bundle_root_notices_keep_local_links(self):
+        self.assertEqual(rc.root_doc('[来源](docs/REFERENCES.md) [许可](LICENSE) [官网](https://example.com) [章节](#a)'),
+                         '[来源](app/docs/REFERENCES.md) [许可](app/LICENSE) [官网](https://example.com) [章节](#a)')
+
     def test_unsafe_paths_rejected(self):
         for name in ("../x", "/x", "a/../b", "a\\b", "a//b", "C:/x", "a/x."):
             with self.subTest(name=name), self.assertRaises(ValueError):

@@ -78,6 +78,12 @@ def json_write(p, obj):
     put(p, (json.dumps(obj, ensure_ascii=False, indent=2) + "\n").encode())
 
 
+def root_doc(text):
+    """A copy of app-root Markdown at bundle root must retain working local links."""
+    return re.sub(r"\]\(([^)\s]+)\)", lambda m: m.group(0) if re.match(r"^[a-z]+:|^#", m[1], re.I)
+                  else "](app/" + m[1] + ")", text)
+
+
 def run(args, cwd=None, capture=False):
     return subprocess.run([str(x) for x in args], cwd=cwd, check=True,
                           stdout=subprocess.PIPE if capture else None).stdout
@@ -347,7 +353,10 @@ def build(args):
         launchers(bundle, target)
         put(bundle / "更新说明.md", note_links("app/").encode())
         for license_file in ("LICENSE", "NOTICE.md", "THIRD-PARTY-NOTICES.md"):
-            shutil.copy2(app / license_file, bundle / license_file)
+            if license_file.endswith(".md"):
+                put(bundle / license_file, root_doc((app / license_file).read_text(encoding="utf-8")).encode())
+            else:
+                shutil.copy2(app / license_file, bundle / license_file)
         json_write(bundle / "RELEASE.json", {"release": RELEASE, "appVersion": version, "source": source,
                    "repository": "https://github.com/SiderLock/Stronghold-Protocol", "target": target,
                    "node": {"version": NODE_VERSION, "archive": archive_input.name, "sha256": NODES[target][1],
