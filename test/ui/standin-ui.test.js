@@ -68,7 +68,7 @@ function expand(v, depth = 6) {
   return children === undefined ? v : { ...v, props: { ...v.props, children: expand(children, depth) } };
 }
 const srcsOf = (v) => [...walk(v)].map((n) => n.type === OperatorImage
-  ? (n.props.portrait ? chessPortraitUrl : chessAvatarUrl)(n.props.m, n.props.chess) : n.props?.src).filter((x) => typeof x === 'string');
+  ? (n.props.portrait ? chessPortraitUrl : chessAvatarUrl)(n.props.m, n.props.chess, { skin: n.props.skin }) : n.props?.src).filter((x) => typeof x === 'string');
 
 describe('干员持有 model (ui/ownershipModel.js)', () => {
   test('storage: tolerant parse, clean sorted ids, round trip; hostile keys dropped', () => {
@@ -249,7 +249,7 @@ describe('match UI of a not-owned chess', () => {
     assert.equal(nodes.find((v) => hasClass(v, 'scard__name')).props.children, 'Sharp', 'the stand-in\'s name');
     assert.ok(hasClass(card, 'is-standin'));
     assert.match(card.props['aria-label'], /^Sharp（银灰的替补），价格 3/);
-    assert.ok(srcsOf(card).some((u) => u.includes('char_609_acguad_1')), 'the stand-in\'s portrait');
+    assert.ok(srcsOf(card).some((u) => u === chessAvatarUrl(data.get('assets'), sharp())), 'the stand-in\'s avatar');
     assert.ok(!srcsOf(card).some((u) => u.includes('svrash')), 'not the replaced operator\'s');
     assert.ok(textOf(nodes.find((v) => hasClass(v, 'scard__class'))).includes(sharp().subProfessionName), 'the stand-in\'s class (无畏者)');
     const bonds = nodes.filter((v) => hasClass(v, 'scard__bond')).map((v) => v.key);

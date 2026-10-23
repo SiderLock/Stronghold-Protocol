@@ -326,7 +326,7 @@ export function readAssetOverlay(assets, { vanilla = null, permissions = null, h
     // A record that must bring its own fields (a skin's summon mapping: its `spine`) never takes a whole-record
     // reference: the record a reference could name is the operator's own art, not that summon's model. A field inside
     // the record may still be a reference (readFields below).
-    if (typeof kind === 'object' && kind.required && isObj(v) && has(v, 'ref')) {
+    if (typeof kind === 'object' && 'fields' in kind && kind.required && isObj(v) && has(v, 'ref')) {
       list.problem('PLUGIN_ASSETS_SHAPE', `${pathText(at)}: this record writes its own ${kind.required.join(', ')}; a reference is not enough`, { at: where(at) });
       return;
     }

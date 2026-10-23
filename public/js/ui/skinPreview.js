@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { html } from './components.js';
 import { data } from '../data.js';
-import { t } from '../../../shared/i18n.js';
+import { t, N_ } from '../../../shared/i18n.js';
 import { settingsStore } from './settingsStore.js';
 
 /** Device pixel ratio for the preview canvas, capped the way the battle renderer caps its own. */
@@ -72,10 +72,10 @@ export function clipsOf(entry) {
   const attack = roles.attack && typeof roles.attack === 'object' ? roles.attack : { loop: roles.attack };
   const skill = roles.skill && typeof roles.skill === 'object' ? roles.skill : { loop: roles.skill };
   const primary = [
-    button('deploy', '部署', [roles.deploy], false),
-    button('idle', '待机', roles.idle ? [roles.idle] : clips.filter((n) => /^idle$/i.test(n)), true),
-    button('attack', '攻击', [attack.loop, attack.begin, attack.end, roles.attackDown], true),
-    button('skill', '技能', [skill.loop, skill.begin, skill.end], true),
+    button('deploy', N_('部署'), [roles.deploy], false),
+    button('idle', N_('待机'), roles.idle ? [roles.idle] : clips.filter((n) => /^idle$/i.test(n)), true),
+    button('attack', N_('攻击'), [attack.loop, attack.begin, attack.end, roles.attackDown], true),
+    button('skill', N_('技能'), [skill.loop, skill.begin, skill.end], true),
   ].filter(Boolean);
   const used = new Set(primary.flatMap((b) => b.names));
   const extra = clips.filter((n) => !used.has(n)).map((n) => ({ key: `raw:${n}`, label: n, clip: n, names: [n], loop: true }));

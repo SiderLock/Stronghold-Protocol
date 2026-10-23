@@ -148,7 +148,8 @@ test('DESIGN: every "DESIGN §N" cited in the repository (code comments, tests, 
 });
 
 test('shipped markdown: a source link exists or is releases/latest, and the packaged copy only links to shipped files', () => {
-  const shipped = new Set(selectTracked(trackedFiles(ROOT), { root: ROOT }).keep);
+  const tracked = new Set(trackedFiles(ROOT));
+  const shipped = new Set(selectTracked([...tracked], { root: ROOT }).keep);
   const version = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
   assert.ok(PLAYER_MARKDOWN.length >= 6, PLAYER_MARKDOWN.join(' '));
   for (const rel of PLAYER_MARKDOWN) assert.ok(shipped.has(rel), `${rel} is in the player package`);
@@ -159,7 +160,10 @@ test('shipped markdown: a source link exists or is releases/latest, and the pack
       const raw = href.replace(/#.*$/, '');
       const norm = normalize(raw.startsWith('/') ? raw.slice(1) : join(dirname(rel), raw)).split('\\').join('/');
       if (norm.startsWith('..')) assert.match(norm, /^(?:\.\.\/)+releases\/latest$/, `${rel} → ${href}`);
-      else assert.ok(existsSync(join(ROOT, norm)), `${rel} → ${href}`);
+      else {
+        assert.ok(existsSync(join(ROOT, norm)), `${rel} → ${href}`);
+        if (norm.endsWith('.md')) assert.ok(tracked.has(norm), `${rel} → ${href} must exist in a clean checkout`);
+      }
     }
     const next = rewritePlayerDoc(md, rel, shipped, version);
     for (const [, , href] of markdownLinkMatches(next)) {

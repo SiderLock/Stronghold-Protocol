@@ -65,7 +65,7 @@ export function createRehearsalPool({ data, workers = Math.min(2, Math.max(0, av
   }
   function pump() {
     if (closed || disabled) return;
-    while (queue.length) {
+    while (queue.length) { // loop-cap: each iteration shifts one queued job, or returns while a worker starts
       let slot = [...slots].find((s) => s.ready && !s.job);
       if (!slot) {
         for (const starting of slots) if (!starting.ready) { starting.child.ref(); starting.child.channel?.ref(); }

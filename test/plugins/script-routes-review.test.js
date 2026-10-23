@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { EventEmitter } from 'node:events';
 import { scriptFixture } from '../helpers/scriptFixtures.js';
 import { createTrustedRuntime } from '../../server/plugins/trustedRuntime.js';
 import { createRequestHandler } from '../../server/http/routes.js';
@@ -27,9 +28,10 @@ function install(f) {
 function invoke(handle, url) {
   return new Promise(resolve => {
     let status;
-    handle({url,method:'GET',headers:{},socket:{remoteAddress:'127.0.0.1'}},{
-      setHeader(){},writeHead:s => {status=s;},end:b => resolve({status,body:String(b)}),
+    const response = Object.assign(new EventEmitter(), {
+      setHeader(){},writeHead:s => {status=s;},end:b => { response.emit('finish'); resolve({status,body:String(b)}); },
     });
+    handle({url,method:'GET',headers:{},socket:{remoteAddress:'127.0.0.1'}},response);
   });
 }
 

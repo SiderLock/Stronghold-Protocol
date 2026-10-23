@@ -271,7 +271,7 @@ describe('static http server', () => {
     assert.match(asset.headers.etag, /^"[0-9a-f]{16}"$/);
     const font = await httpReq(srv.port, '/fonts/f.woff2');
     assert.equal(font.headers['cache-control'], 'public, max-age=86400');
-    const assetV = await httpReq(srv.port, '/assets/img/a.png?v=abc');
+    const assetV = await httpReq(srv.port, '/assets/img/a.png?v=0123456789abcdef');
     assert.match(assetV.headers['cache-control'], /immutable/);
     const assetRoot = await httpReq(srv.port, '/assets');
     assert.equal(assetRoot.status, 301, 'directory redirect, not cached content');

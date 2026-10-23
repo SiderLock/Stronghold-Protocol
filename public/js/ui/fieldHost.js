@@ -14,7 +14,7 @@ import { data } from '../data.js';
 import { audio } from '../audio.js';
 import { store } from '../store.js';
 import { settingsStore } from './settings.js';
-import { t } from '../../shared/i18n.js';
+import { t } from '../../../shared/i18n.js';
 
 // 20s: the engine module graph grew with 0.3.0's official effects, and a cold cache on a slow link
 // (or one shared with an asset download) used to exceed 12s and pin the match to the simplified view.
