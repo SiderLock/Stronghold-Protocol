@@ -1,10 +1,10 @@
 // INFO_CHECK full setup reroll: unanimous human consent, keeping the room and player settings.
-// [ASSUMED] Remake convenience: unanimous human vote, pause/resume timer, independent reroll stream and
-// a 300 ms request guard. These are not official mode rules; DESIGN §28.21.
-// Installed on Match.prototype like the other method containers. The lobby authorizes host-only actions.
-// Non-hosts cannot start the vote: `askSetupReroll` only records their 申请重刷 for the host (GitHub #854), who still
-// proposes it with `requestSetupReroll` — a request changes no setup, pauses nothing and is cleared by the vote/phase.
-import { PHASE, ERR } from '../../../shared/constants.js';
+// [ASSUMED] Remake convenience, not official mode rules (DESIGN §28.21): the unanimous human vote, the INFO_CHECK
+// timer paused during the vote and resumed with its remaining time, the independent reroll stream; and (PR #860) any
+// seated player may open or cancel the vote, each seat may open one every 30 s, a completed reroll opens a fresh window
+// (a cancelled or rejected vote does not give the cooldown back); a connection's starts also draw from its heavy bucket.
+// Installed on Match.prototype like the other method containers. The lobby only refuses spectators and absent seats.
+import { PHASE, ERR, SETUP_REROLL_COOLDOWN_MS as REROLL_COOLDOWN_MS } from '../../../shared/constants.js';
 import { createRng, deriveSeed } from '../../sim/rng.js';
 import { setupMatchWaves } from '../waves.js';
 import { drawDisabledBonds, createPoolGroups } from '../pool.js';
@@ -12,6 +12,11 @@ import { OK, fail } from './common.js';
 
 /** One 申请重刷 per player per 30 s: a host who ignored or refused it cannot be pinged in a loop. */
 const ASK_COOLDOWN_MS = 30_000;
+// One start per seat per cooldown: the vote freezes the INFO_CHECK countdown, so an endless restart loop would stall
+// the opening. A completed reroll starts a new opening and therefore a new window. (SETUP_REROLL_COOLDOWN_MS, 30 s, lives
+// in shared/constants.js so the client's refusal toast names the same value.) With one human every start completes at
+// once and clears the seat cooldown, so the throttle there is the connection's heavy bucket: room.rerollSetup is in
+// server/net.js HEAVY_TYPES (2 per second, burst 6), as each reroll rebuilds the opening and resends m.public (DESIGN §35.47).
 
 export class MatchSetupVote {
   requestSetupReroll(playerId, revision) {
@@ -24,8 +29,9 @@ export class MatchSetupVote {
     const humans = this.humans();
     if (humans.some((p) => !p.connected)) return fail(ERR.NOT_READY, 'all humans must be connected to vote');
     const now = this.sched.now();
-    if (now - this._lastSetupVoteAt < 300) return fail(ERR.RATE);
-    this._lastSetupVoteAt = now;
+    const last = this._rerollStartAt.get(playerId);
+    if (last !== undefined && now - last < REROLL_COOLDOWN_MS) return fail(ERR.RATE, 'setup reroll cooldown');
+    this._rerollStartAt.set(playerId, now);
     this.setupVote = {
       id: ++this._setupVoteSeq,
       proposerId: playerId,
@@ -44,8 +50,8 @@ export class MatchSetupVote {
   }
 
   /**
-   * 申请重刷 (GitHub #854): a non-host connected human asks the host to start the vote. It is only recorded —
-   * m.public.rerollRequests shows it to everyone, the host still proposes with requestSetupReroll.
+   * Legacy 申请重刷 (GitHub #854): only records an ask for older clients, without opening a vote.
+   * Current clients let every seated human call requestSetupReroll directly (fork D018 / D041).
    */
   askSetupReroll(playerId, revision) {
     if (this.emergencyFrozen) return fail(ERR.SERVER_EMERGENCY);
@@ -161,6 +167,8 @@ export class MatchSetupVote {
     // A fresh opening deserves fresh requests: the asks were answered and the cooldown no longer applies.
     this._rerollAsks.clear();
     this._lastRerollAskAt.clear();
+    // A completed reroll is a new opening, so every seat gets a fresh chance to ask for another one.
+    this._rerollStartAt.clear();
     this.enterInfoCheck();
     return OK;
   }

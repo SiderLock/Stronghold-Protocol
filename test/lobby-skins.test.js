@@ -1,7 +1,8 @@
 // test/lobby-skins.test.js — room.skins end to end over WebSocket (docs/SKINS.md): the structural check (a skinId
 // that is NOT an isId, ≤ SKIN_LIMITS.entries charId keys), storage on the session and the seat, the seat handed to
-// the Match when it starts, bots refused, and — unlike room.loadout / room.diy / room.ownership — a change while a
-// match runs going straight to it rather than being stored for the next one.
+// the Match when it starts, bots sharing an opening roll, and — unlike room.loadout / room.diy / room.ownership — a change while a
+// match runs going straight to it rather than being stored for the next one. The room's members see each seat's map as
+// room.state seats[].skins (the waiting room's 名片干员 seat cards wear the outfit; the maintainer's decision 4 of 2026-10-21).
 //
 // The match here is the StubMatch (server/match/StubMatch.js), which has no setSkins: that is exactly the older server
 // the client's sync reports as 'locked' (ui/loadoutSync.js installSkinsSync), and it is what proves the reply path is
@@ -134,17 +135,55 @@ describe('room.skins (lobby, stub match)', () => {
       'the change made mid-match is what the next match takes');
   });
 
-  test('a bot holds no skins', async () => {
+  test('the room sees a seat\'s map as room.state seats[].skins (the waiting room\'s seat cards wear it): a change is broadcast while the room waits, a resend is not', async () => {
+    const seatOf = (st, id) => st.seats.find((x) => x && x.playerId === id);
+    const host = await pool.player('Host');
+    await ok(host, { t: 'room.skins', skins: { [OPERATOR]: SKIN } });
+    const st = await createRoom(host);
+    assert.deepEqual(seatOf(st, host.id).skins, { [OPERATOR]: SKIN }, 'chosen before the room: on the seat at once');
+    const guest = await pool.player('Guest');
+    await ok(guest, { t: 'room.join', code: st.code });
+    const joined = await host.waitFor('room.state', (s) => !!seatOf(s, guest.id));
+    assert.ok(!('skins' in seatOf(joined, guest.id)), 'a seat without skins sends what it sent before');
+    await ok(guest, { t: 'room.skins', skins: { [OTHER]: SKIN_OTHER } });
+    const seen = await host.waitFor('room.state', (s) => seatOf(s, guest.id)?.skins?.[OTHER] === SKIN_OTHER);
+    assert.deepEqual(seatOf(seen, host.id).skins, { [OPERATOR]: SKIN });
+    // the same map again (the client's sync resends after every welcome): nothing to tell the room
+    host.clearInbox();
+    await ok(guest, { t: 'room.skins', skins: { [OTHER]: SKIN_OTHER } });
+    await host.expectNone('room.state', () => true, 250);
+    // cleared: the key goes; an AI teammate never carries one
+    await ok(guest, { t: 'room.skins', skins: {} });
+    await host.waitFor('room.state', (s) => !!seatOf(s, guest.id) && !('skins' in seatOf(s, guest.id)));
+    await ok(host, { t: 'room.addBot' });
+    const withBot = await guest.waitFor('room.state', (s) => s.seats.some((x) => x && x.isBot));
+    assert.ok(withBot.seats.filter((x) => x && x.isBot).every((b) => !('skins' in b)));
+    // during a match the match publishes it (m.public); the room.state at its end carries the latest map
+    await ok(guest, { t: 'room.ready', ready: true });
+    await ok(host, { t: 'room.start' });
+    await host.waitFor('m.public', (p) => p.phase === 'INFO_CHECK');
+    host.clearInbox();
+    await err(guest, { t: 'room.skins', skins: { [OTHER]: SKIN } }, ERR.ROOM_STARTED);
+    await host.expectNone('room.state', () => true, 250);
+    await ok(host, { t: 'g.infoReady' });
+    await ok(guest, { t: 'g.infoReady' });
+    const after = await host.waitFor('room.state', (s) => !s.inMatch, 5000);
+    assert.deepEqual(seatOf(after, guest.id).skins, { [OTHER]: SKIN }, 'the room.state at the match\'s end');
+  });
+
+  test('bots receive one shared opening skin map while the human keeps their fixed choices', async () => {
     const host = await pool.player('Host');
     await ok(host, { t: 'room.skins', skins: { [OPERATOR]: SKIN } });
     await createRoom(host);
+    await ok(host, { t: 'room.addBot' });
     await ok(host, { t: 'room.addBot' });
     await host.waitFor('room.state', (s) => s.seats.some((x) => x && x.isBot));
     await ok(host, { t: 'room.start' });
     await host.waitFor('m.public', (p) => p.phase === 'INFO_CHECK');
     const started = RecordingStub.instances.at(-1);
     const bot = started.opts.seats.find((s) => s.isBot);
-    assert.equal(bot.skins, null, 'a bot fields every operator on its default model');
+    assert.ok(bot.skins && typeof bot.skins === 'object', 'the installation catalogue supplies the opening map');
+    for (const other of started.opts.seats.filter(s => s.isBot)) assert.deepEqual(other.skins, bot.skins);
     const human = started.opts.seats.find((s) => !s.isBot);
     assert.deepEqual(human.skins, { [OPERATOR]: SKIN });
     assert.deepEqual(cap.errors, []);

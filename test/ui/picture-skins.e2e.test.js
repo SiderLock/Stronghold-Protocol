@@ -61,10 +61,12 @@ test('picture-only picker updates a card and avatar live, preserves other seats 
       assert.match(await page.$eval('[data-skin="picture"]', (e) => e.textContent), /仅更换头像与立绘/);
       assert.equal(await page.$('[data-skin="empty"]'), null);
       assert.doesNotMatch(await page.$eval('[data-skin="model"]', (e) => e.textContent), /仅更换头像与立绘/);
+      // Shop cards use the official square avatar; the picker retains the outfit portrait.
+      assert.equal(await page.$eval('[data-skin="picture"] .lo-skin__art--big', e => e.getAttribute('src')), '/skin-p.png');
       await page.click('[data-skin="picture"]');
-      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/skin-p.png');
+      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/skin-a.png');
       assert.equal(await page.$eval('#own .uthumb img', (e) => e.getAttribute('src')), '/skin-a.png');
-      assert.equal(await page.$eval('#peer .scard__art', (e) => e.getAttribute('src')), '/base-p.png');
+      assert.equal(await page.$eval('#peer .scard__art', (e) => e.getAttribute('src')), '/skin-a.png', 'the peer keeps its avatar-only outfit');
       assert.equal(await page.$eval('[data-skin="picture"]', (e) => e.getAttribute('aria-checked')), 'true');
       assert.equal(await page.evaluate((id) => JSON.parse(localStorage.getItem('sp.pref.skins'))[id], CHAR), 'picture');
       await page.waitForFunction(() => [...document.querySelectorAll('#own img, #peer img')].every((e) => e.complete && e.naturalWidth > 0));
@@ -77,22 +79,22 @@ test('picture-only picker updates a card and avatar live, preserves other seats 
         const { store } = await import('/js/store.js');
         store.set({ match: { ...store.get().match, public: { players: [{ playerId: 'two', skins: { [id]: 'picture' } }] } } });
       }, CHAR);
-      await page.waitForFunction(() => document.querySelector('#peer .scard__art')?.getAttribute('src') === '/skin-p.png');
+      await page.waitForFunction(() => document.querySelector('#peer .scard__art')?.getAttribute('src') === '/skin-a.png');
       await page.evaluate(async () => {
         const { store } = await import('/js/store.js');
         store.set({ match: { ...store.get().match, public: { players: [{ playerId: 'two' }] } } });
       });
-      await page.waitForFunction(() => document.querySelector('#peer .scard__art')?.getAttribute('src') === '/base-p.png');
+      await page.waitForFunction(() => document.querySelector('#peer .scard__art')?.getAttribute('src') === '/base-a.png');
       await page.click('[data-skin=""]');
-      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/base-p.png');
+      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/base-a.png');
       await page.click('[data-skin="picture"]');
-      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/skin-p.png');
+      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/skin-a.png');
       await page.evaluate(async ({ manifest, chess }) => {
         for (const rec of Object.values(manifest.chars)) delete rec.skins;
         const { data } = await import('/js/data.js');
         data.setContent({ id: 'c'.repeat(64), values: { assets: manifest, chess: { [chess.chessId]: chess } } });
       }, { manifest, chess });
-      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/base-p.png');
+      await page.waitForFunction(() => document.querySelector('#own .scard__art')?.getAttribute('src') === '/base-a.png');
       assert.equal(await page.$('[data-testid="skin-section"]'), null);
       assert.equal(await page.evaluate((id) => JSON.parse(localStorage.getItem('sp.pref.skins'))[id], CHAR), 'picture');
       assert.deepEqual(errors, []);

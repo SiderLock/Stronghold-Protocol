@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { link as linkFixture, unlink as unlinkFixture } from '../helpers/links.js';
 import { deflateSync } from 'node:zlib';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
@@ -137,9 +138,9 @@ test('P2: external overlay effect sheets enforce decoding and FX subset, ordinar
 });
 
 test('candidates refuse hidden links before staging, use clone fallback, and clean failed edits/timeouts', async t => {
-  const m = setup(t); fs.symlinkSync(m.dir, path.join(m.dir, '.hidden'));
+  const m = setup(t); linkFixture(m.dir, path.join(m.dir, '.hidden'));
   await assert.rejects(editMediaDraft(m.files, m.id, () => assert.fail('must not stage'), { dataDir: path.resolve('data') }), { code: 'PLUGIN_STUDIO_PATH' });
-  noCandidates(m); fs.unlinkSync(path.join(m.dir, '.hidden'));
+  noCandidates(m); unlinkFixture(path.join(m.dir, '.hidden'));
   const link = fs.linkSync, copy = fs.copyFileSync; let cloned = 0;
   fs.linkSync = () => { throw Object.assign(new Error('cross-device'), { code: 'EXDEV' }); };
   fs.copyFileSync = (from, to, flags) => { assert.equal(flags, fs.constants.COPYFILE_FICLONE); cloned++; return copy(from, to, flags); };

@@ -32,10 +32,12 @@ test('the normative picker order keeps the 0.3.1 cultivation section immediately
   const docs = readFileSync(new URL('../../docs/SKINS.md', import.meta.url), 'utf8');
   assert.match(docs, /潜能与练度 immediately follows 皮肤/);
   assert.doesNotMatch(docs, /with 潜能与练度 last/);
-  for (const [file, next] of [['loadout', '<${CultivationSection}'], ['diy', "${!ch.proto && onOps"]]) {
+  // both screens draw the roster's shared CultivationSection — the 自选编队 picker no longer inlines the 0.3.1 detail
+  // block — so 潜能与练度 immediately follows 皮肤 in each of them
+  for (const file of ['loadout', 'diy']) {
     const src = readFileSync(new URL(`../../public/js/screens/${file}.js`, import.meta.url), 'utf8');
     const skin = src.indexOf('<${SkinSection}');
-    assert.ok(skin >= 0 && src.indexOf(next, skin) > skin);
+    assert.ok(skin >= 0 && src.indexOf('<${CultivationSection}', skin) > skin, `${file}.js: 皮肤 then 潜能与练度`);
   }
 });
 

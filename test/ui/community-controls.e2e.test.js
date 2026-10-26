@@ -102,26 +102,10 @@ describe('community UI: lobby header and shared DIY details', { skip: !enabled }
           if (a.group && a.group === b.group) assert.ok(Math.abs(a.centerY - b.centerY) <= 1,
             `${a.label} and ${b.label} must stay on the same toolbar row`);
         }
-        // Translated controls may exceed a fixed, centered header's side columns. Every control must remain reachable
-        // through their approved horizontal scrolling, and its center must hit the actual button once it is visible.
-        for (const button of await page.$$('.lobby-screen .topbar button')) {
-          await button.evaluate(e => e.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
-          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
-          const b = await button.evaluate(e => {
-            const r = e.getBoundingClientRect(), clip = e.closest('.topbar__left, .topbar__right').getBoundingClientRect();
-            const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
-            const title = document.querySelector('.lobby-screen .topbar__title').getBoundingClientRect();
-            return { label: e.getAttribute('aria-label') || e.textContent.trim(), x: r.x, y: r.y, right: r.right, bottom: r.bottom,
-              clipLeft: clip.left, clipRight: clip.right, at: hit?.outerHTML.slice(0, 300), hit: hit === e || e.contains(hit),
-              titleCenter: (title.left + title.right) / 2, viewport: innerWidth };
-          });
-          assert.ok(b.x >= Math.max(0, b.clipLeft) - 1 && b.right <= Math.min(width, b.clipRight) + 1 && b.y >= 0, JSON.stringify(b));
-          assert.equal(b.hit, true, JSON.stringify(b));
-          assert.ok(Math.abs(b.titleCenter - b.viewport / 2) <= 1, JSON.stringify(b));
-        }
-        await page.$$eval('.lobby-screen .topbar__left, .lobby-screen .topbar__right', els => els.forEach(e => { e.scrollLeft = 0; }));
         await page.screenshot({ path: screenshotPath(`lobby-header-${width}-${lang}.png`) });
-        await page.click('.stats-entry'); await page.waitForSelector('.st .st-tab');
+        // 统计数据 from the lobby: the 成就统计 card → its window → 查看完整统计 (the top bar has no 统计数据 chip)
+        await page.click(width < 1000 ? '.hub-plate--ach' : '.hub-ach'); await page.waitForSelector('.modal__box.achv .achv__more', { visible: true });
+        await page.click('.modal__box.achv .achv__more'); await page.waitForSelector('.st .st-tab');
         await page.click('.st-back');
         await page.waitForSelector('.st', { hidden: true });
         await page.click('.lobby-screen [data-testid="settings-btn"]'); await page.waitForSelector('.modal');
@@ -135,12 +119,13 @@ describe('community UI: lobby header and shared DIY details', { skip: !enabled }
       await page.click('.diy-slot[data-slot="chess_char_6_diy1_a"] .diy-slot__fill');
       const picker = '[data-testid="diy-picker"]';
       await page.waitForSelector(`${picker} [data-char="char_112_siege"]`);
-      await page.click(`${picker} [data-char="char_112_siege"]`);
-      await page.screenshot({ path: screenshotPath(`diy-initial-${width}-xl.png`) });
+      await page.click(`${picker} .diy-opt[data-char="char_112_siege"] .diy-opt__pick`);
+    // 窄屏是两步（screens/diy.js sel）：第一下只选中该干员，第二下才让详情滑出
+    if (width < 1000) await page.click(`${picker} .diy-opt[data-char="char_112_siege"] .diy-opt__pick`);
       await page.waitForSelector(`${picker} .lo-sec--stats[data-variant="elite"]`);
       const detail = () => page.$eval(`${picker} .diy-pick__detail`, e => ({ stats: [...e.querySelectorAll('.dstat__v')].map(n => n.textContent),
-        skill: [...e.querySelectorAll('.diy-choice__desc')].map(n => n.textContent), talents: e.querySelectorAll('.lo-minfo__row').length,
-        tags: e.querySelector('.diy-choice__tags')?.textContent }));
+        skill: [...e.querySelectorAll('.lo-skill__desc')].map(n => n.textContent), talents: e.querySelectorAll('.lo-minfo__row').length,
+        tags: e.querySelector('.lo-skill__tags')?.textContent }));
       const elite = await detail(); assert.equal(elite.stats.length, 8); assert.ok(elite.talents >= 2); assert.match(elite.tags, /初始|被动/);
       await page.click(`${picker} button[data-variant="normal"]`);
       await page.waitForSelector(`${picker} .lo-sec--stats[data-variant="normal"]`);

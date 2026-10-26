@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fxFixture } from './helpers/fxFixtures.js';
+import { tryFileLink } from './helpers/links.js';
 import { installedFxReferences, officialFxReferences } from '../server/plugins/fxReferences.js';
 import { checkPluginFx, pluginFxExtractionAllowed } from '../tools/setup.mjs';
 
@@ -18,7 +19,8 @@ test('setup notices installed official references absent from data/index, withou
   f.put('public/assets/local/fx/index.json', { units: { char_4217_makoto: {} } });
   assert.deepEqual(checkPluginFx(f.root), ids.slice(1));
   f.put('plugins/linked/plugin.json', { operators: ['linked.json'] });
-  fs.symlinkSync(path.join(f.root, 'plugins/demo/ops.json'), path.join(f.root, 'plugins/linked/linked.json'));
+  if (!tryFileLink(path.join(f.root, 'plugins/demo/ops.json'), path.join(f.root, 'plugins/linked/linked.json')))
+    t.diagnostic('OS refuses file symlinks; linked discovery also verified on Linux');
   assert.deepEqual(installedFxReferences(f.root), ids);
   const r = spawnSync(process.execPath, ['tools/local-extract/plugin-fx.mjs', f.root], { encoding: 'utf8' });
   assert.equal(r.status, 0); assert.deepEqual(JSON.parse(r.stdout), ids, 'extractor uses exactly the setup reference reader');

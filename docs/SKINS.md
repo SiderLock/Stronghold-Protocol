@@ -60,11 +60,36 @@ Three properties are load-bearing:
   model when the skin (or its model) is not in the manifest; `avatarUrl` / `portraitUrl` / `illustUrl` fall back to the
   operator's own pictures. The picker shows the operator's portrait on a skin that ships none.
 
+## 随机皮肤（本 fork，D045）
+
+用户于 2026-10-26 要求 AI 每局随机时装、同局所有 AI 共用配置，并在干员调配提供固定 / 每局随机两种模式。
+这是本 fork 的外观规则，依据 [D045](development/DECISIONS.md#d045)，不改变官方玩法或 golden。
+
+- **AI：** `Lobby.startMatch` 从安装清单及本地时装 sidecar 读取可用时装，按本房间的干员列表过滤；每个有时装的
+  干员抽一个非默认选项，整张 `charId → skinId` 表交给所有 AI（包括不同组及 match host）。没有可用时装则保留原皮。
+  `PlayerState` 只在构造时接受服务端指定的 AI 皮肤，客户端仍不能修改 AI。
+- **固定本次随机内容：** 调配页顶部「皮肤随机」中的「随机一套并固定」立即抽取并保存到本浏览器，后续对局继续使用。
+  点击「固定本次随机内容」保存当前显示的结果；手动选皮肤和导入皮肤也切回固定模式。既有玩家配置默认保持固定。
+- **每局都随机：** 保存模式及当前组合，向服务端发送本客户端合成清单中可用的候选 ID；服务端从下一局开局时重新抽取。
+  同一局的阶段切换、开局重刷、断线重连与偏好重发都不重抽，也不让旧浏览器偏好覆盖开局结果。
+  本局的 `m.public.players[].skins` 同步到调配界面，可随时将这套结果固定。
+- **范围与兼容：** 随机池复用选择器的模型或图片可穿规则，原皮不参加抽取，只有元数据的条目不参加。
+  仅有图片的时装仍遵循下文的默认战斗模型回退。AI 使用安装清单；玩家候选包含已启用的房间及个人外观层。
+  其他客户端缺少对应资源时继续使用现有回退，不下载新资源。
+- **协议与随机源：** 沿用 `room.skins { skins }`；每局模式附加 `randomMode: 'match', skinPool: { [charId]: skinId[] }`，
+  固定模式省略这两项。两项必须成对出现，非法请求整条拒绝；上限为 256 名干员、每人 32 套、共 1024 候选及 24 KiB
+  候选 JSON。这些是工程边界；只传 ID，不接受文件或 URL。compact-v1 使用现有扩展字段，不改变发布的 schema。
+  服务端从开局种子、房间、局次及拥有者派生独立外观流；本地固定抽取使用浏览器 crypto，均不消耗玩法 RNG。
+
+实现入口为 `shared/skins.js`、`public/js/ui/skinRandom.js`、`ui/skins.js`、`ui/loadoutSync.js` 及 `server/lobby.js`。
+安装时装的合并与 HTTP 视图共用 `mergeLocalSkins`，无需安装报文。定向回归见 `test/skin-random.test.js`、
+`test/ui/skins-sync.test.js` 和 `test/ui/skin-random.e2e.test.js`。
+
 ## Picture-only outfits (0.3.2, B6)
 
 The maintainer's 2026-10-18 **option A** makes a `skins` record with pictures but no Spine wearable.
-The picker labels it 「仅更换头像与立绘」. Its owner's avatars and portraits change, including loadout / DIY,
-shop / reward cards, detail panels, bond members, thumbnails, settlement / result rows, combat metrics and the DOM fallback field.
+The picker labels it 「仅更换头像与立绘」. Its owner's avatars and portraits change, including loadout (the list
+and the 卡片视图) / DIY, shop / reward cards, detail panels, bond members, thumbnails, settlement / result rows, combat metrics and the DOM fallback field.
 Battle Spine keeps the effective operator's default Front / Back. Missing image fields independently use the
 operator's existing normal / elite fallbacks; removing the plugin restores defaults without erasing the saved choice.
 Model outfits retain their model resolution and picture fallbacks. A replacement directly on `chars[charId]`
@@ -380,6 +405,29 @@ The 干员调配 screen's 导出 downloads a versioned envelope (`stronghold.loa
   operator the file is silent about keeps what this browser had. That is what makes an older file harmless and two files
   imported one after another coherent.
 - **The success toast counts them** (`（含 {n} 名干员的时装）`), so an import that changed appearances says so.
+The strategy draft's name cards (`screens/bandDraft.js` artOf: each doctor's 名片干员 art, as on the room's seat cards)
+follow the seat cards' rule below (`seatCardSkin`), reading the match's `m.public.players[].skins` for the others.
+
+## The waiting room's seat cards (0.3.2, the maintainer's decision 4 of 2026-10-21)
+
+The 名片干员 portrait on a room seat card (`public/js/screens/room.js`, `public/js/ui/seatArt.js`) and on the strategy
+draft's name cards (`public/js/screens/bandDraft.js`) wears the player's outfit for the operator it shows:
+
+- **one's own card** wears this browser's choice (`skinsStore`) at once, before the server has it;
+- **another doctor's card** wears the map that seat published. The lobby carries it as `room.state.seats[].skins`
+  (`server/lobby.js Room.toState`; human seats with a non-empty map only, so a room without skins sends what it sent
+  before) — the same public map a match publishes as `Match.publicView().players[].skins`, which the draft's name cards
+  read. A changed map re-broadcasts `room.state` while the room waits (`Lobby.skins`; a resend of the same map does not);
+  during a match the match carries it, and the `room.state` at its end;
+- with **「显示其他玩家的皮肤」 off** the others' cards draw the default and one's own keeps its outfit;
+- an outfit **this page does not have** (a teammate's appearance plugin this browser lacks, or switched off) draws the
+  operator's own art — `chessPortraitUrl(m, chess, { skin })` falls back — never a placeholder; an outfit picture that
+  **fails to load** falls back to the operator's default one on both (`seatArtSrc`; the draft's name cards since §35.51).
+
+`ui/seatArt.js seatCardSkin` is that rule, on top of `ownerSkin`. The 名片干员 picker is one's own picker: its tiles wear
+this browser's outfits, as 干员调配's roster does. [ASSUMED] The whole map rides in `room.state`, not one skinId per card:
+a seat without a pick shows an operator its clients choose by player id (`seatOperator`), which the server does not
+compute; the map is bounded like `m.public`'s (`SKIN_LIMITS.entries`, the room's operators).
 
 ## The switch model: the owner installs, each player switches on
 
@@ -397,7 +445,8 @@ of the same co-op match may therefore see different models for the same piece �
 A pure client preference (`settings.otherSkins`, `sp.pref.settings`; **never sent**):
 
 - **on** (the default) — a piece draws the appearance its owner chose, which the match published
-  (`Match.publicView().players[].skins`, and `UnitInfo.skin` of every unit);
+  (`Match.publicView().players[].skins`, and `UnitInfo.skin` of every unit) — and a waiting room's seat card the one its
+  player published there (`room.state.seats[].skins`, above);
 - **off** — every other seat's piece draws the operator's own model and pictures; **this player's own pieces keep their skin**.
 
 The asymmetry is deliberate and is what the setting is for: what you draw is your own choice, what others draw is theirs.
@@ -418,8 +467,9 @@ choice, not a rule established by the official tables.
 
 In 干员调配 (`screens/loadout.js Detail`) and in the 自选编队 picker's detail (`screens/diy.js DiyPickerView`), the 皮肤
 section sits under the operator's name. 潜能与练度 immediately follows 皮肤 wherever cultivation is offered.
-The preserved 0.3.1 order is 皮肤 → 潜能与练度 → 特质 → 技能 → 局内数值 → 模组 in 干员调配, and
-皮肤 → 潜能与练度 → 局内数值 → 技能 → 模组 in 自选编队 (prototype picks omit cultivation).
+The order is 皮肤 → 潜能与练度 → 特质 → 技能 → 局内数值 → 模组 in 干员调配, and 皮肤 → 潜能与练度 → 技能 →
+局内数值 → 模组 in 自选编队: the picker draws the roster's own sections in the roster's order (a prototype pick omits
+cultivation, so 皮肤 is followed by its locked 技能 and 模组).
 [ASSUMED] This is the existing remake panel order; official tables do not prescribe a skin picker layout.
 
 1. **The section is GLOBAL: every operator shows it, or none does.** The one question `SkinSection` asks is
@@ -460,7 +510,8 @@ exists) gets no section rather than an empty grid.
 | `public/js/ui/skins.js` | The client store (`sp.pref.skins`, `{ [charId]: skinId }`, at most `SKIN_LIMITS.entries` pairs: `parseStoredSkins` is the one parse of a stored selection — the store's initial state, every edit and what the sync sends — so the wire's own limit is applied where the selection is read), `availableSkins` (the composed manifest's rows, with `playable` and with art already resolved and fallen back; the 默认 row exists for every operator the manifest holds, also one with no `skins`), `hasAnySkinChoices` (the section's global rule), `hasSkinChoices` (the single-operator criterion, kept for tests and future rules), `chosenSkin` (a stored entry that is not one of this operator's wear-able skins counts as 默认), `setSkin` / `clearSkin` |
 | `public/js/ui/skinPicker.js` | The 皮肤 section itself: `SkinSection` (nothing while `hasAnySkinChoices` is false — for every operator alike; the 默认 tile alone for an operator without a skin), `SkinPreview` (the enlarged 立绘), the five-tile grid's markup |
 | `test/skins.test.js` | The wire shape (`isSkinId` / `isSkinSelection`), the lobby → Match → PlayerState chain, the public view, reconnect, the sim's UnitInfo, the client's fallbacks, and the absence of the install channel |
-| `test/lobby-skins.test.js` | `room.skins` over WebSocket: validation, session and seat storage, the seats handed to the Match, bots, the change made mid-match |
+| `test/lobby-skins.test.js` | `room.skins` over WebSocket: validation, session and seat storage, the seats handed to the Match, bots, the change made mid-match, `room.state.seats[].skins` (broadcast on a change while the room waits, not on a resend) |
+| `test/ui/seat-art.test.js`, `test/ui/room-cards.e2e.test.js` | the seat cards' outfits: `seatCardSkin` (own / published / the switch / fallback) and, in the browser, both screens of a co-op room |
 | `test/ui/skin-picker.test.js` | The picker's rules against a composed manifest: the rows, `playable`, the art fallbacks, the global `hasAnySkinChoices` and the per-operator `hasSkinChoices`, `chosenSkin`, and that the section's gate is the global one |
 | `test/sim/skins-token.test.js` | 召唤物换装 in the engine: a board token after and before its owner, a skill's summon, no skin (the token keeps its own model and the snapshot gains no key) and the same seeded battle twice |
 | `public/js/ui/skinPreview.js` | 小人预览: `previewEntry` (the model a row previews), `clipsOf` (the buttons), `SkinModelPreview` (one canvas, mounted and destroyed with the box; PIXI and the asset store loaded lazily) |
@@ -483,9 +534,9 @@ exists) gets no section rather than an empty grid.
 | `shared/protocol.js` | before `isNotOwnedList` | `SKIN_LIMITS` (256 [ASSUMED]), `isSkinId` (**not** `isId`; the same character class as `isSkinKey`), `isCharId`, `isSkinSelection`, `operatorCharIds`, `checkSkinSelection` |
 | `shared/protocol.js` | `C2S` | `'room.skins'` — and **no** `'room.skin.install'` |
 | `server/net.js` | `HEAVY_TYPES`, `Session` ctor | `'room.skins'`; `session.skins` |
-| `server/lobby.js` | after `freezeDiy`, `onMessage`, after `diy()`, `humanSeat`, `seatSettings`, `startMatch` | `freezeSkins` (charId + skinId, drop operators the room lacks; a bad map is BAD_MSG and does not clear), `case 'room.skins'`, `skins()` — **no phase gate**, unlike the loadout — and the selection riding into the match |
+| `server/lobby.js` | after `freezeDiy`, `onMessage`, after `diy()`, `humanSeat`, `seatSettings`, `startMatch`, `Room.toState` | `freezeSkins` (charId + skinId, drop operators the room lacks; a bad map is BAD_MSG and does not clear), `case 'room.skins'`, `seats[].skins` in `room.state` (0.3.2 decision 4, broadcast by `skins()` when a waiting room's map changed), `skins()` — **no phase gate**, unlike the loadout — and the selection riding into the match |
 | `server/match/PlayerState.js` | ctor | `this.skins = Object.freeze({})` + `setSkins(seat.skins)` |
-| `server/match/player/basics.js` | after `setLoadout` | `skinCharIdOf` / `skinFor` / `setSkins` (bots refused; a bad map refused whole, unknown operators dropped) |
+| `server/match/player/basics.js` | after `setLoadout` | `skinCharIdOf` / `skinFor` / `setSkins` (constructor accepts the AI opening map; live bot writes refused; a bad map refused whole, unknown operators dropped) |
 | `server/match/match/platform.js` | after `setLoadout` | `setSkins(playerId, skins)` — any phase, `markPrivate()` (owner, prep scouts, boss partner) and `markPublic()` |
 | `server/match/match/views.js` | `publicView().players[]`, `_prepBoardUnits`, the scouted bench | `skins` (omitted when empty), and `skin` on every unit the player owns |
 | `server/match/player/round.js` | `battleInput` | the unit's `skin`, from the player's own selection and the piece's operator (a 自选 slot follows its pick) |
@@ -502,6 +553,7 @@ exists) gets no section rather than an empty grid.
 | `public/js/render/app.js` | `otherSkins` setting, `ctx.myPlayerId`, `applyInfo`, `refreshSkins`, `setSettings`, `setMe`, `setSkins`, `pieceInfo` | received `sourceSkin` is retained while displayed `skin` follows the switch and latest public selection; a changed appearance drops the view; read-only prep pieces refresh too |
 | `public/js/render/app/info.js` | `renderInfo` | `skin` |
 | `public/js/ui/loadoutSync.js` | header, `installSkinsSync` | the fourth `installPrefSync` setting (`room.skins { skins }`) |
+| `public/js/ui/seatArt.js`, `public/js/screens/room.js`, `public/js/screens/bandDraft.js` | `seatCardSkin`, the seat cards and the 名片干员 picker, the draft's name cards | the 名片干员 portrait wears its player's outfit (0.3.2 decision 4, above) |
 | `public/js/main.js` | boot | `installSkinsSync({ net })` |
 | `public/js/ui/settings.js` | `CosmeticSection` | the 显示其他玩家的皮肤 switch — with or without a cosmetic plugin |
 | `public/js/ui/gameLogic/settings.js` | `DEFAULT_SETTINGS`, `sanitizeSettings` | `otherSkins: true` |

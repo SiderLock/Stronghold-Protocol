@@ -23,6 +23,7 @@ import { hashedPath } from '../../shared/assetPaths.js';
 import { hash16 } from './assetIndex.js';
 import { noopLog } from './config.js';
 import { mergeLocalChars } from '../plugins/artReferences.js';
+import { mergeLocalSkins } from '../../shared/skins.js';
 export { mergeLocalChars } from '../plugins/artReferences.js';
 export { mergeLocalSkins };
 
@@ -45,48 +46,6 @@ export function relOf(url) {
 
 /** Is `o` a Spine object of data/assets.json (`{ skel: '/….skel', atlas, textures? }`)? */
 const isSpine = (o) => isObj(o) && typeof o.skel === 'string' && o.skel.startsWith('/') && /\.skel$/.test(o.skel);
-
-/**
- * The installation's own outfits (data/local-skins.json, tools/local-extract/skins.py) merged into the served assets
- * manifest: `chars[<charId>].skins[<official skin id>] = { name, group, avatar?, portrait?, illust?, spine }`.
- *
- * Why here and not a cosmetic plugin: a plugin may never carry official game files (docs/PLUGINS.md §9), while the
- * official outfits are exactly that — so they live with the rest of the official art under `public/assets/local/`
- * (git-ignored, extracted from the player's own client) and the server serves them as part of the manifest. A record
- * the committed manifest already holds is left alone (a plugin's overlay is applied later, on the client, and still
- * wins). Absent file: nothing changes.
- * @param {any} doc the parsed data/assets.json
- * @param {any} local the parsed data/local-skins.json
- * @returns {any} the doc (or a copy with the outfits merged)
- */
-function mergeLocalSkins(doc, local) {
-  if (!isObj(local) || !isObj(local.skins) || !isObj(doc.chars)) return doc;
-  let added = 0;
-  const chars = { ...doc.chars };
-  for (const [skinId, rec] of Object.entries(local.skins)) {
-    if (!isObj(rec) || typeof rec.charId !== 'string' || typeof skinId !== 'string') continue;
-    const char = isObj(chars[rec.charId]) ? { ...chars[rec.charId] } : null;
-    if (!char) continue;                       // an operator this build does not have (a newer client)
-    const skins = isObj(char.skins) ? { ...char.skins } : {};
-    if (skins[skinId]) continue;               // already described (the committed manifest or another sidecar)
-    const rec2 = { name: typeof rec.name === 'string' ? rec.name : skinId };
-    if (typeof rec.group === 'string' && rec.group) rec2.group = rec.group;
-    for (const k of ['avatar', 'portrait', 'illust']) if (typeof rec[k] === 'string' && rec[k]) rec2[k] = rec[k];
-    if (isSpine(rec.spine?.front)) {
-      // the model is not three paths: the Spine entry carries `pma`, the clip roles the renderer plays (`anims`), the
-      // clip durations, the events, the hit timings and the bounds that place it (tools/local-extract/skin-meta.mjs).
-      // A record without them is refused by public/js/assets.js validSpine and the unit falls back to its own model.
-      rec2.spine = { front: { ...rec.spine.front } };
-      if (isSpine(rec.spine?.back)) rec2.spine.back = { ...rec.spine.back };
-    }
-    if (!rec2.spine && !rec2.portrait && !rec2.illust && !rec2.avatar) continue;   // nothing to show
-    skins[skinId] = rec2;
-    char.skins = skins;
-    chars[rec.charId] = char;
-    added++;
-  }
-  return added ? { ...doc, chars } : doc;
-}
 
 /** The URLs of a Spine object: skeleton, atlas, pages (the `<skel name>.png` when it lists none). */
 function spineUrls(o) {

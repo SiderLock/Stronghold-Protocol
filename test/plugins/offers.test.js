@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { tryFileLink } from '../helpers/links.js';
 import { fileURLToPath } from 'node:url';
 import {
   OFFER_EFFECTS, OFFER_QUORUM, OFFER_TIMEOUT, OFFER_WHEN, OFFER_FILE_VERSION, OFFER_ROUND_MAX,
@@ -263,8 +264,8 @@ test('registry rejects invalid option payloads, scripts, missing sources and esc
   fs.unlinkSync(source);
   assert.equal(readPluginFolder(dir).plugin, null);
   put(path.dirname(dir), 'outside.json', []);
-  fs.symlinkSync(path.join(path.dirname(dir), 'outside.json'), source);
-  assert.equal(readPluginFolder(dir).plugin, null);
+  if (tryFileLink(path.join(path.dirname(dir), 'outside.json'), source)) assert.equal(readPluginFolder(dir).plugin, null);
+  else t.diagnostic('OS refuses file symlinks; escaping-link assertion also verified on Linux');
 });
 
 test('all numeric primitives reject nonfinite, negative, fractional and oversized grants at discovery', t => {

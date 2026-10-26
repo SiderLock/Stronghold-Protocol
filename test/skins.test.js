@@ -144,10 +144,12 @@ describe('皮肤: the lobby seat and the match', () => {
     { seat: 1, playerId: 'ai_0', name: 'AI0', isBot: true, connected: true, skins: { [OPERATOR]: SKIN } },
   ];
 
-  test('the seat carries the selection into PlayerState; a bot is refused whatever its seat says', () => {
+  test('the seat carries the selection into PlayerState, including the lobby-approved bot roll', () => {
     const h = makeMatch({ mode: 'coop', seats });
     assert.deepEqual(h.ps('p_0').skins, { [OPERATOR]: SKIN });
-    assert.deepEqual(h.ps('ai_0').skins, {}, 'setSkins refuses bots');
+    assert.deepEqual(h.ps('ai_0').skins, { [OPERATOR]: SKIN });
+    assert.equal(h.ps('ai_0').setSkins({}), false, 'live writes still refuse bots');
+    assert.deepEqual(h.ps('ai_0').skins, { [OPERATOR]: SKIN });
   });
 
   test('Match.setSkins: only the caller\'s own seat, any phase, and the public view carries it', () => {
@@ -175,7 +177,7 @@ describe('皮肤: the lobby seat and the match', () => {
     const me = h.m.publicView().players.find((p) => p.playerId === 'p_0');
     assert.deepEqual(me.skins, { [OPERATOR]: SKIN });
     const bot = h.m.publicView().players.find((p) => p.playerId === 'ai_0');
-    assert.equal(bot.skins, undefined, 'omitted when empty, so a vanilla payload is byte-identical');
+    assert.deepEqual(bot.skins, { [OPERATOR]: SKIN }, 'the opening bot roll is public for every viewer');
     assert.equal(h.m.setSkins('p_0', {}).ok, true, 'clearing is a valid selection');
     assert.equal(h.m.publicView().players.find((p) => p.playerId === 'p_0').skins, undefined);
   });
@@ -460,7 +462,7 @@ describe('皮肤: the client never sends more than the wire accepts', () => {
       status: 'online', sent: [], on: () => () => {},
       request: async (t, body) => { net.sent.push({ t, ...body }); return { t: 'ok' }; },
     };
-    const sync = installSkinsSync({ net, target });
+    const sync = installSkinsSync({ net, target, operatorsReady: async () => new Set(Object.keys(overLimit())) });
     try {
       await sync.flush();
     } finally { sync.dispose(); }

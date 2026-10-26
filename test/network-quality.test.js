@@ -8,6 +8,8 @@ import { Net } from '../public/js/net.js';
 import { prepareMessage, sendPrepared, sendRaw, send, NET_DEFAULTS } from '../server/net.js';
 import { startServer } from '../server/index.js';
 import { TestClient } from './helpers/wsClient.js';
+import { StateReceiver, STATE_DELTA_VERSION } from '../shared/stateDelta.js';
+import { negotiateStateDelta } from '../server/stateTransport.js';
 
 class Socket extends EventEmitter {
   constructor() { super(); this.readyState = 1; this.bufferedAmount = 0; this.sent = []; }
@@ -47,6 +49,29 @@ test('replies, combat events, phase/deadline/pause/revision changes and stored f
       assert.deepEqual(ws.sent, [publicState(2), barrier, { t: 'room.closed', reason: 'ended' }]);
     } finally { ws.terminate(); }
   }
+});
+
+test('coalesced snapshots and stored frames share only the delta baselines actually delivered', () => {
+  const ws = new Socket();
+  const receiver = new StateReceiver();
+  const players = Array.from({ length: 20 }, (_, i) => ({ playerId: `p_${i}`, name: 'Doctor', lp: 30, ready: false }));
+  const frame = (n) => publicState(n, { players });
+  negotiateStateDelta(ws, STATE_DELTA_VERSION);
+  try {
+    send(ws, frame(0));
+    ws.bufferedAmount = 100000;
+    send(ws, frame(1));
+    send(ws, frame(2));
+    assert.equal(ws.sent.length, 1, 'deferred snapshots neither send nor advance the baseline');
+    ws.bufferedAmount = 0;
+    send(ws, { t: 'ok', rid: 7 });
+    sendRaw(ws, JSON.stringify(frame(3)));
+    assert.deepEqual(ws.sent.map((m) => m.t), ['m.state', 'm.state', 'ok', 'm.state']);
+    assert.ok(ws.sent[1].patch && ws.sent[3].patch, 'both send paths use the same negotiated state channel');
+    const restored = ws.sent.filter((m) => m.t === 'm.state').map((m) => receiver.receive(m));
+    assert.ok(restored.every((r) => r.resync === false));
+    assert.deepEqual(restored.map((r) => r.message), [frame(0), frame(2), frame(3)]);
+  } finally { ws.terminate(); }
 });
 
 test('closed recipients clear deferred state, and dropped snapshots avoid expensive serialization', async () => {
