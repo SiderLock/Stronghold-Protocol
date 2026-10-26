@@ -60,6 +60,31 @@ Three properties are load-bearing:
   model when the skin (or its model) is not in the manifest; `avatarUrl` / `portraitUrl` / `illustUrl` fall back to the
   operator's own pictures. The picker shows the operator's portrait on a skin that ships none.
 
+## 随机皮肤（本 fork，D045）
+
+用户于 2026-10-26 要求 AI 每局随机时装、同局所有 AI 共用配置，并在干员调配提供固定 / 每局随机两种模式。
+这是本 fork 的外观规则，依据 [D045](development/DECISIONS.md#d045)，不改变官方玩法或 golden。
+
+- **AI：** `Lobby.startMatch` 从安装清单及本地时装 sidecar 读取可用时装，按本房间的干员列表过滤；每个有时装的
+  干员抽一个非默认选项，整张 `charId → skinId` 表交给所有 AI（包括不同组及 match host）。没有可用时装则保留原皮。
+  `PlayerState` 只在构造时接受服务端指定的 AI 皮肤，客户端仍不能修改 AI。
+- **固定本次随机内容：** 调配页顶部「皮肤随机」中的「随机一套并固定」立即抽取并保存到本浏览器，后续对局继续使用。
+  点击「固定本次随机内容」保存当前显示的结果；手动选皮肤和导入皮肤也切回固定模式。既有玩家配置默认保持固定。
+- **每局都随机：** 保存模式及当前组合，向服务端发送本客户端合成清单中可用的候选 ID；服务端从下一局开局时重新抽取。
+  同一局的阶段切换、开局重刷、断线重连与偏好重发都不重抽，也不让旧浏览器偏好覆盖开局结果。
+  本局的 `m.public.players[].skins` 同步到调配界面，可随时将这套结果固定。
+- **范围与兼容：** 随机池复用选择器的模型或图片可穿规则，原皮不参加抽取，只有元数据的条目不参加。
+  仅有图片的时装仍遵循下文的默认战斗模型回退。AI 使用安装清单；玩家候选包含已启用的房间及个人外观层。
+  其他客户端缺少对应资源时继续使用现有回退，不下载新资源。
+- **协议与随机源：** 沿用 `room.skins { skins }`；每局模式附加 `randomMode: 'match', skinPool: { [charId]: skinId[] }`，
+  固定模式省略这两项。两项必须成对出现，非法请求整条拒绝；上限为 256 名干员、每人 32 套、共 1024 候选及 24 KiB
+  候选 JSON。这些是工程边界；只传 ID，不接受文件或 URL。compact-v1 使用现有扩展字段，不改变发布的 schema。
+  服务端从开局种子、房间、局次及拥有者派生独立外观流；本地固定抽取使用浏览器 crypto，均不消耗玩法 RNG。
+
+实现入口为 `shared/skins.js`、`public/js/ui/skinRandom.js`、`ui/skins.js`、`ui/loadoutSync.js` 及 `server/lobby.js`。
+安装时装的合并与 HTTP 视图共用 `mergeLocalSkins`，无需安装报文。定向回归见 `test/skin-random.test.js`、
+`test/ui/skins-sync.test.js` 和 `test/ui/skin-random.e2e.test.js`。
+
 ## Picture-only outfits (0.3.2, B6)
 
 The maintainer's 2026-10-18 **option A** makes a `skins` record with pictures but no Spine wearable.
@@ -511,7 +536,7 @@ exists) gets no section rather than an empty grid.
 | `server/net.js` | `HEAVY_TYPES`, `Session` ctor | `'room.skins'`; `session.skins` |
 | `server/lobby.js` | after `freezeDiy`, `onMessage`, after `diy()`, `humanSeat`, `seatSettings`, `startMatch`, `Room.toState` | `freezeSkins` (charId + skinId, drop operators the room lacks; a bad map is BAD_MSG and does not clear), `case 'room.skins'`, `seats[].skins` in `room.state` (0.3.2 decision 4, broadcast by `skins()` when a waiting room's map changed), `skins()` — **no phase gate**, unlike the loadout — and the selection riding into the match |
 | `server/match/PlayerState.js` | ctor | `this.skins = Object.freeze({})` + `setSkins(seat.skins)` |
-| `server/match/player/basics.js` | after `setLoadout` | `skinCharIdOf` / `skinFor` / `setSkins` (bots refused; a bad map refused whole, unknown operators dropped) |
+| `server/match/player/basics.js` | after `setLoadout` | `skinCharIdOf` / `skinFor` / `setSkins` (constructor accepts the AI opening map; live bot writes refused; a bad map refused whole, unknown operators dropped) |
 | `server/match/match/platform.js` | after `setLoadout` | `setSkins(playerId, skins)` — any phase, `markPrivate()` (owner, prep scouts, boss partner) and `markPublic()` |
 | `server/match/match/views.js` | `publicView().players[]`, `_prepBoardUnits`, the scouted bench | `skins` (omitted when empty), and `skin` on every unit the player owns |
 | `server/match/player/round.js` | `battleInput` | the unit's `skin`, from the player's own selection and the piece's operator (a 自选 slot follows its pick) |

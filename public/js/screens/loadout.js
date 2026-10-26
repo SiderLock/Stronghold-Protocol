@@ -57,6 +57,7 @@ import { OperatorVoice } from '../ui/operatorVoice.js';
 // 皮肤 (docs/SKINS.md): a self-contained section — everything it does lives in ui/skinPicker.js, so this screen keeps
 // one import and one line in its detail body
 import { SkinSection } from '../ui/skinPicker.js';
+import { SkinRandomControls } from '../ui/skinRandom.js';
 import { CultivationSelects, CultivationSection, cultivationView, potentialEditable } from './cultivation.js';
 import { cultivationCharIds } from '../../../shared/protocol.js';
 import { setOwned, notOwnedCount, serializeOwnership, parseOwnershipImport, OWNERSHIP_IMPORT_MAX_BYTES } from '../ui/ownershipModel.js';
@@ -885,6 +886,7 @@ function LoadoutScreen({ st }) {
           : html`<${Button} variant="ghost" size="md" icon="chevronLeft" class="lo-back" onClick=${closeLoadout} aria-label=${t('返回')} title=${t('返回 (Esc)')}>${t('返回')}<//>`}
         ${deck ? html`<button type="button" class="lo-info" data-testid="loadout-help" onClick=${() => setHelp(true)} aria-label=${t('卡片视图说明')} title=${t('卡片视图说明')}><${Icon} name="info" /></button>` : null}
         <${FullscreenButton} class="lo-fs" />
+        <${SkinRandomControls} />
       </div>
       ${deck ? html`<div class="lo-top__center">
         ${tab === 'loadout' ? html`<${MicroLabel} tone="mint">${quick ? 'QUICK ASSEMBLE' : 'OPERATOR LOADOUT'}<//>

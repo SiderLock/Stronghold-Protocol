@@ -228,7 +228,9 @@
 import { aiTakeover, resetAiTakeover, reconcileAiTakeover } from './aiTakeover.js';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { ERR, PHASE, DEFAULT_SEATS, ROOM_CAPACITIES, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor, DIFFICULTIES } from '../shared/constants.js';
-import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges, checkSkinSelection, operatorCharIds } from '../shared/protocol.js';
+import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges, checkSkinSelection, operatorCharIds, isSkinPool } from '../shared/protocol.js';
+import { mergeLocalSkins, skinPoolFromManifest, randomSkinSelection } from '../shared/skins.js';
+import { createRng, deriveSeed } from './sim/rng.js';
 import { encode, prepareMessage, sendPrepared, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
@@ -1927,21 +1929,31 @@ export class Lobby {
    * *does*; a skin changes only what it looks like, and it is public — a teammate switching model mid-match is
    * harmless, and the next `m.public` broadcast carries it to everyone.
    */
-  skins(session, { skins }) {
+  skins(session, { skins, randomMode, skinPool }) {
     const room = this.roomOf(session);
     const ids = operatorCharIds(this.dataFor(room));
     const kept = freezeSkins(skins, (id) => ids.has(id));
     if (!kept) return fail(ERR.BAD_MSG, 'bad skin selection');
+    if ((randomMode !== undefined || skinPool !== undefined) && (randomMode !== 'match' || !isSkinPool(skinPool))) {
+      return fail(ERR.BAD_MSG, 'bad skin random plan');
+    }
+    const pool = randomMode === 'match' ? Object.freeze(Object.fromEntries(Object.entries(skinPool)
+      .filter(([id]) => ids.has(id)).map(([id, rows]) => [id, Object.freeze([...new Set(rows)])]))) : null;
     session.skins = kept;
+    session.skinRandomPool = pool;
     if (!room) return OK;
     const seat = room.seatOf(session.playerId);
     if (seat) {
       const changed = !sameSkins(seat.skins, kept);
       seat.skins = kept;
+      seat.skinRandomPool = pool;
       // the waiting room's seat cards wear them (room.state seats[].skins, header); a match shows them in its m.public
       if (changed && !room.match) this.broadcastState(room);
     }
     if (!room.match || !seat) return OK;
+    // The server's opening roll stays authoritative throughout this match, including a resumed browser's resend.
+    // The new pool is saved for the next match; a manual/fixed choice still applies immediately, as before.
+    if (pool) return OK;
     if (typeof room.match.setSkins !== 'function') return fail(ERR.ROOM_STARTED, 'stored for the next match');
     return matchAnswer(this.callMatch(room, 'setSkins', session.playerId, kept));
   }
@@ -2144,6 +2156,16 @@ export class Lobby {
     if (host) host.ready = true;
     // the room's data: its content set's in a room with gameplay plugins (header "Gameplay plugins")
     const data = this.dataFor(room);
+    let seed = 0;
+    try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
+    const operators = operatorCharIds(data);
+    const rollSkins = (pool, owner) => Object.freeze(randomSkinSelection(Object.fromEntries(Object.entries(pool)
+      .filter(([id]) => operators.has(id))),
+      createRng(deriveSeed(seed, `skins:${room.code}:${room.matchCount + 1}:${owner}`)).int));
+    // One cosmetic stream and one operator→outfit map for ALL AI seats, independent of gameplay RNG.
+    const installation = this.getData();
+    const aiPool = skinPoolFromManifest(mergeLocalSkins(installation?.assets, installation?.['local-skins']), operators);
+    const aiSkins = rollSkins(aiPool, 'ai');
     const seats = room.seats.filter(Boolean).map((s) => {
       // a setting checked for another content is filtered to this room's data (header "Gameplay plugins")
       const own = s.isBot ? null : this.seatSettings(room, s, data);
@@ -2156,15 +2178,13 @@ export class Lobby {
         notOwned: own ? own.notOwned : null,
         // 0.2.0 自选编队: the human's checked DIY picks (bots field no 自选 piece [ASSUMED])
         diy: own ? own.diy : null,
-        // 干员皮肤 (docs/SKINS.md): the appearances the human wears, keyed by operator charId (bots always default)
-        skins: own ? own.skins : null,
+        // Fixed human choices survive; auto choices roll once at this start and all bots share aiSkins.
+        skins: own ? (s.skinRandomPool ? rollSkins(s.skinRandomPool, s.playerId) : own.skins) : aiSkins,
       };
     });
     // lastPublic / results: the latest m.public broadcast and the m.result frames (encoded), kept for the replay.
     const ctx = { live: true, ended: false, disposed: false, match: null, lastPublic: null, sharedResult: null,
       results: new Map(), chat: new MatchChat({ now: this.now }) };
-    let seed = 0;
-    try { seed = this.seedFn() >>> 0; } catch { seed = randomInt(2 ** 32); }
     const modded = room.modded;
     try {
       const opts = {
@@ -2553,6 +2573,7 @@ export class Lobby {
       // 干员皮肤 (docs/SKINS.md): the appearances this player wears, keyed by operator charId (PUBLIC: the match
       // publishes them to teammates)
       skins: session.skins || null,
+      skinRandomPool: session.skinRandomPool || null,
       // 名片干员 (room.card): the operator on this player's seat card (PUBLIC: room.state seats[].card)
       card,
       // the content each was checked for (header "Gameplay plugins": filtered at the match start when it is another)

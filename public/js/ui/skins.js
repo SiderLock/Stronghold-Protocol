@@ -24,6 +24,9 @@
 import { createStore, loadPref, savePref } from '../store.js';
 import { data } from '../data.js';
 import { SKIN_LIMITS } from '../../../shared/protocol.js';
+// Lightweight shared helpers keep PIXI and its Spine cache off the boot path.
+import { skinHasModel, skinHasPictures, skinPoolFromManifest, randomSkinSelection } from '../../../shared/skins.js';
+export { skinHasModel, skinHasPictures };
 
 /** The localStorage preference (`sp.pref.<key>`) of this browser's skin choices: `{ [charId]: skinId }`. */
 export const SKINS_PREF = 'skins';
@@ -31,23 +34,11 @@ export const SKINS_PREF = 'skins';
 /** The store field the sync engine watches (ui/loadoutSync.js installPrefSync `key`) and its sync state field. */
 export const SKINS_KEY = 'skins';
 export const SKINS_SYNC_KEY = 'skinsSync';
+export const SKINS_RANDOM_MODE_KEY = 'skinRandomMode';
+const SKINS_RANDOM_PREF = 'skinRandomMode';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const str = (v) => (typeof v === 'string' && v ? v : null);
-
-/**
- * Whether a skin record names a Spine model (not whether it can be worn). Like assets.js
- * `skinHasModel`; actual model loading additionally checks `validSpine`. This module is on the
- * boot path (main.js → screens/lobby.js → screens/loadout.js → ui/loadoutSync.js) and pulling the asset store in with
- * its Spine cache there would be a cost the title page never needs (test/ui/plugins-client.test.js pins that). The
- * difference can only be a skin whose model is written but does not resolve — the picker would offer it once and the
- * renderer would draw the operator's own body, which is the same fallback a plugin-withdrawn model gets.
- */
-export const skinHasModel = (skin) => !!skin && isObj(skin.spine) && isObj(skin.spine.front) && typeof skin.spine.front.skel === 'string';
-
-// B6: maintainer option A (2026-10-18), docs/history/0.3.2.md §35.4. [ASSUMED] The existing E2 and
-// illust slots count as pictures too; metadata alone never offers a selectable outfit.
-export const skinHasPictures = (skin) => !!skin && ['avatar', 'avatarE2', 'portrait', 'portraitE2', 'illust'].some((key) => str(skin[key]));
 
 /**
  * Display choice for an effective operator body. #686 keeps each seat independent; no viewer choice leaks into
@@ -94,7 +85,8 @@ export function parseStoredSkins(raw) {
  * (ui/loadoutSync.js: it must survive a room / match reset). `ui/loadoutSync.js installSkinsSync` watches
  * `SKINS_KEY` and mirrors it to the server as `room.skins`.
  */
-export const skinsStore = createStore({ [SKINS_KEY]: parseStoredSkins(loadPref(SKINS_PREF, null)), [SKINS_SYNC_KEY]: 'idle' });
+export const skinsStore = createStore({ [SKINS_KEY]: parseStoredSkins(loadPref(SKINS_PREF, null)), [SKINS_SYNC_KEY]: 'idle',
+  [SKINS_RANDOM_MODE_KEY]: loadPref(SKINS_RANDOM_PREF, 'fixed') === 'match' ? 'match' : 'fixed' });
 
 /**
  * Replace the whole stored selection (persisted at once; the sync engine picks the change up). Out-of-match data, so
@@ -104,8 +96,41 @@ export const skinsStore = createStore({ [SKINS_KEY]: parseStoredSkins(loadPref(S
  */
 export function setSkins(entries) {
   const next = parseStoredSkins(entries);
-  try { savePref(SKINS_PREF, next); } catch { /* private mode: the session keeps it */ }
-  skinsStore.set({ [SKINS_KEY]: next });
+  try { savePref(SKINS_PREF, next); savePref(SKINS_RANDOM_PREF, 'fixed'); } catch { /* private mode: the session keeps it */ }
+  skinsStore.set({ [SKINS_KEY]: next, [SKINS_RANDOM_MODE_KEY]: 'fixed' });
+}
+
+/** Freeze the shown selection, or ask the server to roll once at every new match. Manual picks/imports choose fixed. */
+export function setSkinRandomMode(mode) {
+  if (mode !== 'fixed' && mode !== 'match') return;
+  if (mode === 'fixed') { setSkins(skinsStore.get()[SKINS_KEY]); return; }
+  try { savePref(SKINS_RANDOM_PREF, mode); } catch { /* session only */ }
+  skinsStore.set({ [SKINS_RANDOM_MODE_KEY]: mode });
+}
+
+/** Keep the opening roll visible in the picker and available to freeze; never create a fresh roll on reconnect. */
+export function acceptMatchSkins(entries, target = skinsStore) {
+  if (target.get()[SKINS_RANDOM_MODE_KEY] !== 'match') return;
+  const next = parseStoredSkins(entries);
+  if (JSON.stringify(next) === JSON.stringify(target.get()[SKINS_KEY])) return;
+  if (target === skinsStore) try { savePref(SKINS_PREF, next); } catch { /* session only */ }
+  target.set({ [SKINS_KEY]: next });
+}
+
+// Browser crypto, independent of the match's seeded gameplay streams. Rejection keeps each outfit equiprobable.
+function randomIndex(n) {
+  const limit = 0x100000000 - 0x100000000 % n, word = new Uint32Array(1);
+  do { globalThis.crypto.getRandomValues(word); } while (word[0] >= limit);
+  return word[0] % n;
+}
+
+/** Randomise all operators with an available outfit, then keep that exact selection until edited. */
+export function randomizeSkins(pickIndex = randomIndex) {
+  const pool = skinPoolFromManifest(data.get('assets'));
+  if (!Object.keys(pool).length) return 0;
+  const next = randomSkinSelection(pool, pickIndex);
+  setSkins(next);
+  return Object.keys(next).length;
 }
 
 /** Choose one operator's appearance. */
@@ -119,7 +144,7 @@ export function setSkin(charId, skinId) {
 export function clearSkin(charId) {
   const id = str(charId);
   const next = { ...(skinsStore.get()[SKINS_KEY] || {}) };
-  if (!(id in next)) return;
+  if (!(id in next) && skinsStore.get()[SKINS_RANDOM_MODE_KEY] !== 'match') return;
   delete next[id];
   setSkins(next);
 }

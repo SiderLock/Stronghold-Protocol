@@ -5,6 +5,10 @@ the **UI owner** consuming `m.public` / `m.private` / `m.result`, and anyone dri
 Normative contracts stay in DESIGN.md §6 and §8 ([design/match.md](design/match.md),
 [design/network.md](design/network.md)); this file documents the implementation and every assumption it makes.
 
+本 fork 的外观扩展 [D045](development/DECISIONS.md#d045)：Lobby 开局生成一张 AI 共用时装表，并为开启每局随机的
+真人生成各自的时装表；都通过既有 `seats[].skins` 进入 PlayerState 和 match host。固定选择可随时更新，每局随机的
+候选只影响下一局，重连及重刷不重抽；玩法 RNG 不变。协议与界面合同见 [SKINS.md](SKINS.md)。
+
 ```
 server/match/
   Match.js         state machine, timers, round loop, co-op orchestration, views (the lobby⇄match interface is at the top)

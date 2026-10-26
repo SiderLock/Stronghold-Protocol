@@ -18,6 +18,10 @@ without restarting playback or changing the sim / BattleSpec. Resolve every surf
 operator body (official `activity_table` `charShopChessDatas.backupCharId` for stand-ins, the pick for DIY slots).
 Outfits following that body and live refresh timing are cosmetic UI assumptions; gameplay and golden results stay unchanged.
 
+本 fork 的 [D045](../development/DECISIONS.md#d045) 增加调配页「皮肤随机」：固定当前组合或从下一局起每局重抽；
+手动选择切回固定。服务端开局为所有 AI 共用一张随机皮肤表，为开启每局随机的真人独立抽取；阶段切换、重刷及重连
+不改变本局结果。独立外观 RNG、候选上限与既有图片 / 模型回退见 [随机皮肤](../SKINS.md#随机皮肤本-forkd045)。
+
 **Studio test console (0.3.1).**
 
 The maintainer's standalone battle sandbox is `/studio/console.html` (history §34.8; format and limits in

@@ -2635,5 +2635,15 @@
   "第 {round} 回合接替 AI；含此前席位数据，不计入个人统计或奖励。": "Took over AI in round {round}; includes earlier seat data and does not count toward personal statistics or rewards.",
   "申请在退出、断线、投票资格或阶段变化时取消。接替后的席位数据含 AI 此前表现，不计入你的个人统计或奖励。": "Requests are cancelled on leaving, disconnection, voter eligibility changes or phase changes. Inherited seat data includes earlier AI performance and does not count toward your personal statistics or rewards.",
   "允许观战者接替 AI": "Allow spectators to take over AI seats",
-  "默认关闭。开启后，观战者可在休整期经同房间真人投票接替 AI；继承记录不计个人统计或奖励。": "Off by default. When enabled, spectators can take over AI seats during preparation with a room vote; inherited records do not count toward personal stats or rewards."
+  "默认关闭。开启后，观战者可在休整期经同房间真人投票接替 AI；继承记录不计个人统计或奖励。": "Off by default. When enabled, spectators can take over AI seats during preparation with a room vote; inherited records do not count toward personal stats or rewards.",
+  "皮肤随机": "Random outfits",
+  "已为 {count} 名干员随机选择时装并固定": "Random outfits saved for {count} operators",
+  "随机一套并固定": "Randomize and keep",
+  "为所有有可用时装的干员随机选择皮肤；没有时装的干员保留默认外观。": "Choose a random outfit for every operator with an available outfit. Operators without outfits keep their default appearance.",
+  "固定本次随机内容": "Keep this selection",
+  "保存当前这套皮肤，后续对局继续使用；手动选皮肤也会切回此模式。": "Save the current outfits for future matches. Picking an outfit manually also switches to this mode.",
+  "每局都随机": "Randomize every match",
+  "从下一局开始，开局时重新随机一套；本局和重连时保持不变。": "Starting next match, choose new outfits at the start of each match. Keep them throughout the match and on reconnect.",
+  "当前已为 {count} 名干员选择时装": "Outfits selected for {count} operators",
+  "当前没有可随机的时装": "No outfits available to randomize"
 }

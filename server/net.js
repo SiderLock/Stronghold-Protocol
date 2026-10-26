@@ -140,6 +140,7 @@ export class Session {
     /** @type {Readonly<Record<string, string>> | null} chosen operator skins (lobby-owned, docs/SKINS.md): keyed by
      * charId; PUBLIC, unlike the loadout (a teammate sees your skin through Match.publicView().players[].skins) */
     this.skins = null;
+    this.skinRandomPool = null;
     /** @type {string | null} 名片干员 (lobby-owned, PR #643 split 6): the charId whose portrait fills this player's seat card in
      * the waiting room; PUBLIC (room.state seats[].card), cosmetic */
     this.card = null;

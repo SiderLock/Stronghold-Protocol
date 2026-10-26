@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../../public/js/store.js';
 import { installSkinsSync, SYNC_DEBOUNCE_MS } from '../../public/js/ui/loadoutSync.js';
-import { SKINS_KEY, SKINS_SYNC_KEY } from '../../public/js/ui/skins.js';
+import { SKINS_KEY, SKINS_SYNC_KEY, SKINS_RANDOM_MODE_KEY } from '../../public/js/ui/skins.js';
 
 const ticks = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 const BOTH = 'char_003_kalts', V1_ONLY = 'char_198_blackd';
@@ -15,7 +15,7 @@ const DEFAULT_OPS = new Set([BOTH, 'char_2_b']);
 const V1_OPS = new Set([BOTH, V1_ONLY]);
 const SKINS = { [BOTH]: `${BOTH}@s#1`, [V1_ONLY]: `${V1_ONLY}@s#2` };
 
-function harness({ skins = SKINS, ops = DEFAULT_OPS } = {}) {
+function harness({ skins = SKINS, ops = DEFAULT_OPS, mode = 'fixed', manifest = null } = {}) {
   const listeners = new Map(), pending = new Map();
   let time = 0, timerId = 0;
   const timers = {
@@ -35,10 +35,41 @@ function harness({ skins = SKINS, ops = DEFAULT_OPS } = {}) {
   };
   let shown = ops;
   const content = createStore({ cs: null, status: 'idle' });
-  const target = createStore({ [SKINS_KEY]: skins, [SKINS_SYNC_KEY]: 'idle' });
-  const sync = installSkinsSync({ net, timers, target, content, operatorsReady: async () => shown });
+  const target = createStore({ [SKINS_KEY]: skins, [SKINS_SYNC_KEY]: 'idle', [SKINS_RANDOM_MODE_KEY]: mode });
+  const app = createStore({ me: { playerId: 'me' } });
+  const sync = installSkinsSync({ net, timers, target, content, app, operatorsReady: async () => shown, assetsReady: async () => manifest });
   return { net, timers, target, content, show: (o) => { shown = o; }, ...sync };
 }
+
+test('per-match skin sync sends available ids of the current room, mirrors only our opening roll and can freeze it', async t => {
+  const manifest = { chars: {
+    [BOTH]: { skins: { paid: { avatar: '/paid.png' }, model: { spine: { front: { skel: '/model.skel' } } }, empty: {} } },
+    [V1_ONLY]: { skins: { other: { portrait: '/other.png' } } },
+  } };
+  const h = harness({ mode: 'match', manifest });
+  t.after(h.dispose);
+  await h.flush();
+  assert.deepEqual(h.net.sent.at(-1), { t: 'room.skins', skins: { [BOTH]: SKINS[BOTH] }, randomMode: 'match', skinPool: { [BOTH]: ['model', 'paid'] } });
+  h.net.emit('m.public', { players: [{ playerId: 'peer', skins: { [BOTH]: 'peer' } }, { playerId: 'me', skins: { [BOTH]: 'model' } }] });
+  assert.deepEqual(h.target.get()[SKINS_KEY], { [BOTH]: 'model' });
+  h.net.emit('m.public', { players: [{ playerId: 'peer', skins: { [BOTH]: 'peer' } }] });
+  assert.deepEqual(h.target.get()[SKINS_KEY], { [BOTH]: 'model' });
+  h.target.set({ [SKINS_RANDOM_MODE_KEY]: 'fixed' });
+  await h.flush();
+  assert.deepEqual(h.net.sent.at(-1), { t: 'room.skins', skins: { [BOTH]: 'model' } }, 'fixed mode clears the random plan');
+  h.net.emit('m.public', { players: [{ playerId: 'me', skins: {} }] });
+  assert.deepEqual(h.target.get()[SKINS_KEY], { [BOTH]: 'model' }, 'manual/fixed choices are not overwritten by snapshots');
+});
+
+test('per-match sync waits for the catalogue instead of sending an accidental empty plan', async t => {
+  const h = harness({ mode: 'match', manifest: null });
+  t.after(h.dispose);
+  await h.flush();
+  assert.deepEqual(h.net.sent, []);
+  h.target.set({ [SKINS_RANDOM_MODE_KEY]: 'fixed' });
+  await h.flush();
+  assert.equal(h.net.sent.length, 1, 'fixed mode keeps the existing filtering path');
+});
 
 test('skins sync: a skin for an operator only the new version has reaches room.skins after the switch', async (t) => {
   const h = harness();

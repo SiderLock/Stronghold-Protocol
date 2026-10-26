@@ -53,6 +53,13 @@
   background: linear-gradient(90deg, var(--mint-700), transparent 26%, transparent 74%, var(--mint-700));
 }
 .lo-top__left { justify-self: start; display: flex; align-items: center; gap: .14rem; }
+.lo-skin-random { display: flex; flex-direction: column; gap: .24rem; line-height: 1.6; }
+.lo-skin-random p { margin: 0; }
+.lo-skin-random label { display: flex; align-items: flex-start; gap: .16rem; padding: .18rem; border: 1px solid var(--line); cursor: pointer; }
+.lo-skin-random input { flex: none; margin-top: .1rem; accent-color: var(--mint-500); }
+.lo-skin-random label span { display: flex; flex-direction: column; }
+.lo-skin-random small { color: var(--text-dim); }
+@media (max-width: 900px) { .lo-skin-random-trigger .lo-tbtn__l { display: none; } }
 .lo-top__center { display: flex; flex-direction: column; align-items: center; gap: .02rem; min-width: 0; }
 .lo-top__title { display: flex; align-items: center; gap: .12rem; margin: 0; font-size: max(.32rem, 16px); font-weight: 900; letter-spacing: .14em; line-height: 1.15; }
 .lo-top__icon { width: max(.3rem, 16px); height: max(.3rem, 16px); object-fit: contain; color: var(--mint-500); }

@@ -11,6 +11,7 @@ import { isContentHash } from './plugins/identity.js';
 import { isPluginId } from './plugins/manifest.js';
 import { isTestCommand } from './testMode.js';
 import { PLUGIN_OFFER_SLOTS } from './plugins/limits.js';
+import { isSkinId, isCharId, isSkinSelection, isSkinPool } from './skins.js';
 
 // ---- tiny validators -------------------------------------------------------
 const isInt = (v, lo = -Infinity, hi = Infinity) => Number.isInteger(v) && v >= lo && v <= hi;
@@ -287,27 +288,7 @@ export function checkLoadoutOps(ops, isOperator, changesWithPotential = null) {
  * `checkSkinSelection`: that entry is dropped and the rest kept. A skinId the manifest does not hold still draws the
  * operator's default model (`spineEntry`).
  */
-export const SKIN_LIMITS = Object.freeze({
-  // [ASSUMED] absolute ceiling of one message. The practical cap is the operator count of the room's content
-  // (checkSkinSelection drops the rest); 256 is above the vanilla roster (210) and the same order as the loadout's
-  // operator map. A larger map is refused whole, the way an over-long loadout is.
-  entries: 256, idLen: 64, charIdLen: 64,
-});
-/** A skinId. NOT `isId`: that allows only `[A-Za-z0-9_\-.:]`, while a skin key carries `@` and `#` (`char_002_amiya@winter#1`). The same character class as shared/plugins/visual.js `isSkinKey`. */
-export const isSkinId = (v) => typeof v === 'string' && v.length > 0 && v.length <= SKIN_LIMITS.idLen && /^[A-Za-z0-9_][A-Za-z0-9_@#+.\-]*$/.test(v);
-/**
- * An operator charId. Official ids are `char_<digits>_<token>` (character_table / data/chess.json: `char_498_inside`,
- * `char_1012_skadi2`, `char_4145_ulpia`, `char_616_pithst`). A plugin operator is `char_x_<id>`
- * (shared/plugins/recordsSchema.js). A chess id (`chess_char_1_01_a`) is not one: `isId` would accept it.
- */
-export const CHAR_ID = /^char_(?:x_[A-Za-z0-9_-]+|[0-9]+_[A-Za-z0-9_]+)$/;
-export const isCharId = (v) => typeof v === 'string' && v.length <= SKIN_LIMITS.charIdLen && CHAR_ID.test(v);
-/**
- * Structural check of `room.skins.skins`: a plain object of ≤ 256 entries, keyed by an operator charId, each value a
- * skinId. Anything else — an array, a null-prototype object, a chess id, a bad skin id, one more entry — is refused
- * as a whole (BAD_MSG). The room's own operator list is not known here.
- */
-export const isSkinSelection = (v) => isMap(v, SKIN_LIMITS.entries, isCharId, isSkinId);
+export { SKIN_LIMITS, SKIN_RANDOM_LIMITS, CHAR_ID, isSkinId, isCharId, isSkinSelection, isSkinPool } from './skins.js';
 
 const SKIN_OPS = new WeakMap();
 /**
@@ -565,7 +546,7 @@ export const C2S = {
   'room.loadout': { entries: isLoadoutEntries, ops: isLoadoutOps, $optional: ['ops'] },
   // 干员皮肤 (docs/SKINS.md): the appearances the player wears, keyed by operator charId; PUBLIC, so it is accepted in
   // any room phase (the loadout locks at INFO_CHECK because it changes what a unit does; a skin changes only the model)
-  'room.skins': { skins: isSkinSelection },
+  'room.skins': { skins: isSkinSelection, randomMode: optional(v => v === 'match'), skinPool: optional(isSkinPool) },
   // 名片干员 (PR #643 split 6): the operator whose portrait fills the player's seat card in the waiting room — an
   // operator charId ('' for none; the server keeps only a visible charId of the room's chess.json); cosmetic, any room phase
   'room.card': { charId: (v) => v === '' || isCharId(v) },
