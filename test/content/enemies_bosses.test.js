@@ -1616,13 +1616,32 @@ test(`${nm('enemy_10116_ymgtop')}: spinning phase deals ATK×${tb('enemy_10116_y
   h.run(skb('enemy_10116_ymgtop', 'SwitchModeTrigger').initCooldown + 3.05);
   const w = h.unit('t_wall');
   assert.ok(w.stats.taken >= 2 * e.s.atk * tb('enemy_10116_ymgtop', 'RotateDamage.attack@atk_scale') - 1e-6);
+  assert.equal(e.form, 'spin', 'current UnitInfo carries the model mode for a late join');
+  assert.ok(h.eventsOf('fx').some(ev => ev[1] === 'telegraph' && ev[4]?.form === 'spin' && ev[4]?.dur > 0));
   // pushed towards the wall (to x 6.8): still in reach, not in contact (0.8 > block radius 0.71: the wall would
   // block it)
   h.b.displace(e, { x: -1, y: 0 }, 0.2, { force: 3 });
   h.step();
   const t0 = w.stats.taken;
+  assert.equal(e.form, 'spinStop', '失衡 publishes its closing animation');
   h.run(3);
   assert.equal(w.stats.taken, t0, 'no more spin damage');
+});
+
+test(`${nm('enemy_10116_ymgtop')}: natural spin expiry publishes the exit once and restores normal attack policy`, () => {
+  const h = arena({ units: [{ chessId: 't_wall', row: 10, col: 7 }] });
+  h.step();
+  const e = put(h, 'enemy_10116_ymgtop', [10, 7]);
+  h.run(skb('enemy_10116_ymgtop', 'SwitchModeTrigger').initCooldown + 0.2);
+  // The official duration equals its cooldown. Isolate expiry from the next immediately-ready activation.
+  e.mem.ab.list.find(a => a.fire && a.until > h.b.time).left = Infinity;
+  h.run(tb('enemy_10116_ymgtop', 'EndRotate.rotate_duration') + 0.2);
+  assert.equal(e.form, 'spinStop');
+  assert.equal(e.profile.noAttack, false);
+  const exits = () => h.eventsOf('fx').filter(ev => ev[1] === 'phase' && ev[4]?.id === e.id && ev[4]?.form === 'spinStop');
+  assert.equal(exits().length, 1);
+  h.run(1);
+  assert.equal(exits().length, 1);
 });
 
 test(`${nm('enemy_10116_ymgtop')}: 漩涡形态 — no normal attack on its blocker while it spins; no spin damage while stunned (阻止攻击)`, () => {
