@@ -12,6 +12,19 @@ spec.loader.exec_module(rc)
 
 
 class PublicationBoundaryTest(unittest.TestCase):
+    def test_server_notice_keeps_complete_upstream_sections_and_fork_changes(self):
+        notes = "# Release\n\n### 本分支新增与修复\n\n- 本分支修复。\n\n以上概括自上游来源。\n\n## 下载与素材边界\n下载说明。"
+        changes = "## 0.3.3 — today\n\n- 完整热修复 @AuthorA\n\n## 0.3.2 — yesterday\n\n### 规则\n\n- 全部规则 @AuthorB\n\n### 工具\n\n- 全部工具\n\n## 0.3.1 — old\n旧日志"
+        body = rc.server_announcement(notes, changes)
+        self.assertIn("- 完整热修复 @AuthorA", body)
+        self.assertIn("### 工具\n\n- 全部工具", body)
+        self.assertIn("@AuthorB", body)
+        self.assertIn("- 本分支修复。", body)
+        self.assertNotIn("旧日志", body)
+        self.assertNotIn("下载说明", body)
+        with self.assertRaises(ValueError):
+            rc.server_announcement(notes, changes.replace("## 0.3.2", "## 0.4.2"))
+
     def test_bundle_root_notices_keep_local_links(self):
         self.assertEqual(rc.root_doc('[来源](docs/REFERENCES.md) [许可](LICENSE) [官网](https://example.com) [章节](#a)'),
                          '[来源](app/docs/REFERENCES.md) [许可](app/LICENSE) [官网](https://example.com) [章节](#a)')
@@ -21,9 +34,13 @@ class PublicationBoundaryTest(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 rc.safe_rel(name)
 
-    def test_only_base_upstream_art_selected(self):
+    def test_only_verified_upstream_art_and_required_indexes_selected(self):
         self.assertEqual(rc.upstream_art("Stronghold-Protocol/public/assets/a.png"), "public/assets/a.png")
-        for name in ("Stronghold-Protocol/public/assets/local/fx/a.png", "Stronghold-Protocol/data/local-skins.json",
+        self.assertEqual(rc.upstream_art("Stronghold-Protocol/public/assets/local/fx/a.png"), "public/assets/local/fx/a.png")
+        self.assertEqual(rc.upstream_art("Stronghold-Protocol/data/assets.json"), "data/assets.json")
+        self.assertEqual(rc.upstream_art("Stronghold-Protocol/data/local-assets.json"), "data/local-assets.json")
+        self.assertEqual(rc.upstream_art("Stronghold-Protocol/data/local-fx.json"), "data/local-fx.json")
+        for name in ("Stronghold-Protocol/data/local-skins.json", "Stronghold-Protocol/public/assets/local/.env",
                      "Stronghold-Protocol/runtime/settings.json", "other/public/assets/a.png"):
             self.assertIsNone(rc.upstream_art(name))
 
@@ -73,6 +90,24 @@ class PublicationBoundaryTest(unittest.TestCase):
                 z.writestr("candidate/PACKAGE-MANIFEST.json", b"tampered")
             with self.assertRaises(ValueError):
                 rc.verify_archive(archive, inventory)
+
+    def test_upstream_local_assets_require_exact_provenance_and_no_missing_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            archive = root / "upstream.zip"
+            app = root / "bundle/app"
+            with zipfile.ZipFile(archive, "w") as z:
+                z.writestr("Stronghold-Protocol/public/assets/local/fx/source.bin", b"upstream art")
+                z.writestr("Stronghold-Protocol/data/local-fx.json", b"{}")
+            provenance = rc.extract_art(archive, app)
+            rc.make_inventory(root / "bundle", provenance)
+            art = app / "public/assets/local/fx/source.bin"
+            art.write_bytes(b"local replacement")
+            with self.assertRaises(ValueError):
+                rc.make_inventory(root / "bundle", provenance)
+            art.unlink()
+            with self.assertRaises(ValueError):
+                rc.make_inventory(root / "bundle", provenance)
 
 
 if __name__ == "__main__":

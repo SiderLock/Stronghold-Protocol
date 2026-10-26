@@ -14,11 +14,12 @@ import subprocess
 import tarfile
 import zipfile
 
-RELEASE = "v0.3.1-20p.2"
+RELEASE = "v0.3.3-20p.1"
 NODE_VERSION = "22.23.3"
-UPSTREAM_FILE = "Stronghold-Protocol-v0.3.1.zip"
-UPSTREAM_SHA = "d2f48f7fd2698f330b86c897d93ada2d7066825593cce4de8add46dfa68c3db1"
-UPSTREAM_URL = "https://github.com/sganggs/Stronghold-Protocol/releases/download/v0.3.1/" + UPSTREAM_FILE
+UPSTREAM_FILE = "Stronghold-Protocol-v0.3.3.zip"
+UPSTREAM_SHA = "1bfc651096ff4c44b76296717bd605220b5204714722832140a3d407153cd2be"
+UPSTREAM_URL = "https://github.com/sganggs/Stronghold-Protocol/releases/download/v0.3.3/" + UPSTREAM_FILE
+UPSTREAM_INDEXES = {"data/assets.json", "data/local-assets.json", "data/local-fx.json"}
 NODES = {
     "Windows-x64": ("win-x64.zip", "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"),
     "linux-x64": ("linux-x64.tar.xz", "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"),
@@ -49,14 +50,19 @@ def safe_rel(name):
     return p.as_posix()
 
 
-def denied(rel):
+def art_path(rel):
+    return rel.startswith(("public/assets/", "public/fonts/")) or rel in UPSTREAM_INDEXES
+
+
+def denied(rel, upstream=False):
     p = safe_rel(rel)
     parts = p.lower().split("/")
     base = parts[-1]
     return (any(x in {".git", ".cache", "__pycache__", "runtime", "handoff", "review", "logs"} for x in parts)
             or any(x.startswith(".venv") for x in parts) or base == ".env" or base.startswith(".env.")
-            or p.lower().startswith(("docs/development/", "public/dev/", "public/assets/local/"))
-            or bool(re.match(r"^data/local[^/]*\.json$", p, re.I))
+            or p.lower().startswith(("docs/development/", "public/dev/"))
+            or ((p == "data/assets.json" or p.lower().startswith("public/assets/local/") or bool(re.match(r"^data/local[^/]*\.json$", p, re.I)))
+                and not (upstream and art_path(p)))
             or base in {"thumbs.db", ".ds_store"} or bool(re.search(r"\.(pyc|pyo|log|tmp)$", base)))
 
 
@@ -66,7 +72,7 @@ def upstream_art(name):
     if not name.startswith(prefix):
         return None
     rel = name[len(prefix):]
-    return rel if rel.startswith(("public/assets/", "public/fonts/")) and not denied(rel) else None
+    return rel if art_path(rel) and not denied(rel, upstream=True) else None
 
 
 def put(dst, data):
@@ -82,6 +88,27 @@ def root_doc(text):
     """A copy of app-root Markdown at bundle root must retain working local links."""
     return re.sub(r"\]\(([^)\s]+)\)", lambda m: m.group(0) if re.match(r"^[a-z]+:|^#", m[1], re.I)
                   else "](app/" + m[1] + ")", text)
+
+
+def server_announcement(notes, changelog):
+    """Keep the complete two upstream change sections, then append this fork's changes."""
+    blocks = re.split(r"(?m)(?=^## )", changelog)
+    upstream = []
+    for version in ("0.3.3", "0.3.2"):
+        matches = [b for b in blocks if re.match(r"## " + re.escape(version) + r"(?:\s|$)", b)]
+        if len(matches) != 1:
+            raise ValueError(f"missing/ambiguous upstream changelog: {version}")
+        upstream.append(matches[0].rstrip())
+    fork = notes.split("### 本分支新增与修复\n", 1)[1].split("以上概括自上游", 1)[0].rstrip()
+    body = (f"# {RELEASE} 完整更新公告\n\n"
+            "以下完整保留上游 0.3.3、0.3.2 的更新记录与贡献者署名，本分支更新补充在末尾。\n"
+            "上游原文中的默认设置、性能数据和四人测试结论属于上游，不能视为本分支二十人环境的测试结果；本分支保留既有容量与网络配置。\n\n"
+            "来源：[上游 v0.3.3 原始更新日志](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/CHANGELOG.md)。\n\n"
+            + "\n\n".join(upstream) + "\n\n## 本分支新增与修复\n\n" + fork
+            + "\n\n服务器完成更新后，请刷新页面加载新版本；更新时间以服主通知为准。\n")
+    if len(body.encode("utf-16-le")) // 2 > 50000 or len(body.encode("utf-8")) > 128 * 1024:
+        raise ValueError("complete announcement exceeds the server's content limit")
+    return body
 
 
 def run(args, cwd=None, capture=False):
@@ -195,7 +222,7 @@ Windows 双击 `启动游戏.bat`；Linux / macOS 在终端运行 `bash 启动�
 自带运行时不代表支持所有旧系统；Node 平台要求见 https://github.com/nodejs/node/blob/v{NODE_VERSION}/BUILDING.md#platform-list 。
 默认打开 http://localhost:3000 ，按 Ctrl+C 停止。端口等选项可追加 `--port 3001`，部署说明见 [app/docs/DEPLOY.md](app/docs/DEPLOY.md)。
 
-新增的皮肤、模型、时装特效、提取场景及 `data/local*.json` 均未附带；本次也不提供素材包。缺项时回退默认模型或简化画面。
+素材与素材索引仅来自作者上游 v0.3.3 完整包，包括其自带的官方特效与场景；不带本分支新增的时装、模型或自提取内容，也不另发素材包。随机时装只使用当前安装已有的资源，缺项按原逻辑回退。
 使用或再分发游戏素材可能涉及侵权，上游收录、非商业和署名不代表授权。自行提取也须遵守权利人的许可及适用条款。
 请阅读 [更新说明](更新说明.md)、[权利声明](app/NOTICE.md) 和 [本地提取参考](app/docs/LOCAL_ASSET_EXTRACTION.md)。
 
@@ -212,15 +239,17 @@ def make_inventory(bundle, art):
         if rel == "PACKAGE-MANIFEST.json":
             continue
         core = rel.removeprefix("app/")
-        if denied(core):
+        if denied(core, upstream=art_path(core)):
             raise ValueError(f"refused bundled path: {rel}")
         row = {"size": p.stat().st_size, "sha256": sha_file(p)}
-        if core.startswith(("public/assets/", "public/fonts/")):
+        if art_path(core):
             original = art.get(core)
             if not original or any(row[k] != original[k] for k in ("size", "sha256")):
                 raise ValueError(f"art outside verified upstream: {core}")
             row["upstreamEntry"] = original["origin"]
         entries[rel] = row
+    if set(art) != {rel.removeprefix("app/") for rel in entries if rel.startswith("app/") and art_path(rel[4:])}:
+        raise ValueError("bundled upstream art/index file set differs from provenance")
     json_write(bundle / "PACKAGE-MANIFEST.json", {"format": 1, "files": entries})
     manifest = bundle / "PACKAGE-MANIFEST.json"
     return {**entries, "PACKAGE-MANIFEST.json": {"size": manifest.stat().st_size, "sha256": sha_file(manifest)}}
@@ -331,8 +360,8 @@ def build(args):
         raise ValueError("native npm module needs platform-specific builds")
     art = extract_art(upstream, app)
     json_write(out / "upstream-art-provenance.json", {"url": UPSTREAM_URL, "sha256": UPSTREAM_SHA, "files": art})
-    print(f"Verified upstream art: {len(art)} files; all local outputs excluded", flush=True)
-    run(["node", helper, "finalize", app], root)
+    print(f"Verified upstream art and indexes: {len(art)} files; checkout art never copied", flush=True)
+    run(["node", helper, "finalize", app, out / "upstream-art-provenance.json"], root)
     notes = (root / f"docs/releases/{RELEASE}.md").read_text(encoding="utf-8")
     # Public release body needs absolute links; bundle-root notes use app-relative links.
     def note_links(base):
@@ -343,7 +372,12 @@ def build(args):
             rel = os.path.normpath("docs/releases/" + href).replace("\\", "/")
             return "](" + base + rel + ")"
         return re.sub(r"\]\(([^)\s]+)\)", replace, notes)
-    put(out / "ReleaseNotes.md", note_links(f"https://github.com/SiderLock/Stronghold-Protocol/blob/{RELEASE}/").encode())
+    put(out / "ReleaseNotes.md", note_links(f"https://github.com/SiderLock/Stronghold-Protocol/blob/{source}/").encode())
+    # The release body stays short; the server announcement preserves the full upstream changes.
+    # This review artifact stays outside every package and never claims a completed deployment.
+    with zipfile.ZipFile(upstream) as z:
+        changelog = z.read("Stronghold-Protocol/CHANGELOG.md").decode("utf-8")
+    put(out / "ServerAnnouncement.md", server_announcement(notes, changelog).encode())
     results = []
     for target, archive_input in inputs.items():
         name = f"Stronghold-Protocol-{RELEASE}-{target}"
@@ -361,7 +395,8 @@ def build(args):
                    "repository": "https://github.com/SiderLock/Stronghold-Protocol", "target": target,
                    "node": {"version": NODE_VERSION, "archive": archive_input.name, "sha256": NODES[target][1],
                             "url": f"https://nodejs.org/dist/v{NODE_VERSION}/{archive_input.name}"},
-                   "art": {"url": UPSTREAM_URL, "sha256": UPSTREAM_SHA, "excludes": ["public/assets/local/", "data/local*.json"]}})
+                   "art": {"url": UPSTREAM_URL, "sha256": UPSTREAM_SHA, "policy": "verified-upstream-only",
+                           "indexes": sorted(UPSTREAM_INDEXES), "excludes": ["checkout art", "data/local-skins.json", "unverified local indexes"]}})
         inventory = make_inventory(bundle, art)
         archive = out / (name + (".zip" if target == "Windows-x64" else ".tar.gz"))
         print(f"Creating {archive.name}", flush=True)

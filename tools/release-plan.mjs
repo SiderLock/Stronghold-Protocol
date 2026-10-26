@@ -8,12 +8,12 @@ import { writePackIndex } from './packs.mjs';
 import { manifestText } from './package-update.mjs';
 import { inManifest, digestFile, parseManifest } from '../server/update.js';
 
-export const RELEASE = 'v0.3.1-20p.2';
+export const RELEASE = 'v0.3.3-20p.1';
 const EXTRA_DOCS = ['docs/RELEASE_PACKAGES.md', `docs/releases/${RELEASE}.md`];
 
 export function publicationDenied(rel) {
   return isRefused(rel) || isJunk(rel) || rel.startsWith('docs/development/')
-    || /^data\/local[^/]*\.json$/i.test(rel) || rel.startsWith('public/assets/local/');
+    || rel === 'data/assets.json' || /^data\/local[^/]*\.json$/i.test(rel) || rel.startsWith('public/assets/local/');
 }
 
 export function publicationFiles(tracked) {
@@ -49,7 +49,7 @@ export function prepareStage(root, files, source) {
     for (const kind of ['blob', 'raw']) text = text.replaceAll(
       `https://github.com/sganggs/Stronghold-Protocol/${kind}/v${pkg.version}/`,
       `https://github.com/SiderLock/Stronghold-Protocol/${kind}/${source}/`);
-    if (rel === 'README.md') text = `> 本便携包的素材范围以 [发布包说明](docs/RELEASE_PACKAGES.md) 为准：自带上游基础素材，排除所有本地提取产物。\n\n${text}`;
+    if (rel === 'README.md') text = `> 本便携包的素材范围以 [发布包说明](docs/RELEASE_PACKAGES.md) 为准：仅包含已核验上游完整包的素材，不含本分支自行提取或新增的素材。\n\n${text}`;
     fs.writeFileSync(path.join(root, rel), text);
   }
   if (shipsPacks(files)) writePackIndex(root, path.join(root, GENERATED_PACK_INDEX));
@@ -58,9 +58,23 @@ export function prepareStage(root, files, source) {
   return { version: pkg.version, files: files.length };
 }
 
-export function finalizeStage(root) {
+export function finalizeStage(root, provenance = { files: {} }) {
   const files = walk(root);
-  const denied = files.filter(publicationDenied);
+  const present = new Set(files);
+  const artPath = f => f.startsWith('public/assets/') || f.startsWith('public/fonts/')
+    || f === 'data/assets.json' || f === 'data/local-assets.json' || f === 'data/local-fx.json';
+  const approved = provenance.files || {};
+  for (const [rel, row] of Object.entries(approved)) {
+    if (!artPath(rel) || isRefused(rel) || isJunk(rel) || rel.includes('..') || rel.includes('\\') || row.origin !== `Stronghold-Protocol/${rel}`
+      || !/^[a-f0-9]{64}$/.test(row.sha256) || !Number.isSafeInteger(row.size) || row.size < 0 || !present.has(rel)) {
+      throw new Error(`invalid/missing upstream entry: ${rel}`);
+    }
+  }
+  for (const rel of files.filter(artPath)) {
+    const row = approved[rel], actual = digestFile(path.join(root, rel));
+    if (!row || !actual || actual.size !== row.size || actual.sha256 !== row.sha256) throw new Error(`unverified upstream file: ${rel}`);
+  }
+  const denied = files.filter(f => publicationDenied(f) && !Object.hasOwn(approved, f));
   if (denied.length) throw new Error(`publication refused: ${denied.join(', ')}`);
   const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
   const entries = new Map(files.filter(inManifest).map((f) => [f, digestFile(path.join(root, f))]));
@@ -74,7 +88,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const [mode, root, input, source] = process.argv.slice(2);
   const result = mode === 'plan' ? checkedPlan(root, JSON.parse(fs.readFileSync(input, 'utf8')))
     : mode === 'prepare' ? prepareStage(root, JSON.parse(fs.readFileSync(input, 'utf8')), source)
-      : mode === 'finalize' ? finalizeStage(root) : null;
+      : mode === 'finalize' ? finalizeStage(root, input ? JSON.parse(fs.readFileSync(input, 'utf8')) : undefined) : null;
   if (!result) throw new Error('expected plan, prepare or finalize');
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
