@@ -272,7 +272,7 @@ export function spineEntry(m, id, opts) {
     const wanted = opts && str(opts.skin) ? String(opts.skin) : null;
     if (wanted) {
       const skin = get(get(ch, 'skins'), wanted);
-      // B6 (docs/SKINS.md): an unfinished spine map with no Front uses the complete default body.
+      // B6 / §35.4 [ASSUMED]: an unfinished spine map with no Front uses the complete default body.
       if (skinHasModel(skin)) {
         const sp = (opts && opts.back && isObj(skin.spine.back)) ? skin.spine.back : skin.spine.front;
         if (validSpine(sp)) return sp;

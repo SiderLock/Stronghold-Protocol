@@ -313,10 +313,6 @@ export class GameData {
   }
 
   /**
-   * Copies of a base chess in the shared pool — and, for a DIY slot, of a slotted 自选 piece in its player's own stock
-   * (player/diy.js buildDiyStock).
-   */
-  /**
    * Copies of a base chess in the shared pool (co-op multiplier applied).
    * DIY private stock uses `basePoolCopies` instead — D028: 自选库存不乘联机或五人组倍数.
    */

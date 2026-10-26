@@ -3,6 +3,24 @@ import assert from 'node:assert/strict';
 import { FreezeScheduler } from '../../server/match/freezeScheduler.js';
 import { VirtualScheduler } from '../../server/match/scheduler.js';
 
+test('virtual runners advance through the wrapper, respecting freeze and disposal', () => {
+  const source = new VirtualScheduler();
+  const scheduler = new FreezeScheduler(source);
+  const fired = [];
+  scheduler.setTimeout(() => fired.push(1), 10);
+  assert.equal(scheduler.runNext(), true);
+  assert.deepEqual(fired, [1]);
+  scheduler.setTimeout(() => fired.push(2), 10);
+  scheduler.freeze();
+  assert.equal(scheduler.runNext(), false);
+  assert.deepEqual(fired, [1]);
+  scheduler.resume();
+  assert.equal(scheduler.runNext(), true);
+  assert.deepEqual(fired, [1, 2]);
+  scheduler.dispose();
+  assert.equal(scheduler.runNext(), false);
+});
+
 test('freeze preserves timeout/interval handles and their remaining delay, without missed-tick replay', () => {
   const source = new VirtualScheduler({ start: 1000 });
   const scheduler = new FreezeScheduler(source);

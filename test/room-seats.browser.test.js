@@ -43,6 +43,11 @@ test('Edge: two humans exchange empty, AI and consenting human seats across 20-s
       await page.waitForFunction((s) => document.querySelector(s) && !document.querySelector(s).disabled, {}, selector);
       await page.$eval(selector, (e) => e.scrollIntoView({ block: 'center' }));
       await page.waitForFunction((s) => document.querySelector(s)?.closest('.seat')?.getAnimations().every((a) => a.playState === 'finished') ?? true, {}, selector);
+      const reachable = await page.$eval(selector, (button) => {
+        const r = button.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return hit === button || button.contains(hit);
+      });
+      assert.equal(reachable, true, `${selector} must receive the actual pointer click`);
       await page.click(selector);
     };
     await click(host, swap(19)); await seat(host, 19);

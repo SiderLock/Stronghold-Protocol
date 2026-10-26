@@ -915,6 +915,16 @@ function pathnameOf(url) {
  * which the worker never answers (not a hashed /assets/, /fonts/ or /media/ URL). Chrome refuses Cache.keys() for a
  * cache of more than about 15,000 entries ("Operation too large"); a whole pack stores some 43,000 (the audio twice).
  */
+
+// CacheStorage is shared by tabs, but its read/merge/put sequence is not atomic. Use one origin-wide lock for
+// both index writers. A browser without Web Locks (navigator.locks), and Node 22's Cache API test adapters, keep the
+// previous sequential behaviour: the same updates, without cross-tab serialization.
+function withImportIndexLock(update) {
+  const locks = globalThis.navigator?.locks;
+  return locks?.request ? locks.request(`${IMPORTED_ASSET_CACHE}:index`, update) : update();
+}
+
+/** The index as a Set, or null without a readable one. */
 async function readImportList(cache, url) {
   try {
     const hit = await cache.match(url);
@@ -977,6 +987,10 @@ export async function listImportedPaths(cachesApi = globalThis.caches) {
  * @param {Iterable<string>} paths
  */
 export async function addImportedPaths(cache, paths) {
+  return withImportIndexLock(() => addToImportIndex(cache, paths));
+}
+
+async function addToImportIndex(cache, paths) {
   let all = await readImportIndex(cache);
   if (!all) {
     try { all = await keyPaths(cache); } catch { all = new Set(); }
@@ -993,6 +1007,10 @@ export async function addImportedPaths(cache, paths) {
  * @param {Iterable<string>} paths
  */
 export async function addImportedBorrowedPaths(cache, paths) {
+  return withImportIndexLock(() => addBorrowedToIndex(cache, paths));
+}
+
+async function addBorrowedToIndex(cache, paths) {
   let all = await readImportedBorrowed(cache);
   if (!all) all = new Set();
   for (const p of paths) if (typeof p === 'string' && p && p !== IMPORTED_INDEX_URL && p !== IMPORTED_BORROWED_URL) all.add(p);
@@ -1018,6 +1036,10 @@ export async function countImportedFiles(cachesApi = globalThis.caches) {
  * @returns {Promise<{ removed: number, removedFiles: number, kept: number }>}
  */
 export async function pruneImportedPaths(wanted, cachesApi = globalThis.caches) {
+  return withImportIndexLock(() => pruneImportIndex(wanted, cachesApi));
+}
+
+async function pruneImportIndex(wanted, cachesApi) {
   const cache = await cachesApi.open(IMPORTED_ASSET_CACHE);
   // no index yet: the keys, when Cache.keys() still answers (a whole pack always wrote an index)
   const stored = (await readImportIndex(cache)) ?? await keyPaths(cache);

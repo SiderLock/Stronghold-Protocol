@@ -18,7 +18,8 @@ const nameOf = (f) => typeof f === 'string' ? f : f[0];
 // Fields introduced after v1 was published use its existing extension slot. Keep this allowlist
 // explicit: adding a business field must not silently weaken coverage or renumber the fixed catalog.
 const V1_EXTENSIONS = Object.freeze({
-  'room.create': ['assetCache', 'test'], 'room.join': ['assetCache', 'testAck'],
+  hello: ['delta'],
+  'room.create': ['assetCache', 'test', 'version', 'soloUnlimited'], 'room.join': ['assetCache', 'testAck'],
   'lobby.quickMatch': ['assetCache'], 'room.spectate': ['assetCache', 'testAck'],
   'b.result': ['cs'], // 0.3.0 content identity (DESIGN §8.4)
 });
@@ -27,7 +28,9 @@ const V1_JSON_FALLBACK = Object.freeze({
   c2s: ['room.chat', 'room.setMatchmaking', 'lobby.join', 'lobby.spectate', 'b.rehearsalResult',
     'room.consent', 'room.contentReady', 'room.setMode', 'room.setPlugins', 'room.requestSeat', 'room.answerSeat', 'room.requestReroll',
     // 0.3.1 business types (skins / unequip rule / plugin offers / test console) — post-v1, JSON fallback
-    'room.skins', 'g.unequip', 'g.offer', 'g.offerRefresh', 'g.test'],
+    'room.skins', 'g.unequip', 'g.offer', 'g.offerRefresh', 'g.test',
+    'room.aiRequest', 'room.aiVote', 'room.cancelVersionVote', 'room.card', 'room.proposeVersion',
+    'room.setAiTakeover', 'room.setSoloUnlimited', 'room.versionVote', 'state.resync'],
   s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel'],
 });
 

@@ -23,7 +23,7 @@ import { data } from '../data.js';
 import { enemyIconUrl, titleIconUrl, uiUrl } from '../ui/assetUrls.js';
 import { audio } from '../audio.js';
 import { sentText } from '../ui/lang.js';
-import { UnofficialMark } from '../ui/pluginTag.js';
+import { UnofficialMark, VersionTag } from '../ui/pluginTag.js';
 import { TestMark } from '../ui/testConsole.js';
 import { t, tParts, N_ } from '../../../shared/i18n.js';
 
@@ -79,6 +79,7 @@ function PlayerCard({ p, myId, titles, best, solo = false, skinOwnerId = null })
       <${PlayerAvatar} player=${p} self=${p.playerId === myId} />
       <div class="rcard__who">
         <b class="rcard__name">${p.name}${p.isBot ? html`<span class="rcard__ai">AI</span>` : null}${p.playerId === myId ? html`<span class="rcard__you">${t('你')}</span>` : null}</b>
+        ${Number.isInteger(p.aiTakeoverRound) ? html`<small>${t('第 {round} 回合接替 AI；含此前席位数据，不计入个人统计或奖励。', { round: p.aiTakeoverRound })}</small>` : null}
         <span class="rcard__band">${band ? html`<${BandIcon} bandId=${band.bandId} size="xs" />${band.name}` : '—'}</span>
       </div>
       <div class="rcard__mid">
@@ -111,7 +112,7 @@ function PlayerCard({ p, myId, titles, best, solo = false, skinOwnerId = null })
  * unofficial (DESIGN §32.6). `slot`: the 结算 tab plugin slot (result.tab) — false where the page under it has one.
  * @param {{ res: any, pub?: any, myId?: string|null, backLabel: string, onBack: () => void, quiet?: boolean, content?: any, slot?: boolean }} props
  */
-export function ResultView({ res, pub = null, myId = null, backLabel, onBack, quiet = false, content = null, slot = true }) {
+export function ResultView({ res, pub = null, myId = null, backLabel, onBack, quiet = false, content = null, slot = true, version = null }) {
   // [ASSUMED] Stored statistics have no outfit snapshot: without pub, do not borrow a live match's choices.
   const gd = useGameData();
   const r = normalizeResult(res, pub);
@@ -138,7 +139,7 @@ export function ResultView({ res, pub = null, myId = null, backLabel, onBack, qu
         <div class="result__logo"><${Sprite} k="entry/season_logo_settle" class="result__logoimg" fallback=${html`<${MicroLabel} tone="mint">STRONGHOLD PROTOCOL</${MicroLabel}>`} /></div>
         ${r.difficulty ? html`<${DifficultyTag} difficulty=${r.difficulty} size="lg" />` : null}
         <h1 class="result__headline">${r.victory ? t('模拟完成') : t('模拟失败')}</h1>
-        <${UnofficialMark} room=${content ? { content } : null} class="result__modmark" />
+        <${UnofficialMark} room=${content ? { content } : null} class="result__modmark" /><${VersionTag} version=${version} class="result__vertag" />
         ${res?.test === true ? html`<p class="result__test" data-testid="result-test"><${TestMark} /> ${t('测试对局')}${Number.isInteger(res.testActions) ? html` · ${t('测试指令 {n} 次', { n: res.testActions })}` : null}</p>
           <p class="t-dim">${t('本局为测试对局，不计入统计、成就、称号、徽章与卫戍认证。')}</p>` : null}
         <p class="result__sub">${r.victory ? t('成功卫戍 · 敌方领袖已被击败') : t('防线已被突破')}</p>

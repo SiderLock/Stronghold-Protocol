@@ -22,11 +22,11 @@
 | AI 阵营避让 | `server/match/bot.js` | D035 只避让同固定卡池组的存活队友；策略、核心羁绊与高阶让卡不因跨组独立卡池互相排斥 |
 | 机变与真人优先 | `server/match/choices.js`、`match/phases.js`、`match/spDraft.js`、轮选 UI | D012 每组独立六张、组间并行、类型全房一致；D004 组内未选真人优先，保留各组时钟与只读浏览 |
 | 联防与投票 | `server/match/unite.js`、`match/unitePhase.js`、`public/js/ui/hud.js` | D013 固定组数上限至多五轮、全房原选人排序、逐轮真人多数票；本轮打完后取消后续全部，保留漏怪归属与累计收益 |
-| 领袖及两端战斗 | `gamedata.js`、`finalAssault.js`、`server/sim/`、`public/js/battle/runner.js` | D009 按人数共享血池、退出按比例缩血；D036 所有参战席位种子随机搭档、准备至开战稳定、隐藏战保留完整搭档；无人机 2% 机制、普通限伤保留 |
+| 领袖及两端战斗 | `gamedata.js`、`finalAssault.js`、`server/sim/`、`public/js/battle/runner.js` | D009 按人数共享血池、退出按比例缩血；D036 所有参战席位按种子和轮次随机搭档、准备至该次开战稳定、隐秘核心重新随机；无人机 2% 机制、普通限伤保留 |
 | 审计与界面 | `server/match/audit.js`、`tools/matchrun.mjs`、队伍栏与表情 UI | 扩容事件可以回放审计，图标和表情仍能显示 |
 | 普通公告与紧急通知 | `server/index.js`、`server/http/routes.js`、`server/announcements.js`、`server/announcementNotices.js`、`public/js/main.js` | D014 普通发布不打断对局，显式 notify 独立队列；D015 仅公告目录 assets 的只读图片，全部 host、广播与关闭清理保留 |
 | 个人选择及战绩 | `match/intents.js`、`match/spDraft.js`、`choiceOverlay.js`、`ui/stats.js` | 个人 choiceId 与公共 draftId/groupId 不串用；二十席位末席本人仍有自己的统计、导入导出和完整回看 |
-| 开局重刷 | `match/setupVote.js`、`match/platform.js`、`ui/setupReroll.js` | D018 全体真人一致同意；重建全部固定组与自选库存，准备失败不部分替换；策略采用 50 秒，机变时长不变 |
+| 开局重刷 | `match/setupVote.js`、`match/platform.js`、`ui/setupReroll.js` | D018 任意在座真人发起 / 取消、每席位发起冷却 30 秒、全体真人一致同意；重建全部固定组与自选库存，准备失败不部分替换；按各历史版本保留轮选时限 |
 | 素材预缓存及安装 | `server/assetCacheCatalog.js`、`server/http/assetCache.js`、`public/js/assetCache.js`、`public/asset-cache-sw.js`、`public/js/pwa.js` | D016 按哈希补缺、单缓存 SW、对局暂停批量任务；安装按钮不能引入第二套应用缓存；大厅/房间入口保留 |
 | 大厅目录及身份恢复 | `server/lobbyDiscovery.js`、`server/lobby.js`、`public/js/ui/lobbyDiscovery.js`、`public/js/net.js`、`ui/resumeMatch.js` | D017 实际空席匹配、仅大厅订阅、断线与恢复后重订阅；恢复选择时普通自动公告延后，新增按钮不遮挡标题 |
 | 紧凑编码与模块缓存 | `shared/wireCodec.js`、`server/http/websocket.js`、`server/http/runtimeCache.js`、`public/js/runtime.js`、渲染加载器 | D021 已发布 v1 布局不重排，新字段放扩展位；公共状态 8 Hz / 125 ms，32 KiB 跨消息压缩字典；D022 重试参数保留固定 rv，改写清单按实际正文冻结哈希；素材精确别名与旧 SHA 缓存兼容 |
@@ -81,3 +81,55 @@ Windows 上解释器名称依实际环境选择。镜像、代理、素材补齐
 源功能历史中已有新增私人过程记录，普通 merge 会把其对象带入目标。先保存本地 Git bundle 与源功能分支，再以本 fork master 为父提交，生成净化的容量分支整合提交；它仍是远程容量分支的后继，无需强推。dev 先补齐本 fork master 的既有历史，再 squash 接入净化内容；master 随后合并 dev。原皮肤分支保留，源提交与参考作者另在公开来源文档注明。
 
 每次推送前检查目标分支相对原 master 新增的每个提交及 blob，确认没有新素材、私人记录、配置或报告；同时检查最终目录。只检查最终删除状态或 `.gitignore` 不足以避免历史泄漏。既有 master 的资源和历史不改写；来源与提取步骤见 [REFERENCES.md](../REFERENCES.md) 和 [LOCAL_ASSET_EXTRACTION.md](../LOCAL_ASSET_EXTRACTION.md)。三条目标引用均使用普通快进推送，不使用 force，也不向作者仓库推送。
+
+## 7. v0.3.3 同步与适配
+
+2026-10-26 在既有 `feat/IncreasePlayerCapacity` 分支，从 `ab3a1a46` 合并作者发布标签
+[`v0.3.3`](https://github.com/sganggs/Stronghold-Protocol/releases/tag/v0.3.3)，来源提交
+`f07b8965061bbc311ad7aa815879b09264a1e47d`。包含 v0.3.2 的四个官方历史版本及 v0.3.3 的商店装备空栏、
+满整备区互换、跨版本图标缓存修复。此同步不接入其他本地分支；不推送、不发布包、不部署。
+
+用户确认采用两项上游新规则：隐秘核心重新随机搭档；任意在座真人直接发起或取消开局重刷投票。
+D036 与 D018 / D041 已同步更新。固定三 / 四 / 五人库存组、组内真人优先并行轮选、私有自选库存不扩容、
+多轮联防、二十人领袖血池、公告、聊天、换座、素材缓存及移动端性能选项继续保留。
+第一期独立模拟沿用该版本的限时规则，机变每轮 150 秒；同盟分组轮选保持原时限。
+
+适配重点：历史版本房间保留容量参数，版本子进程不接收默认进程的预演池对象；AI 接管保留席位与固定库存组，
+重新握手保留 wire/delta 能力。新版状态差量编码与既有 compact-v1、慢连接状态合并协作，只有实际发送的状态
+才推进差量基线；已发布 compact-v1 指纹不变。新版大厅与房间保留容量、公告与换座，移动横屏座位按钮不互相遮挡；
+延迟 AI 轮选使用各组自己的回合 token，其他组推进不使该组决策失效。
+紧急冻结时钟包装转发虚拟时钟的单步推进，支持新版外部 AI 工具；冻结和销毁后仍不能推进。
+`local-skins.json` 与其他外观清单一起排除在玩法指纹之外；默认版本 guard 按本分支八席默认容量、
+固定真人优先和房间扩展字段更新，已发布的内容哈希公式与 compact-v1 指纹不变。
+
+相对上游 golden，仅 `coop2-NORMAL-70-diy` 与 `coop2-NORMAL-5-coverage-diy` 按本分支 D028 更新：
+私人 DIY 库存继续使用不乘联机倍数的基础数量；上游的双倍私人库存会改变随机商店和后续战斗结果。
+其他场景沿用上游基准，未批量覆盖预期。
+`coverage-diy` 继续验证选定干员进入商店与私人库存上限，不要求新 AI 在这个种子下必然部署推进之王；
+原生干员技能的战斗覆盖由独立的 140 个 DIY golden 场景验证，避免把 AI 偏好误判为规则回归。
+
+素材通过 `node tools/fetch-assets.mjs --add-only --concurrency=4` 补齐，未删除已有文件。工具生成的新清单包含
+18,095 项，必需资源缺失为 0；补入 1,391 项约 44.2 MiB。401 次远端可选资源未命中使用既有回退，
+不等于必需资源缺失。可选本地提取清单仍缺六个新版敌人 spine 分组，未重新提取；已有 3D 棋盘与 11 个战场保留。
+官方特效按 `extract.py --only fx --fx-set used --fx-jobs 2 --fx-add-only` 增量补缺，新增 153 个 prefab，
+清单从 20,657 增至 20,880 项。旧 v3 单元记录没有全量重提，其缺少的扩展元数据继续按兼容回退处理。
+随后离线刷新实际模型的元数据，保留旧 PMA 与新版直通 Alpha 格式；`--add-only --local-spines` 显式更新
+派生元数据，既有媒体文件和缺项保护仍保留。下载素材与原始日志不入库，未重建统一素材 ZIP。
+
+本次由用户明确允许本机验证。完整测试首轮执行 11,144 项（10,964 通过、55 失败、125 跳过），随后按失败文件
+修复并复测。Node 24.13 在部分插件用例发生原生退出 `0xC0000409`，这些用例改用 Node 24.19 验证；
+文件链接权限不足的三个断言通过已有跨平台 fixture helper 处理，并在 Linux 实际验证四个链接用例。
+Windows 的 `python3` 别名未提供解释器，回归使用隔离缓存中的 Python 3.12 入口，不改全局安装。
+最终对原失败文件中除独立压力项外的 41 个文件统一复测：827 项，820 通过、7 跳过、0 失败；
+新增时钟与二十人历史版本定向回归通过。四个语言包各 2,552 个使用词条均为 100% 翻译、0 错误。
+
+已完成：288 个 golden 场景匹配；setup、启动冒烟、CI guard、lint、导入边界、类型检查通过；
+导入工具仍保留 `server/sim/nodeData.js` 三条已有的 Node 导入基线例外。
+Edge 的二十席位换座、1920×1080 / 1280×720 / 844×390 布局及四个历史版本流程通过，手机版本页 667×375 通过。
+这不是二十名真人设备压测，也未进行远程 CI 或部署。
+
+低带宽压力用例仍未达标：四个二十席位房间加四名观战者共享 0.8 Mbps，并发冷 HTTP 下载，目标为控制请求
+P95 ≤ 2 秒。相同本机 Node 24.19 下，合并前 `ab3a1a46` 的隔离副本也失败（状态重同步超时，已收样本
+P95 5.28 秒）；本次版本完成 672 个控制样本，P95 4.87 秒，无意外断线，身份重连成功。单次对照只能证明
+旧版本也未通过此用例，不能据此宣称性能改善或整个测试套件全绿；本次同步保留这个既有压力限制。
+原始输出留在忽略缓存，本地过程记录按公开整合边界保留。
