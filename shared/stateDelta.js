@@ -52,13 +52,21 @@ export function diffState(before, after) {
 export function applyStatePatch(base, ops) {
   if (!Array.isArray(ops) || ops.length > MAX_OPS) throw new Error('bad patch');
   let next = base;
+  // Only containers cloned by this patch may be changed in place. Multiple operations on one
+  // player's board share those clones, while both the baseline and values supplied by ops stay
+  // untouched (including when a later operation fails). Ownership never crosses patch calls.
+  const owned = new WeakSet();
   const update = (node, path, index, op) => {
     const key = path[index];
     const array = Array.isArray(node);
     if (array ? !Number.isInteger(key) || key < 0 || key >= node.length : !record(node) || !safeKey(key)) {
       throw new Error('bad path');
     }
-    const copy = array ? node.slice() : { ...node };
+    let copy = node;
+    if (!owned.has(node)) {
+      copy = array ? node.slice() : { ...node };
+      owned.add(copy);
+    }
     if (index + 1 < path.length) {
       if (!Object.hasOwn(node, key)) throw new Error('missing path');
       copy[key] = update(node[key], path, index + 1, op);
