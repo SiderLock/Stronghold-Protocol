@@ -85,6 +85,20 @@ Three properties are load-bearing:
 安装时装的合并与 HTTP 视图共用 `mergeLocalSkins`，无需安装报文。定向回归见 `test/skin-random.test.js`、
 `test/ui/skins-sync.test.js` 和 `test/ui/skin-random.e2e.test.js`。
 
+## 倒地姿势与敌人动作（本 fork，2026-10-26）
+
+等待再部署的干员必须持续可见。魔王默认模型及「追悼」的 `Die` 末帧会隐藏全部附件；「追悼」过程中还包含消散与
+阿米娅投影，不能把任意临近末帧当作本体倒地姿势。渲染器按实际骨骼附件检查死亡末帧，并复用现有骨骼边界缓存保存判定。
+[ASSUMED] 对这种不可见结尾，倒地期间冻结本套模型可见的 `Stun` 首帧，无该姿势则用本套 `Idle`；变身形态没有专用
+`Stun` 时使用当前形态的 `Idle`，不借用本体姿势。复活恢复正常动作。
+可见的死亡结尾保持原样；敌人死亡及永久离场仍完整播放原 `Die` 并淡出。迟到的模型、战场重建也应用同一判定。
+
+水遁忍者（`enemy_10116_ymgtop`，双持武器及面具）的客户端 M1/RotateAttack 使用 `Skill_Begin`、`Skill_Loop`、
+`Skill_End`。其既有旋转伤害 / 地面特效原先未连接模型形态；现在通过现有 `setForm` 写入 `UnitInfo.form` 和状态 fx，
+旋转中行走 / 被阻挡保持循环，自然到期或失衡进入收招；晚进入战场、后台追帧沿用既有形态同步机制。
+不改变旋转持续时间、冷却、伤害或异常控制规则。回归入口：`test/render/knockdown-pose.test.js`、`forms.test.js`、
+`skin-actions.browser.test.js` 及 `test/content/enemies_bosses.test.js`。现有 288 个 golden 场景无需更新。
+
 ## Picture-only outfits (0.3.2, B6)
 
 The maintainer's 2026-10-18 **option A** makes a `skins` record with pictures but no Spine wearable.

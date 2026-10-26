@@ -50,6 +50,45 @@ test('unsafe/malformed patches are rejected atomically; previous views and proto
   assert.equal(diffState(deep(1), deep(2)), null, 'bounded path depth falls back to full');
 });
 
+test('a patch reuses its own branches without mutating earlier views, aliases or replacement values', () => {
+  const freeze = value => {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      Object.values(value).forEach(freeze);
+      Object.freeze(value);
+    }
+    return value;
+  };
+  const shared = freeze({ hp: 10, board: [{ col: 3, row: 4 }] });
+  const base = freeze({ t: 'm.public', players: [shared, shared], settings: { difficulty: 'HARD' } });
+  const replacement = freeze({ hp: 20, board: [{ col: 1, row: 2 }], old: true });
+  const ops = freeze([
+    [['players', 0, 'hp'], 9],
+    [['players', 0, 'board', 0, 'col'], 5],
+    [['players', 0, 'board', 0, 'row'], 6],
+    [['players', 1], replacement],
+    [['players', 1, 'hp'], 19],
+    [['players', 1, 'old']],
+    [['players', 1, 'old'], false],
+    [['players', 1, 'board', 0, 'row'], 3],
+  ]);
+  const next = applyStatePatch(base, ops);
+  assert.deepEqual(next.players, [
+    { hp: 9, board: [{ col: 5, row: 6 }] },
+    { hp: 19, board: [{ col: 1, row: 3 }], old: false },
+  ]);
+  assert.strictEqual(next.settings, base.settings, 'an untouched branch stays shared');
+  assert.deepEqual(base.players, [shared, shared]);
+  assert.deepEqual(replacement, { hp: 20, board: [{ col: 1, row: 2 }], old: true });
+  freeze(next);
+  const later = applyStatePatch(next, [[['players', 0, 'hp'], 8], [['players', 0, 'board', 0, 'row'], 7]]);
+  assert.equal(later.players[0].hp, 8);
+  assert.equal(next.players[0].hp, 9, 'ownership is local to one patch');
+  assert.equal(next.players[0].board[0].row, 6);
+  assert.throws(() => applyStatePatch(base, [...ops, [['players', 1, 'absent', 'x'], 1]]));
+  assert.deepEqual(base.players, [shared, shared]);
+  assert.equal(replacement.board[0].row, 2, 'a failed patch cannot change supplied values');
+});
+
 const wire = (text) => JSON.parse(text);
 const fakeWs = () => ({});
 

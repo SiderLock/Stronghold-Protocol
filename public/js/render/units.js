@@ -32,8 +32,9 @@
 //
 // Knocked-out operators (user playtest #4 item 9, b.snap `down`): `setDown([id, respawnAt, respawnTime, state, row,
 // col])` keeps a dead operator on the tile it lies on (row / col: where it fell, or its home — sim Battle._layBody,
-// player report F5 after 0.1.0) in its knocked-down pose — the Spine Die clip played once and held on its last
-// frame (the collapsed / kneeling pose with closed eyes; the Front model's for one facing UP unless its Back skeleton has its own Die clip, see above), slightly
+// player report F5 after 0.1.0) in its knocked-down pose — normally the Spine Die clip held on its last frame;
+// an end that hides all attachments (魔王 / 追悼) holds this model's Stun or Idle instead (SpineActor.holdDeathPose).
+// The collapsed / kneeling pose uses Front for UP unless Back has its own Die clip, see above, slightly
 // greyed — with a redeploy ring above its head:
 // a dark disc, a mint arc filling as the respawn timer runs and the seconds left; once the timer is done and it still
 // waits, a full amber ring with "DP" (not enough DP) or a red ring with "!" (its tile is taken). `onDeploy` (the
@@ -386,6 +387,12 @@ const dollRoles = (idle, die, attack = null) => Object.freeze({
   idle, deploy: idle, die, attack: attack ? Object.freeze({ begin: null, loop: attack, end: null }) : null, attackDown: null, skill: null,
 });
 export const FORMS = Object.freeze({
+  // 水遁忍者's official M1 (RotateAttack): enter, spin while moving/blocked, then leave on timer or 失衡.
+  enemy_10116_ymgtop: Object.freeze({
+    spin: Object.freeze({ change: 'Skill_Begin', roles: Object.freeze({ idle: 'Skill_Loop', deploy: 'Skill_Loop',
+      move: loop('Skill_Loop'), attack: null, attackDown: null, skill: null }) }),
+    spinStop: Object.freeze({ change: 'Skill_End', roles: Object.freeze({}) }),
+  }),
   [MANIFOLD]: Object.freeze({
     Default: Object.freeze({ roles: { ...clipSet('Idle_1', null, 'Stun', 'Attack'), deploy: 'Start', stun: loop('Stun') } }),
     Melee: Object.freeze({ change: 'Change_A', combat: 'A_Combat', roles: { ...clipSet('A_Idle', null, 'Die', 'A_Attack'), deploy: 'A_Start', stun: loop('A_Stun'), attackDown: null } }),
@@ -1006,6 +1013,7 @@ export class UnitView {
         const d = this.actor.die();
         const at = Math.min(d, this.dieT * (this.ctx.animRate?.() || 1));
         if (at > 0) this.actor.update(at);
+        if (this.down) this.actor.holdDeathPose();
       } else {
         // the skill stance: the flag still on, or its clip's window not yet over — an instant skill's UF.SKILL lasts a
         // single snapshot while the Front model is only being loaded now (剑雨's clip is 2.17 s), and a model built after
@@ -1740,7 +1748,7 @@ export class UnitView {
    * Knocked-out state (b.snap `down` entry `[id, respawnAt, respawnTime, state, row?, col?]`, render/interp.js downAt)
    * or null; `t` = the render clock's game time. A living view is knocked down first (its Die clip plays; `instant`: a
    * view made for a unit that is already down — a field joined mid-battle — starts on the held end of the clip). While
-   * down the view never fades: the Die clip's last frame stays on the tile the entry names (the view moves there when
+   * down the view never fades: the visible Die end (or its own held Stun/Idle when that end vanishes) stays on the tile the entry names (the view moves there when
    * it stands elsewhere: a body that went back to its home, a view built from the unit's deploy info) under the
    * redeploy ring. null on a view still down (it left for good) starts the fade; the redeploy itself comes through
    * onDeploy / revive.
@@ -1764,6 +1772,7 @@ export class UnitView {
     dn.until = Number(d[1]) || 0;
     dn.total = Math.max(0, Number(d[2]) || 0);
     dn.state = d[3] | 0;
+    if (this.actor?.holdDeathPose?.() && this.imp) this.imp.dirty = true;
   }
 
   // ---- per frame -------------------------------------------------------------------------------------------

@@ -18,6 +18,10 @@ without restarting playback or changing the sim / BattleSpec. Resolve every surf
 operator body (official `activity_table` `charShopChessDatas.backupCharId` for stand-ins, the pick for DIY slots).
 Outfits following that body and live refresh timing are cosmetic UI assumptions; gameplay and golden results stay unchanged.
 
+倒地持续可见：若本套模型的 `Die` 末帧隐藏全部附件，冻结本套可见的 `Stun`（再回退 `Idle`）姿势；正常死亡末帧与
+永久离场保持原样，迟到加载及复活均遵循相同处理。[ASSUMED] 此受控姿势替代只用于等待再部署。水遁忍者的旋转开始、
+循环和收招通过现有 `UnitInfo.form` / 状态 fx 同步，旋转伤害和时限不变。实现与来源见 [皮肤说明](../SKINS.md)。
+
 本 fork 的 [D045](../development/DECISIONS.md#d045) 增加调配页「皮肤随机」：固定当前组合或从下一局起每局重抽；
 手动选择切回固定。服务端开局为所有 AI 共用一张随机皮肤表，为开启每局随机的真人独立抽取；阶段切换、重刷及重连
 不改变本局结果。独立外观 RNG、候选上限与既有图片 / 模型回退见 [随机皮肤](../SKINS.md#随机皮肤本-forkd045)。
