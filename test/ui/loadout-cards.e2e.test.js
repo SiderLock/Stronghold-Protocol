@@ -66,6 +66,101 @@ describe('干员调配 卡片视图 (real server, headless Chrome)', { skip: !EN
   };
   const escape = async (page) => { await page.keyboard.press('Escape'); await new Promise((r) => setTimeout(r, 120)); };
 
+  test('cards keep balanced proportions and usable controls on phones, tablets and desktop', { timeout: 120000 }, async () => {
+    for (const [w, h, touch, lang] of [[640, 360, true, 'zh'], [844, 390, true, 'en'], [1024, 768, true, 'ja'],
+      [1366, 768, false, 'ko'], [1920, 1080, false, 'zh-TW']]) {
+      const { ctx, page, problems } = await open({ w, h, touch });
+      try {
+        await openOverlay(page);
+        assert.equal(await page.evaluate(async (l) => (await import('/js/ui/lang.js')).switchLang(l), lang), lang);
+        await clickSel(page, '[data-testid="loadout-view-deck"]');
+        await page.waitForSelector('.lo-op[data-chess] .lo-op__art', { visible: true });
+        await page.evaluate(() => document.querySelector('.lo')?.getAnimations({ subtree: true }).forEach((a) => a.finish()));
+        for (const [textSize, ui] of [['sm', 100], ['sm', 75], ['xl', 100]]) {
+          await page.evaluate(async ({ size, scale }) => {
+            (await import('/js/ui/settings.js')).updateSettings({ textSize: size });
+            (await import('/js/ui/screenFit.js')).updateFit({ ui: scale });
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          }, { size: textSize, scale: ui });
+          const metrics = await page.evaluate(() => {
+            const deck = document.querySelector('.lo-deck'), card = document.querySelector('.lo-op[data-chess]');
+            const bounds = card.querySelector('.lo-op__card').getBoundingClientRect(), art = card.querySelector('.lo-op__art').getBoundingClientRect();
+            const meta = card.querySelector('.lo-op__meta').getBoundingClientRect(), bonds = card.querySelector('.lo-op__bonds').getBoundingClientRect();
+            const rows = [...document.querySelectorAll('.lo-tgroup[data-tier="1"] .lo-op[data-chess]')].slice(0, 4).map((el) => Math.round(el.getBoundingClientRect().top));
+            const bad = [];
+            for (const item of document.querySelectorAll('.lo-op[data-chess]')) {
+              const box = item.querySelector('.lo-op__card').getBoundingClientRect(), name = item.querySelector('.lo-op__meta').getBoundingClientRect();
+              const icons = item.querySelector('.lo-op__bonds').getBoundingClientRect(), portrait = item.querySelector('.lo-op__pick').getBoundingClientRect();
+              const rank = item.querySelector('.lo-op__tier').getBoundingClientRect(), level = item.querySelector('.lo-op__lv').getBoundingClientRect();
+              if (portrait.bottom > name.top + 1 || name.bottom > icons.top + 1 || icons.bottom > box.bottom + 1 || rank.bottom > level.top + 1 || level.bottom > box.bottom + 1) bad.push(item.dataset.chess);
+            }
+            return { width: bounds.width, height: bounds.height, artWidth: art.width, artHeight: art.height,
+              fits: meta.bottom <= bonds.top + 1 && bonds.bottom <= bounds.bottom + 1,
+              rows: new Set(rows).size, scrollable: deck.scrollWidth > deck.clientWidth, bad };
+          });
+          const label = `${w}×${h} ${textSize} ${ui}%: ${JSON.stringify(metrics)}`;
+          assert.ok(metrics.width / metrics.height >= 0.64 && metrics.width / metrics.height <= 1.25, `card proportions: ${label}`);
+          assert.ok(metrics.artWidth / metrics.artHeight >= 0.55, `portrait is cropped too narrowly: ${label}`);
+          assert.ok(metrics.fits && metrics.rows === 2 && metrics.scrollable && metrics.bad.length === 0, `card layout and scrolling: ${label}`);
+        }
+        assert.deepEqual(problems, [], `${w}×${h}: browser errors`);
+      } finally { await ctx.close(); }
+    }
+  });
+
+  test('short landscape details keep appearance tiles compact and selectable', { timeout: 60000 }, async (t) => {
+    for (const [w, h] of [[640, 360], [844, 390], [932, 430]]) {
+      const { ctx, page, problems } = await open({ w, h, touch: true });
+      try {
+        await openOverlay(page);
+        await page.evaluate(async () => (await import('/js/ui/settings.js')).updateSettings({ textSize: 'xl' }));
+        const listFont = await page.$eval('.lo-card__name', (el) => parseFloat(getComputedStyle(el).fontSize));
+        assert.ok(listFont > 12, `${w}×${h}: operator name follows the larger text setting (${listFont}px)`);
+        await page.evaluate(async () => (await import('/js/ui/settings.js')).updateSettings({ textSize: 'sm' }));
+        await page.tap('.lo-card__pick');
+        await page.waitForSelector('.lo-body.is-detail .lo-detail__body', { visible: true });
+        if (!await page.$('.lo-detail__body .lo-skin')) { t.skip('no appearance catalogue is installed'); return; }
+        for (const [textSize, ui] of [['sm', 100], ['sm', 75], ['xl', 100]]) {
+          await page.evaluate(async ({ size, scale }) => {
+            (await import('/js/ui/settings.js')).updateSettings({ textSize: size });
+            (await import('/js/ui/screenFit.js')).updateFit({ ui: scale });
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          }, { size: textSize, scale: ui });
+          const sizes = await page.evaluate(() => {
+            const grid = document.querySelector('.lo-skins'), tile = grid.querySelector('.lo-skin'), art = tile.querySelector('.lo-skin__art');
+            const body = document.querySelector('.lo-detail__body').getBoundingClientRect(), rect = tile.getBoundingClientRect(), image = art.getBoundingClientRect();
+            return { width: rect.width, height: rect.height, artWidth: image.width, artHeight: image.height,
+              nameFont: parseFloat(getComputedStyle(tile.querySelector('.lo-skin__name')).fontSize),
+              bodyHeight: body.height, gridWidth: grid.clientWidth, gridScrollWidth: grid.scrollWidth };
+          });
+          const label = `${w}×${h} ${textSize} ${ui}%: ${JSON.stringify(sizes)}`;
+          assert.ok(sizes.width <= Math.max(32, 104 * ui / 100) + 2, `appearance tile takes too much space: ${label}`);
+          assert.ok(Math.abs(sizes.artWidth - sizes.artHeight) < 1 && sizes.height <= sizes.bodyHeight, `tile fits the detail panel: ${label}`);
+          assert.ok(sizes.gridScrollWidth <= sizes.gridWidth + 1, `appearance grid overflows horizontally: ${label}`);
+          if (textSize === 'xl') assert.ok(sizes.nameFont > 11, `appearance name follows the larger text setting: ${label}`);
+        }
+        await page.evaluate(async () => {
+          (await import('/js/ui/settings.js')).updateSettings({ textSize: 'sm' });
+          (await import('/js/ui/screenFit.js')).updateFit({ ui: 100 });
+        });
+        const choices = await page.$$('.lo-detail__body .lo-skin');
+        if (choices.length > 1) {
+          await choices[1].evaluate((el) => el.scrollIntoView({ block: 'center' }));
+          await choices[1].tap();
+          await page.waitForFunction(() => document.querySelectorAll('.lo-detail__body .lo-skin')[1]?.getAttribute('aria-checked') === 'true');
+        }
+        const skill = await page.$('.lo-detail__body .lo-skill');
+        assert.ok(skill, 'the skill choices remain available below the appearance section');
+        await skill.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+        assert.equal(await skill.evaluate((el) => {
+          const r = el.getBoundingClientRect(), hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+          return !!hit && el.contains(hit);
+        }), true, 'the skill option is reachable by scrolling');
+        assert.deepEqual(problems, [], `${w}×${h}: browser errors`);
+      } finally { await ctx.close(); }
+    }
+  });
+
   for (const touch of [false, true]) for (const version of VERSIONS) {
     test(`#811: ${version.label} ${touch ? 'phones' : 'desktop'} — promotion icons, five languages, text sizes and UI scales`, { timeout: 180000 }, async () => {
       let checked = 0;

@@ -53,11 +53,22 @@ test('picture-only picker updates a card and avatar live, preserves other seats 
       await page.waitForSelector('[data-skin="picture"]');
       for (const [width, height] of [[1280, 720], [844, 390]]) {
         await page.setViewport({ width, height });
-        assert.ok(await page.$eval('[data-skin="picture"]', (e) => {
-          const tile = e.getBoundingClientRect(), note = e.querySelector('.lo-skin__note').getBoundingClientRect();
-          return note.width > 0 && note.left >= tile.left && note.right <= tile.right && note.bottom <= tile.bottom;
-        }), 'picture-only note fits its tile');
+        for (const [text, scale] of [['sm', 1], ['sm', 0.75], ['xl', 1]]) {
+          await page.evaluate(({ text, scale }) => {
+            document.documentElement.dataset.text = text;
+            document.documentElement.style.setProperty('--sp-ui', String(scale));
+          }, { text, scale });
+          const tile = await page.$eval('[data-skin="picture"]', (e) => {
+            const box = e.getBoundingClientRect(), note = e.querySelector('.lo-skin__note').getBoundingClientRect();
+            return { width: box.width, noteFits: note.width > 0 && note.left >= box.left && note.right <= box.right && note.bottom <= box.bottom,
+              nameFont: parseFloat(getComputedStyle(e.querySelector('.lo-skin__name')).fontSize) };
+          });
+          assert.ok(tile.noteFits, 'picture-only note fits its tile');
+          if (height <= 520) assert.ok(tile.width <= 104 * scale + 2, `landscape tile is compact: ${width}×${height} ${text} ${scale}`);
+          if (text === 'xl') assert.ok(tile.nameFont > 11, 'appearance name follows larger text');
+        }
       }
+      await page.evaluate(() => { delete document.documentElement.dataset.text; document.documentElement.style.removeProperty('--sp-ui'); });
       assert.match(await page.$eval('[data-skin="picture"]', (e) => e.textContent), /仅更换头像与立绘/);
       assert.equal(await page.$('[data-skin="empty"]'), null);
       assert.doesNotMatch(await page.$eval('[data-skin="model"]', (e) => e.textContent), /仅更换头像与立绘/);
