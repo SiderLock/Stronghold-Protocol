@@ -110,8 +110,9 @@ describe('the stylesheet side', () => {
   const EXEMPT = new Set(['font-size', 'line-height', 'letter-spacing', '--t']);
   const SIZE = new Set(['width', 'height', 'min-width', 'min-height', 'flex', 'flex-basis', 'grid-template-columns', 'grid-template-rows',
     'grid-auto-rows', 'grid-auto-columns', 'inline-size', 'block-size', 'min-inline-size', 'min-block-size']);
-  // Listed exemptions beyond the readability properties: none today. Add `file:property:argument` with a reason.
-  const LISTED = new Set([]);
+  // A 32 px avatar's 44 px hit area extends 6 px on each side, even when the visual UI is scaled down.
+  const teamCss = path.normalize('public/css/screens/game.css');
+  const LISTED = new Set([`${teamCss}:gap:6px`, `${teamCss}:padding:6px`]);
   function* cssFiles(dir) {
     for (const f of readdirSync(dir)) {
       const p = path.join(dir, f);

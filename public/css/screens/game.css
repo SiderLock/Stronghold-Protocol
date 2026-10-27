@@ -548,14 +548,14 @@
   border: 1px solid var(--pool-group-color); border: 1px solid color-mix(in srgb, var(--pool-group-color) 38%, transparent);
   background: transparent; background: color-mix(in srgb, var(--pool-group-color) 7%, transparent);
 }
-.team--many { bottom: 1.12rem; width: max-content; max-width: 3.1rem; }
+.team--many { bottom: 1.12rem; width: max-content; max-width: max(3.1rem, calc(130px * var(--sp-ui, 1))); }
 /* Leave the boss pair frame's .07rem outset inside the scroll viewport. */
 .team--many .team__list { min-height: 0; gap: .05rem; overflow-y: auto; overflow-x: hidden; padding: .08rem; pointer-events: auto; scrollbar-width: thin; }
 .team--many.team--grouped .team__list { gap: .16rem; }
 .team--many .team__section { gap: .05rem; }
 .team--many .team__row { flex: none; min-height: .56rem; }
-.team--many .team__btn .pavatar { --pa: .53rem; }
-.team--many .team__name { max-width: 1.25rem; font-size: .13rem; }
+.team--many .team__btn .pavatar { --pa: max(.53rem, 32px); }
+.team--many .team__name { max-width: max(1.25rem, calc(64px * var(--sp-ui, 1))); font-size: max(calc(.13 * var(--t)), 10px); }
 .team--many .team__info { padding: .01rem .06rem; }
 .team--many .team__line { gap: .04rem; }
 .team--many .team__bubble { display: none; }
@@ -563,7 +563,7 @@
 .team:not(.team--many) .team__emote-feed { display: none; }
 .team__feed-row { display: flex; align-items: center; gap: .04rem; flex: none; height: .57rem; padding: .02rem .05rem; border-bottom: 1px solid var(--line); }
 .team__feed-row .pavatar { --pa: .35rem; }
-.team__feed-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-md); font-size: .12rem; }
+.team__feed-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-md); font-size: max(calc(.12 * var(--t)), 10px); }
 .team__feed-bubble { position: relative; display: block; flex: none; width: .68rem; height: .55rem; }
 .team__feed-bubble .ebubble { position: absolute; left: 0; top: -.04rem; transform: scale(.58); transform-origin: top left; }
 .team__row { position: relative; display: flex; align-items: center; gap: .1rem; pointer-events: auto; }
@@ -572,8 +572,9 @@
   transition: transform var(--t-fast);
 }
 .team__btn:hover { transform: translateX(.03rem); }
+.team__btn .pavatar { --pa: max(.8rem, 32px); }
 .team__seat {
-  position: absolute; left: -.02rem; top: -.04rem; font-size: .11rem; padding: 0 .04rem; line-height: 1.3;
+  position: absolute; left: -.02rem; top: -.04rem; font-size: max(.11rem, 8px); padding: 0 .04rem; line-height: 1.3;
   background: rgba(8, 11, 10, .9); color: var(--text-lo); border: 1px solid var(--line-2);
 }
 .team__group-badge {
@@ -582,13 +583,14 @@
   font-family: var(--font-num); font-size: max(.12rem, 10px); font-weight: 700; line-height: 1;
   color: #0b1520; background: var(--pool-group-color); border: 1px solid rgba(8, 11, 10, .65);
 }
-.team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: .11rem; font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
+.team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: max(.11rem, 8px); font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
 .team__you { position: absolute; right: -.08rem; top: -.08rem; width: .22rem; height: .22rem; display: grid; place-items: center; background: var(--mint-500); color: var(--text-on-mint); clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
 .team__you .icon { width: .14rem; height: .14rem; }
 .team__info { display: flex; flex-direction: column; gap: .02rem; min-width: 0; padding: .04rem .12rem .04rem .06rem; background: linear-gradient(90deg, rgba(8, 11, 10, .82), rgba(8, 11, 10, 0)); }
-.team__name { font-size: .15rem; font-weight: 500; color: var(--text-md); max-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+.team__name { font-size: max(calc(.15 * var(--t)), 10px); font-weight: 500; color: var(--text-md); max-width: max(1.5rem, calc(64px * var(--sp-ui, 1))); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
 .team__line { display: flex; align-items: center; gap: .1rem; }
-.team__status { width: .26rem; height: .26rem; display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
+.team__line .lp--sm { font-size: max(.19rem, 10px); }
+.team__status { width: max(.26rem, 14px); height: max(.26rem, 14px); display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
 /* the shared 机变 draft's pick order on the portrait (ui/choiceOverlay.js spMarks): ✓ picked, ••• deciding */
 .team__spmark { position: absolute; right: -.07rem; bottom: -.05rem; z-index: 2; display: grid; place-items: center; width: .24rem; height: .24rem; border-radius: 50%;
   background: var(--mint-500); color: #05261e; box-shadow: 0 0 0 2px rgba(6, 9, 8, .9), 0 0 .08rem rgba(23, 249, 183, .5); }
@@ -599,10 +601,10 @@
 .team__spmark.is-turn i:nth-child(3) { animation-delay: .32s; }
 @keyframes spmark-dot { 0%, 100% { opacity: .35; } 40% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .team__spmark.is-turn i { animation: none; } }
-.team__status .icon { width: .18rem; height: .18rem; }
+.team__status .icon { width: max(.18rem, 12px); height: max(.18rem, 12px); }
 .team__status .lsprite { width: .2rem; height: .2rem; object-fit: contain; }
 .team__status.has-sprite { border-color: transparent; background: none; animation: none; }
-.team__status.has-sprite .lsprite { width: .26rem; height: .26rem; }
+.team__status.has-sprite .lsprite { width: max(.26rem, 12px); height: max(.26rem, 12px); }
 .team__status.is-lo { color: var(--text-lo); }
 .team__status.is-mint { color: var(--mint-400); }
 .team__status.is-gold { color: var(--gold); animation: blink 1.2s steps(2) infinite; }
@@ -630,25 +632,34 @@
 .team__ob .btn__label, .team__back .btn__label { letter-spacing: .12em; }
 .team__back { border-color: rgba(255, 255, 255, .7); color: #fff; }
 
+/* [ASSUMED] Keep adjacent 44 px avatar hit areas separate on any touch device, including tablets. */
+.sp-coarse .team__row { min-height: 40px; gap: max(.1rem, 6px); }
+.sp-coarse .team--many .team__row { min-height: 44px; }
+.sp-coarse .team--many .team__list { padding: max(.08rem, 6px); }
+
 /* [ASSUMED] Short landscape screens need readable identities and separate touch targets; long lists still scroll. */
 @media (max-height: 520px) and (orientation: landscape) {
-  .team--scrollable:not(.team--many) { bottom: 1.12rem; width: max-content; max-width: 3.1rem; }
+  .team--scrollable:not(.team--many) { bottom: 1.12rem; width: max-content; max-width: max(3.1rem, calc(130px * var(--sp-ui, 1))); }
   .team--scrollable:not(.team--many) .team__list { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: .08rem; pointer-events: auto; scrollbar-width: thin; }
+  .sp-coarse .team--scrollable:not(.team--many) .team__list { padding: max(.08rem, 6px); }
   .team--scrollable:not(.team--many) .team__bubble { display: none; }
   .team--scrollable:not(.team--many) .team__emote-feed { display: flex; }
   .team__row { min-height: 40px; }
   .team--many .team__row { min-height: 44px; }
   .team__btn .pavatar, .team--many .team__btn .pavatar { --pa: max(.8rem, 32px); }
   .team__name, .team--many .team__name { max-width: 88px; font-size: max(10px, min(calc(.16 * var(--t)), 14px)); }
-  .team__line .lp--sm { font-size: max(.19rem, 10px); }
-  .team__status { width: max(.26rem, 14px); height: max(.26rem, 14px); }
   .team__status .icon, .team__status.has-sprite .lsprite { width: max(.26rem, 12px); height: max(.26rem, 12px); }
-  .team__seat { font-size: max(.11rem, 8px); }
-  .team__ai { font-size: max(.11rem, 8px); }
   .team__emote-feed { width: max(2.55rem, 32px, calc(130px * var(--sp-ui, 1))); }
   .team__feed-row { height: max(.57rem, 32px); }
   .team__feed-row .pavatar { --pa: max(.35rem, 24px); }
   .team__feed-name { font-size: max(.12rem, 10px); }
+}
+/* At reduced UI size the touch-sized corner can be taller than 1.12rem. */
+@media (max-height: 600px) and (pointer: coarse), (max-height: 600px) and (any-pointer: coarse) {
+  .sp-coarse .team--many { bottom: max(1.12rem, calc(.34rem + max(.56rem, 32px, calc(34px * var(--sp-ui, 1)))), calc(.34rem + max(1.51rem, 32px, calc(96px * var(--sp-ui, 1))) * 55 / 151)); }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .sp-coarse .team--scrollable:not(.team--many) { bottom: max(1.12rem, calc(.34rem + max(.56rem, 32px, calc(34px * var(--sp-ui, 1)))), calc(.34rem + max(1.51rem, 32px, calc(96px * var(--sp-ui, 1))) * 55 / 151)); }
 }
 @media (max-width: 767px) and (max-height: 520px) and (orientation: landscape) {
   .gm:not(.is-collapsed) .team--scrollable { bottom: calc(.34rem + 2 * max(.56rem, 32px, calc(34px * var(--sp-ui, 1))) + 6px); }

@@ -174,6 +174,19 @@ describe('9: the prep camera keeps the bench clear of the shop bar on phones in 
     withDom(40, 12, () => assert.equal(hudBands('prep', size).top, 124), 124, vars);
   });
 
+  test('tall landscape screens reserve the team panel width, including safe area and UI scale', () => {
+    const g = globalThis, saved = { document: g.document, getComputedStyle: g.getComputedStyle };
+    const root = {}, field = { getBoundingClientRect: () => ({ left: 20, top: 0 }) };
+    const hud = { getBoundingClientRect: () => ({ left: 67, top: 0, width: 700, bottom: 600 }) };
+    g.document = { documentElement: root, querySelector: (s) => s === '.gm__field' ? field : s === '.gm__hud' ? hud : null };
+    g.getComputedStyle = () => ({ fontSize: '31.25px', getPropertyValue: (name) => name === '--sp-ui' ? '0.75' : '' });
+    try {
+      const narrow = hudBands('prep', { width: 800, height: 600 });
+      assert.ok(Math.abs(narrow.left - (47 + 31.25 * 0.22 + 130 * 0.75)) < 1e-9);
+      assert.equal(hudBands('prep', { width: 1200, height: 600 }).left, undefined, 'wide landscape keeps its existing framing');
+    } finally { g.document = saved.document; g.getComputedStyle = saved.getComputedStyle; }
+  });
+
   test('wiring: the game hands hudBands to the view, the view to the prep cameras', () => {
     assert.match(read('public/js/ui/fieldHost.js'), /padding: hudPadding, hud: hudBands \}/);
     const app = read('public/js/render/app.js');

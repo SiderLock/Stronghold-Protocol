@@ -89,7 +89,9 @@ export const HUD_REM = Object.freeze({
  * @param {string} kind
  * @param {{ width: number, height: number }} size
  * @param {{ shop?: boolean }} [opts] `shop: false` = the folded shop's band
- * @returns {{ top: number, bottom: number }|null}
+ * On 4:3 and similarly tall landscape screens the long team panel can also cover the first bench tile. Reserve its
+ * maximum width for every match, so the camera does not jump when player names or the number of visible rows change.
+ * @returns {{ top: number, bottom: number, left?: number }|null}
  */
 export function hudBands(kind, size, opts) {
   if (kind !== 'prep' && kind !== 'bossPrep') return null;
@@ -100,6 +102,7 @@ export function hudBands(kind, size, opts) {
   let safeBottom = 0;
   let corner = 0;
   let bondsBottom = 0;
+  let teamLeft = 0;
   let bondTop = HUD_REM.bondStripTop;
   let shopCardHeight = HUD_REM.shopCardHeight;
   try {
@@ -113,10 +116,17 @@ export function hudBands(kind, size, opts) {
     bondTop = readSize('--prep-bond-top', bondTop);
     shopCardHeight = readSize('--prep-shop-card-height', shopCardHeight);
     // 异形屏适配 (ui/screenFit.js): the board's host may not start at the viewport's top — the HUD rects are measured from it
-    const oy = document.querySelector('.gm__field')?.getBoundingClientRect()?.top || 0;
+    const field = document.querySelector('.gm__field')?.getBoundingClientRect();
+    const oy = field?.top || 0;
     // the HUD layer starts below the top safe-area inset and ends above the bottom one (css/devices.css .gm__hud)
     const hud = document.querySelector('.gm__hud')?.getBoundingClientRect();
     safeTop = Math.max(0, (hud?.top || 0) - oy);
+    const aspect = size?.width / h;
+    if (hud?.width > 0 && aspect >= 4 / 3 - 1e-6 && aspect <= 1.5) {
+      const ui = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sp-ui')) || 1;
+      // css/screens/game.css: team left .22rem, maximum width max(3.1rem, 130px × UI scale).
+      teamLeft = Math.max(0, hud.left - (field?.left || 0)) + rem * 0.22 + Math.max(rem * 3.1, 130 * ui);
+    }
     // #678 adds 44 px arrows; a native scrollbar can make the strip taller still.
     // Keep the same minimum band before mount and while collapsed, so toggling cannot shrink it.
     const bonds = document.querySelector('.gm__bonds')?.getBoundingClientRect();
@@ -135,6 +145,7 @@ export function hudBands(kind, size, opts) {
     top: Math.min(h * 0.4, Math.max(bondsBottom, safeTop + Math.max(rem * (bondTop + HUD_REM.bondStripBottom - HUD_REM.bondStripTop),
       rem * bondTop + HUD_REM.bondArrowPx))),
     bottom: Math.min(h * 0.4, bottom),
+    ...(teamLeft ? { left: teamLeft } : {}),
   };
 }
 

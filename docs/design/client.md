@@ -336,6 +336,14 @@ In narrow desktop windows (width ≤ 900 px, height > 520 px), the hub's simulat
 reserve at least two lines to keep the cards aligned ([ASSUMED] layout, §35.60). Phones keep the short descriptions
 specified above.
 
+Across screen sizes the in-match team identities keep readable avatar, name and LP minima, and touch layouts separate
+the avatar hit areas even at reduced interface scale. On landscape viewports from 4:3 to 3:2, the preparation camera reserves
+the team column's maximum width and pans only when needed, with the opposite board edge kept in view; its scale is not
+reduced by this adjustment. The same rule applies to both Final Assault sides. [ASSUMED: remake layout adaptation.]
+The simplified prep board uses the measured HUD bands and available side space, reserving the temporary row when it is
+occupied and keeping the refresh/freeze controls clear. Briefing descriptions, faction/bond names and the legend keep
+readable text floors; longer content remains in the scrolling body. [ASSUMED: remake layout adaptation.]
+
 **Data readiness.** `data.js useData` subscribes and starts its loads, then schedules a render to re-read their
 statuses: a warm-up that settles between the initial render and the subscription must not leave a resumed match on
 正在载入模拟数据… (§35.59). Later settlements notify the same subscription.

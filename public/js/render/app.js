@@ -6,7 +6,7 @@
 //   view.setStage(stage)                        procedural tiles + devices (data/stages.json entry)
 //   view.setCamera(kind, { rect, side, padding, instant, shop })   'prep'|'normal'|'unite'|'boss'('hidden'); animated
 //                                               — the prep cameras (own board / Final Assault half) keep the bench
-//                                               and the field clear of `hud(kind, size, { shop })` = { top, bottom } px
+//                                               and the field clear of `hud(kind, size, { shop })` = { top, bottom, left? } px
 //                                               of DOM HUD along the top / bottom edge (projection.js clearHud; user
 //                                               playtest #5 item 9: the shop bar covered the bench on phones); `shop:
 //                                               false` = the folded shop: the official shop-collapsed prep camera
@@ -186,7 +186,7 @@ export { releaseGl } from './app/host.js';
  * @param {HTMLElement} host
  * @param {{ data?: any, assets?: any, audio?: any, settings?: { damageNumbers?: boolean, officialDamageNumbers?: boolean, ammoEnergyCount?: boolean, otherSkins?: boolean, quality?: string }, signal?: AbortSignal,
  *           padding?: object|((kind:string, size:{width:number,height:number}) => object),
- *           hud?: {top:number,bottom:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}, o:{shop:boolean}) => {top:number,bottom:number}|null) }} [opts]
+ *           hud?: {top:number,bottom:number,left?:number}|((kind:'prep'|'bossPrep', size:{width:number,height:number}, o:{shop:boolean}) => {top:number,bottom:number,left?:number}|null) }} [opts]
  *   settings.otherSkins (docs/SKINS.md, default on): draw the appearance another player chose. The player the view
  *   belongs to says who is "other" — `view.setMe(store.get().me.playerId)`, ui/fieldHost.js mounts it before the first
  *   board arrives.
@@ -598,7 +598,7 @@ export async function createFieldView(host, options = {}) {
   }
 
   // the HUD bands the prep cameras keep the bench / field clear of (projection.js clearHud; user playtest #5 item 9):
-  // `opts.hud` = (kind, size, { shop }) => { top, bottom } | null, or a fixed object; none → the plain official framing.
+  // `opts.hud` = (kind, size, { shop }) => { top, bottom, left? } | null, or a fixed object; none → the plain official framing.
   // `shop: false` asks for the folded shop's band (the camera request's `shop: false`, public issue #5)
   function hudBands(kind, sz, o) {
     if (kind !== 'prep' && kind !== 'bossPrep') return null;

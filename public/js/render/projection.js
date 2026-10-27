@@ -425,6 +425,28 @@ export function clearHud(cam, hud, keep, viewport) {
   return out.update();
 }
 
+/**
+ * Pan a prep view away from a left-side team panel without changing its scale. Both depth edges are checked because
+ * perspective makes the nearer bench wider than the back row. Limit the pan to keep the opposite edge visible.
+ * @param {Camera} cam
+ * @param {{ left?: number }|null} hud
+ * @param {{ near: number, zNear?: number, far: number, zFar?: number }} keep
+ * @param {{ width: number, height: number }} viewport
+ * @param {'L'|'R'} side
+ * @returns {Camera}
+ */
+export function clearTeamHud(cam, hud, keep, viewport, side) {
+  const left = Math.max(0, finite(hud?.left, 0));
+  if (!cam || !left || !keep) return cam;
+  const width = Math.max(1, finite(viewport?.width, 1));
+  const c0 = side === 'R' ? 9.5 : -0.5, c1 = side === 'R' ? 20.5 : 10.5;
+  const edge = (c) => [cam.project(c, keep.near, finite(keep.zNear, 0)).x, cam.project(c, keep.far, finite(keep.zFar, 0)).x];
+  const minX = Math.min(...edge(c0)), maxX = Math.max(...edge(c1));
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return cam;
+  const shift = Math.max(0, Math.min(left + HUD_GAP - minX, width - HUD_GAP - maxX));
+  return shift > 0 ? new Camera({ ...cam.params(), cx: cam.cx + shift }) : cam;
+}
+
 const sameRect = (a, b) => !!a && !!b && a.r0 === b.r0 && a.r1 === b.r1 && a.c0 === b.c0 && a.c1 === b.c1;
 
 /**
@@ -433,8 +455,8 @@ const sameRect = (a, b) => !!a && !!b && a.r0 === b.r0 && a.r1 === b.r1 && a.c0 
  * viewport is narrower than 4:3 (portrait), `opts.fit` is set, or `opts.rect` is a custom rect — then the rect is
  * fitted into the padded viewport (`fitCamera`). `opts.side` 'L'|'R' picks the side's param (right boss half);
  * `opts.half` frames only that half of a unite/boss field; `opts.shop === false` uses the shop-collapsed prep camera.
- * `opts.hud` = { top, bottom } (CSS px of HUD along the top / bottom edge): the official prep / Final Assault prep
- * camera keeps the bench and the field clear of it (`clearHud`, the preset's `keep` band).
+ * `opts.hud` = { top, bottom, left? } (CSS px of HUD along the viewport edges): the prep camera clears the top and
+ * bottom bands and, when supplied, pans away from the team panel on the left.
  */
 export function presetCamera(kind, viewport, options) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -456,7 +478,9 @@ export function presetCamera(kind, viewport, options) {
     const cfg = opts.config && typeof opts.config === 'object' ? opts.config : null;
     const param = (cfg && parseCameraParam(cfg[key])) || parseCameraParam(OFFICIAL_PARAMS[key]);
     const cam = officialCamera(param, { width: W, height: H }, opts);
-    return preset.keep && opts.hud ? clearHud(cam, opts.hud, preset.keep, { width: W, height: H }) : cam;
+    if (!preset.keep || !opts.hud) return cam;
+    const cleared = clearHud(cam, opts.hud, preset.keep, { width: W, height: H });
+    return clearTeamHud(cleared, opts.hud, preset.keep, { width: W, height: H }, k === 'bossPrep' ? side : 'L');
   }
   if (!rect) {
     rect = { ...preset.rect };

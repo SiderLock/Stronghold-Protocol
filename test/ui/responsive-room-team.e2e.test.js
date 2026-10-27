@@ -194,4 +194,90 @@ describe('responsive room and team layout', { skip: !ENABLED && 'set SP_E2E=1 an
       }
     } finally { await ctx.close(); }
   });
+
+  test('team identities and touch targets remain usable across tablet, desktop and ultrawide views', { timeout: 150000 }, async () => {
+    const cases = [
+      [800, 600, false], [800, 600, true], [1024, 600, true], [1024, 768, true],
+      [1180, 820, true], [1366, 1024, true], [1366, 768, false], [1920, 1080, false], [3440, 1440, false],
+    ];
+    for (const [w, h, touch] of cases) {
+      const ctx = await browser.createBrowserContext();
+      try {
+        const page = await ctx.newPage();
+        const errors = [];
+        page.on('pageerror', (error) => errors.push(error.message));
+        await page.setViewport(viewport(w, h, touch));
+        await page.goto(`${base}/dev/game-mock.html?shot=1&phase=PREP`, { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => !!globalThis.__MOCK__ && !!globalThis.__SP_VIEW__, { timeout: 30000 });
+        await page.evaluate(() => {
+          const players = globalThis.__MOCK__.S().pub.players;
+          for (let i = players.length; i < 20; i++) players.push({ ...players[1], playerId: `matrix_${i}`, seat: i, name: `画面测试成员${i + 1}`, isBot: true, connected: true });
+          globalThis.__matrixPlayers = players.slice();
+        });
+        for (const count of [4, 6, 20]) {
+          await page.evaluate((n) => {
+            const mock = globalThis.__MOCK__, pub = mock.S().pub;
+            pub.players = globalThis.__matrixPlayers.slice(0, n);
+            pub.poolGroups = Array.from({ length: Math.ceil(n / 4) }, (_, i) => ({ id: i + 1, playerIds: pub.players.slice(i * 4, i * 4 + 4).map((p) => p.playerId) }));
+            mock.pushPublic();
+          }, count);
+          await page.waitForFunction((n) => document.querySelectorAll('.team__row').length === n, {}, count);
+          const metrics = await page.evaluate(() => {
+            const list = document.querySelector('.team__list'), rows = [...list.querySelectorAll('.team__row')];
+            const buttons = rows.map((row) => row.querySelector('.team__btn').getBoundingClientRect());
+            return { font: parseFloat(getComputedStyle(rows[0].querySelector('.team__name')).fontSize),
+              avatar: rows[0].querySelector('.pavatar').getBoundingClientRect().width,
+              lpFont: parseFloat(getComputedStyle(rows[0].querySelector('.lp--sm')).fontSize),
+              pitch: buttons[1].top + buttons[1].height / 2 - buttons[0].top - buttons[0].height / 2,
+              listBottom: list.getBoundingClientRect().bottom, cornerTop: document.querySelector('.gm__corner').getBoundingClientRect().top,
+              scrollable: list.scrollHeight > list.clientHeight };
+          });
+          const label = `${w}×${h} ${touch ? 'touch' : 'mouse'}, ${count}: ${JSON.stringify(metrics)}`;
+          assert.ok(metrics.font >= 10 && metrics.lpFont >= 10 && metrics.avatar >= 32, `identities are too small: ${label}`);
+          assert.ok(metrics.listBottom <= metrics.cornerTop + 1, `team obscures the corner controls: ${label}`);
+          if (count === 20) assert.ok(metrics.scrollable, `the full team must remain scrollable: ${label}`);
+          if (touch) {
+            assert.ok(metrics.pitch >= 44, `adjacent touch targets overlap: ${label}`);
+            const last = (await page.$$('.team__row .team__btn')).at(-1);
+            await last.evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
+            const hit = await last.evaluate((el) => {
+              const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+              return [[0, 0], [0, -20], [0, 20], [-20, 0], [20, 0]].every(([dx, dy]) => el.contains(document.elementFromPoint(x + dx, y + dy)));
+            });
+            assert.equal(hit, true, `last avatar has a reachable touch area: ${label}`);
+            await last.evaluate((el) => { globalThis.__matrixTapped = false; el.addEventListener('click', () => { globalThis.__matrixTapped = true; }, { once: true }); });
+            await last.tap();
+            assert.equal(await page.evaluate(() => globalThis.__matrixTapped), true, `last avatar receives a tap: ${label}`);
+          }
+          if (touch && count === 20 && (w === 800 || w === 1024)) {
+            for (const [textSize, ui] of [['sm', 75], ['xl', 100]]) {
+              await page.evaluate(async ({ textSize: size, ui: scale }) => {
+                (await import('/js/ui/settings.js')).updateSettings({ textSize: size });
+                (await import('/js/ui/screenFit.js')).updateFit({ ui: scale });
+              }, { textSize, ui });
+              const adjusted = await page.evaluate(() => {
+                const rows = [...document.querySelectorAll('.team__row')], list = document.querySelector('.team__list');
+                const a = rows[0].querySelector('.team__btn').getBoundingClientRect(), b = rows[1].querySelector('.team__btn').getBoundingClientRect();
+                return { font: parseFloat(getComputedStyle(rows[0].querySelector('.team__name')).fontSize),
+                  avatar: rows[0].querySelector('.pavatar').getBoundingClientRect().width,
+                  pitch: b.top + b.height / 2 - a.top - a.height / 2,
+                  listBottom: list.getBoundingClientRect().bottom, cornerTop: document.querySelector('.gm__corner').getBoundingClientRect().top };
+              });
+              assert.ok(adjusted.font >= 10 && adjusted.avatar >= 32 && adjusted.pitch >= 44 && adjusted.listBottom <= adjusted.cornerTop + 1,
+                `${label}, text ${textSize}, UI ${ui}%: ${JSON.stringify(adjusted)}`);
+              if (textSize === 'xl') assert.ok(adjusted.font > 10, `large text applies to identities: ${JSON.stringify(adjusted)}`);
+              const last = (await page.$$('.team__row .team__btn')).at(-1);
+              await last.evaluate((el) => el.scrollIntoView({ block: 'center', inline: 'nearest' }));
+              assert.equal(await last.evaluate((el) => {
+                const r = el.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+                return [[0, -20], [0, 20], [-20, 0], [20, 0]].every(([dx, dy]) => el.contains(document.elementFromPoint(x + dx, y + dy)));
+              }), true, `${label}: touch area at text ${textSize}, UI ${ui}%`);
+            }
+            await page.evaluate(async () => (await import('/js/ui/settings.js')).updateSettings({ textSize: 'sm' }));
+          }
+        }
+        assert.deepEqual(errors, [], `${w}×${h}: browser errors`);
+      } finally { await ctx.close(); }
+    }
+  });
 });

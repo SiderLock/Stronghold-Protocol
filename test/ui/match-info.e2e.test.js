@@ -559,6 +559,57 @@ describe('GitHub #8 and #484: 本局信息 in the strategy draft (real server, h
     assert.deepEqual([...a.problems, ...b.problems], []);
   });
 
+  test('briefing remains readable and scrollable across phone, tablet and desktop views', { timeout: 90000 }, async () => {
+    const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ARGS, protocolTimeout: 90000 });
+    browsers.push(browser);
+    for (const [w, h, touch, lang] of [[667, 375, true, 'zh'], [844, 390, true, 'en'], [800, 600, false, 'ja'],
+      [1024, 768, true, 'ko'], [1920, 1080, false, 'zh-TW']]) {
+      const ctx = await browser.createBrowserContext(), page = await ctx.newPage();
+      const problems = [];
+      try {
+        page.on('pageerror', (e) => problems.push(e.message));
+        await page.setViewport({ width: w, height: h, deviceScaleFactor: 1, hasTouch: touch, isMobile: touch });
+        await page.goto(`${base}/dev/game-mock.html?shot=1&phase=INFO_CHECK`, { waitUntil: 'domcontentloaded' });
+        await page.waitForSelector('.brief .brief-boss__abil li', { timeout: 20000 });
+        if (lang !== 'zh') {
+          const actual = await page.evaluate(async (code) => {
+            const langUi = await import('/js/ui/lang.js');
+            await langUi.loadLangIndex();
+            const result = await langUi.switchLang(code);
+            globalThis.__MOCK__.pushPublic();
+            return result;
+          }, lang);
+          assert.equal(actual, lang, `the ${lang} language pack is active`);
+        }
+        if (lang === 'en') await page.evaluate(async () => (await import('/js/ui/screenFit.js')).updateFit({ ui: 75 }));
+        for (const textSize of ['sm', 'xl']) {
+          await page.evaluate(async (size) => (await import('/js/ui/settings.js')).updateSettings({ textSize: size }), textSize);
+          await sleep(150);
+          const layout = await page.evaluate(() => {
+            const main = document.querySelector('.brief__main'), enemy = document.querySelector('.brief-enemy').getBoundingClientRect();
+            const nodes = ['.brief-boss__tag', '.brief-boss__when', '.brief-boss__abil', '.brief-stage', '.brief-faction__text b', '.brief-bond .bond__name', '.brief-legend'];
+            const fonts = Object.fromEntries(nodes.map((sel) => [sel, parseFloat(getComputedStyle(document.querySelector(`.brief ${sel}`)).fontSize)]));
+            const text = document.querySelector('.brief-boss__text').getBoundingClientRect();
+            const tag = document.querySelector('.brief-boss__tag');
+            const ready = document.querySelector('.brief__foot .btn--primary'), button = ready.getBoundingClientRect();
+            const hit = document.elementFromPoint(button.left + button.width / 2, button.top + button.height / 2);
+            return { fonts, tagText: tag.textContent.trim(), contained: text.left >= enemy.left - 1 && text.right <= enemy.right + 1 && text.top >= enemy.top - 1 && text.bottom <= enemy.bottom + 1,
+              tagFits: tag.scrollWidth <= tag.clientWidth + 1 && tag.scrollHeight <= tag.clientHeight + 1,
+              noHorizontalOverflow: main.scrollWidth <= main.clientWidth + 1, scrolls: main.scrollHeight > main.clientHeight,
+              ready: button.top >= 0 && button.bottom <= innerHeight && !!hit && ready.contains(hit) };
+          });
+          const tags = { zh: '敌方领袖', en: 'Enemy Leader', ja: '敵ボス', ko: '리더 적', 'zh-TW': '敵方領袖' };
+          assert.equal(layout.tagText, tags[lang], `${w}×${h}: the displayed language is ${lang}`);
+          assert.ok(Object.values(layout.fonts).every((size) => size >= 10), `${w}×${h} ${textSize}: ${JSON.stringify(layout.fonts)}`);
+          assert.ok(layout.contained && layout.tagFits && layout.noHorizontalOverflow && layout.scrolls && layout.ready, `${w}×${h} ${lang} ${textSize}: ${JSON.stringify(layout)}`);
+        }
+        await page.$eval('.brief__main', (el) => { el.scrollTop = el.scrollHeight; });
+        assert.ok(await page.$eval('.brief__main', (el) => el.scrollTop > 0), `${w}×${h}: the briefing scrolls`);
+        assert.deepEqual(problems, [], `${w}×${h}: no browser errors`);
+      } finally { await ctx.close(); }
+    }
+  });
+
   test('the 特训敌人 tooltip at its own icon in both places (dev mock; desktop hover, phone long press)', { timeout: 180000 }, async () => {
     const browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ARGS, protocolTimeout: 90000 });
     browsers.push(browser);

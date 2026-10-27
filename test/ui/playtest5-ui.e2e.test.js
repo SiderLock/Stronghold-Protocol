@@ -163,6 +163,58 @@ describe('user playtest #5 — UI items 8 / 9 (mock harness, headless Chrome)', 
     }
   });
 
+  test('9: short phones, tablets and wide displays keep the board reachable with twenty players', { timeout: 240000 }, async () => {
+    const cases = [[812, 320, true], [720, 600, false], [800, 600, false], [1024, 768, true], [1180, 820, true],
+      [1216, 800, true], [1366, 1024, true], [3440, 1440, false]];
+    for (const [w, h, touch] of cases) {
+      const variants = w === 800 || w === 1024 ? ['', 'boss', 'bossR'] : ['', 'boss'];
+      for (const variant of variants) {
+        const { page, problems } = await open(`phase=PREP${variant ? `&variant=${variant}` : ''}`, { w, h, touch, insets: null });
+        await page.evaluate(() => {
+          const mock = globalThis.__MOCK__, pub = mock.S().pub, players = pub.players;
+          for (let i = players.length; i < 20; i++) players.push({ ...players[1], playerId: `aspect_${i}`, seat: i, name: `测试成员${i + 1}`, isBot: true, connected: true });
+          pub.poolGroups = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, playerIds: players.slice(i * 4, i * 4 + 4).map((p) => p.playerId) }));
+          mock.pushPublic();
+        });
+        await page.waitForFunction(() => document.querySelectorAll('.team__row').length === 20);
+        for (const tile of [...await freeFractions(page, BENCH), ...await freeFractions(page, TEMP), ...await freeFractions(page, BACK)]) {
+          assert.ok(tile.free >= 0.99, `${w}×${h} ${variant || 'prep'}: tile ${tile.r},${tile.c} ${Math.round(tile.free * 100)} % free`);
+        }
+        assert.deepEqual(problems, [], `${w}×${h} ${variant || 'prep'}`);
+        await page.close();
+      }
+    }
+  });
+
+  test('9: the simplified prep board fits between the HUD on phones and tablets', { timeout: 120000 }, async () => {
+    const cases = [[640, 360, true, 'temp', null], [812, 320, true, 'temp', null], [844, 390, true, 'temp', null],
+      [844, 390, true, '', IPH(47)], [800, 600, false, 'bossR,temp', null], [1024, 768, true, 'temp', null], [1920, 1080, false, 'temp', null]];
+    for (const [w, h, touch, variant, insets] of cases) {
+      const { page, problems } = await open(`phase=PREP&render=fallback&variant=${variant}`, { w, h, touch, insets });
+      await page.evaluate(() => {
+        const mock = globalThis.__MOCK__, pub = mock.S().pub, players = pub.players;
+        for (let i = players.length; i < 20; i++) players.push({ ...players[1], playerId: `fallback_${i}`, seat: i, name: `测试成员${i + 1}`, isBot: true, connected: true });
+        pub.poolGroups = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, playerIds: players.slice(i * 4, i * 4 + 4).map((p) => p.playerId) }));
+        mock.pushPublic();
+      });
+      await page.waitForFunction(() => document.querySelectorAll('.team__row').length === 20);
+      const tiles = [...await freeFractions(page, BENCH), ...(variant.includes('temp') ? await freeFractions(page, TEMP) : []), ...await freeFractions(page, BACK)];
+      for (const tile of tiles) assert.ok(tile.free >= 0.99, `fallback ${w}×${h}: tile ${tile.r},${tile.c} ${Math.round(tile.free * 100)} % free`);
+      const size = tiles.find((tile) => tile.r === 7 && tile.c === 5).s;
+      if (w === 844 && variant) assert.ok(size >= 30, `phone board should use the compact HUD space (${size} px per tile)`);
+      if ((w === 844 && insets) || w === 1024) {
+        await page.evaluate(async () => (await import('/js/ui/screenFit.js')).updateFit({ ui: 75 }));
+        await sleep(250);
+        for (const tile of [...await freeFractions(page, BENCH), ...(variant.includes('temp') ? await freeFractions(page, TEMP) : []), ...await freeFractions(page, BACK)]) {
+          assert.ok(tile.free >= 0.99, `fallback ${w}×${h} with 75% UI${insets ? ' and safe insets' : ''}: tile ${tile.r},${tile.c} ${Math.round(tile.free * 100)} % free`);
+        }
+        await page.evaluate(async () => (await import('/js/ui/screenFit.js')).updateFit({ ui: 100 }));
+      }
+      assert.deepEqual(problems, [], `fallback ${w}×${h}`);
+      await page.close();
+    }
+  });
+
   test('9: an armed shop card (two-tap buy) barely reaches the bench on the user\'s phone', async () => {
     // accepted overlap (ui/fieldHost.js hudBands): the armed card rises 4 px above the bar at 1rem = 40 px and covers
     // the pads' near corners by ≈ 3 px — less than under the official camera at 1920×1080 (13 px / ≈ 11 px)
