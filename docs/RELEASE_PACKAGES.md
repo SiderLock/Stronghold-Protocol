@@ -1,6 +1,6 @@
 # 本 fork 的便携发布包
 
-[`v0.3.3-20p.1` 已正式发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.1)，采用下述范围；这不改变旧版已经发布的附件。后续正式发布仍先由维护者验收候选文案、文件与校验结果。
+[`v0.3.3-20p.1` 已正式发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.1)，采用下述完整包范围。`v0.3.3-20p.2` 是只覆盖该版四平台便携包的增量更新，不重新发布完整包；适用范围和覆盖步骤见[本次更新说明](releases/v0.3.3-20p.2.md)。这不改变旧版已经发布的附件。后续正式发布仍先由维护者验收候选文案、文件与校验结果。
 
 ## 平台与启动
 
