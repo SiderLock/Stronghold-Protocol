@@ -150,6 +150,19 @@ describe('user playtest #5 — UI items 8 / 9 (mock harness, headless Chrome)', 
     console.log(report.join('\n'));
   });
 
+  test('9: narrow landscape phones keep the board reachable with the compact HUD', { timeout: 120000 }, async () => {
+    for (const [w, h] of [[640, 360], [667, 375]]) {
+      for (const variant of ['', 'boss']) {
+        const { page, problems } = await open(`phase=PREP${variant ? `&variant=${variant}` : ''}`, { w, h, touch: true, insets: null });
+        for (const tile of [...await freeFractions(page, BENCH), ...await freeFractions(page, TEMP), ...await freeFractions(page, BACK)]) {
+          assert.ok(tile.free >= 0.99, `${w}×${h} ${variant || 'prep'}: tile ${tile.r},${tile.c} ${Math.round(tile.free * 100)} % free`);
+        }
+        assert.deepEqual(problems, [], `${w}×${h} ${variant || 'prep'}`);
+        await page.close();
+      }
+    }
+  });
+
   test('9: an armed shop card (two-tap buy) barely reaches the bench on the user\'s phone', async () => {
     // accepted overlap (ui/fieldHost.js hudBands): the armed card rises 4 px above the bar at 1rem = 40 px and covers
     // the pads' near corners by ≈ 3 px — less than under the official camera at 1920×1080 (13 px / ≈ 11 px)

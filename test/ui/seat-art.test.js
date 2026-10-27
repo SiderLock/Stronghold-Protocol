@@ -137,7 +137,7 @@ test('room.css: the seat cards and the picker follow 文字大小, no !important
   // (a capped size still follows 文字大小 below the cap — §35.18 review: the room's big button, and on a short screen the
   // seat cards, the top bar's text, the status line, 独立模拟's briefing and the picker's names)
   const STEP_CAP = /^calc\((\d+)px \+ var\(--t-step\)( \/ 2)?\)$/;
-  for (const v of sizes) assert.match(v, /^(calc\(\.\d+ \* var\(--t\)\)|min\(calc\(\.\d+ \* var\(--t\)\), (\.\d+rem|\d+px|calc\(\d+px \+ var\(--t-step\)( \/ 2)?\))\))$/, v);
+  for (const v of sizes) assert.match(v, /^(calc\(\.\d+ \* var\(--t\)\)|max\(calc\(\.\d+ \* var\(--t\)\), 10px\)|min\(calc\(\.\d+ \* var\(--t\)\), (\.\d+rem|\d+px|calc\(\d+px \+ var\(--t-step\)( \/ 2)?\))\))$/, v);
   const caps = sizes.filter((v) => v.startsWith('min('));
   assert.ok(caps.length >= 19, `the GoButton's label, rook and mark, and the short screen's caps (${caps.length})`);
   // the short screen's px caps keep the text readable (11–20 px at 中) and still grow above 中 (+ --t-step, theme.css;

@@ -5,25 +5,37 @@
    ========================================================================================== */
 
 .rs { background: #0a0b0b; color: #eef0ef; }
-/* Expanded rooms keep the new seat art in a scrollable grid; a narrow viewport never shrinks twenty cards into one row. */
+/* [ASSUMED] Expanded rooms keep portrait-shaped cards in a scrollable grid; rows grow for their contents. */
 .rs .rs-seats.seats--expanded, .rs .rs-seats.seats--dense {
-  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); grid-auto-rows: minmax(2.8rem, 1fr);
-  align-content: start; justify-content: stretch; gap: .18rem; padding: .16rem .4rem; overflow: auto;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 3.2rem));
+  grid-auto-rows: max-content;
+  align-content: start; justify-content: center; gap: .18rem; padding: .16rem .4rem; overflow: auto;
 }
-.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat { width: auto; min-width: 0; animation-delay: calc(var(--i) * 20ms); }
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat {
+  width: auto; height: 100%; min-width: 0; min-height: max(4.2rem, 32px, calc(185px * var(--sp-ui, 1)));
+  animation-delay: calc(var(--i) * 20ms);
+}
 .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__art { min-height: 1.8rem; }
+/* Empty cards must fit the invitation and the add-AI button at large text sizes. */
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat--empty .rseat__art { min-height: min-content; }
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__noinfo { display: none; }
 .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__strip { height: auto; min-height: .32rem; gap: .04rem; }
 .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__strip > i { display: none; }
-.rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__swap { min-height: .28rem; height: auto; font-size: calc(.12 * var(--t)); padding: .02rem .06rem; }
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__strip > .num,
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__swap { font-size: max(calc(.12 * var(--t)), 10px); }
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__swap { min-height: .28rem; height: auto; padding: .02rem .06rem; }
 .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__doc { display: none; }
 .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__plate { padding: .04rem; gap: .04rem; }
-.rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__name { font-size: calc(.18 * var(--t)); }
-.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__said { font-size: calc(.15 * var(--t)); }
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__name { font-size: max(calc(.18 * var(--t)), 10px); }
+.rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__said { font-size: max(calc(.2 * var(--t)), 10px); }
 .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__kick { top: max(.7rem, calc(44px * var(--sp-ui, 1)), 32px); right: .04rem; }
 .rs .rs-seats .seat__actions { position: static; display: flex; justify-content: flex-end; }
 .rs .room-capacity, .rs .seat-request { position: relative; z-index: 2; }
 @media (max-width: 1000px) {
-  .rs .rs-seats.seats--expanded, .rs .rs-seats.seats--dense { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .12rem; padding: .12rem .2rem; }
+  .rs .rs-seats.seats--expanded, .rs .rs-seats.seats--dense { gap: .12rem; padding: .12rem .2rem; }
+}
+@media (max-width: 760px) {
+  .rs .rs-seats.seats--expanded, .rs .rs-seats.seats--dense { grid-template-columns: repeat(4, minmax(0, 3.2rem)); }
 }
 /* Korean breaks between words, not between the syllables of one (§35.18 review: 「시뮬레이션 시|작」 on the big button, and
    the seat cards' labels once they wrap); a word too long for its box still breaks rather than running out of it */
@@ -174,7 +186,7 @@
 }
 .rs-key__link:hover, .rs-key__link:focus-visible { border-color: rgba(255, 255, 255, .4); }
 .rs-key__link .icon { width: 60%; height: 60%; }
-.rs-key--solo { gap: .1rem; padding-right: .2rem; font-size: calc(.16 * var(--t)); color: #b7bdbb; }
+.rs-key--solo { gap: .1rem; height: auto; min-height: max(.56rem, 32px, calc(34px * var(--sp-ui, 1))); padding-right: .2rem; font-size: calc(.16 * var(--t)); color: #b7bdbb; }
 
 /* ---- seats: a tall card (strip, portrait, state) and the name plate under it ---------------------------------- */
 .rs-seats {
@@ -496,6 +508,8 @@
   overflow-y: auto;
   scrollbar-width: thin;
 }
+/* [ASSUMED] Keep longer Korean operator names on one line, including the tile's padding and border. */
+.cardpick:lang(ko) .cardpick__grid { grid-template-columns: repeat(auto-fill, minmax(max(.96rem, 8.5em), 1fr)); }
 .cardpick__op {
   position: relative;
   display: flex;
@@ -689,7 +703,10 @@
 @media (max-height: 520px) {
   .rs .rs-top { padding-top: 6px; }
   .rs-seats { padding-top: 14px; gap: 12px; }
+  .rs--solo .rs-seats { padding-top: 6px; }
   .rseat__plate { min-height: 36px; margin-top: 4px; }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__plate .avatar { --av: max(.48rem, 24px); }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__plate--empty { font-size: max(calc(.15 * var(--t)), 10px); }
   /* 独立模拟's card no wider than a co-op one here (3.4rem, 136 px; §35.18 review: the 2.7 × --t of a 64 / 76 / 88 px --t
      made it 173–238 px at 中 / 大 / 特大, as wide as it is tall, while its text stays capped — the portrait a strip. The
      briefing beside it scrolled at 特大 for another reason, see .rs-brief below) */
@@ -776,6 +793,9 @@
   .rs-go .proto-start__label { font-size: min(calc(.46 * var(--t)), calc(20px + var(--t-step))); }
   .rs .rs-loadout .btn__label { display: none; }
   .rs-tools, .rs-key__k { display: none; }
+  /* [ASSUMED] The decorative English subtitle duplicates the solo label; removing it leaves the toolbar one row. */
+  .rs-key--solo .micro { display: none; }
+  .rs-key--solo > span:last-child { white-space: nowrap; }
 }
 
 /* A long name takes a second line on the phones at least 370 px tall, then ends in an ellipsis (§35.51: one line kept 3–5
@@ -840,19 +860,19 @@
 }
 
 /* Capacity fork: controls and fixed-group markers retained through the 0.3.3 presentation update. */
-.room-capacity { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .08rem .16rem; min-height: .52rem; padding: .04rem .3rem; color: var(--text-lo); font-size: calc(.16 * var(--t)); }
-.room-capacity__label b, .room-capacity__count { color: var(--mint-400); font-size: calc(.2 * var(--t)); }
+.room-capacity { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .08rem .16rem; min-height: .52rem; padding: .04rem .3rem; color: var(--text-lo); font-size: max(calc(.16 * var(--t)), 10px); }
+.room-capacity__label b, .room-capacity__count { color: var(--mint-400); font-size: max(calc(.2 * var(--t)), 10px); }
 .room-capacity__options { display: flex; gap: .06rem; }
-.room-capacity__opt { min-width: .48rem; height: .36rem; border: 1px solid var(--line-2); background: rgba(0, 0, 0, .35); color: var(--text-lo); font-family: var(--font-num); font-size: calc(.18 * var(--t)); }
+.room-capacity__opt { min-width: max(.48rem, 32px); min-height: max(.36rem, 32px); padding: .02rem .06rem; line-height: 1.1; border: 1px solid var(--line-2); background: rgba(0, 0, 0, .35); color: var(--text-lo); font-family: var(--font-num); font-size: max(calc(.18 * var(--t)), 10px); }
 .room-capacity__opt:hover:not(:disabled) { border-color: var(--mint-500); color: var(--text-hi); }
 .room-capacity__opt.is-active { border-color: var(--mint-500); background: var(--mint-a20); color: var(--mint-400); }
 .room-capacity__opt:disabled { opacity: .35; cursor: default; }
-.room-ai-limit { display: inline-flex; align-items: center; gap: .06rem; padding: .04rem .08rem; border: 1px solid var(--line-2); background: rgba(0, 0, 0, .3); font-size: calc(.14 * var(--t)); white-space: nowrap; }
-.room-ai-limit .icon { width: .16rem; height: .16rem; }
+.room-ai-limit { display: inline-flex; align-items: center; gap: .06rem; padding: .04rem .08rem; border: 1px solid var(--line-2); background: rgba(0, 0, 0, .3); font-size: max(calc(.14 * var(--t)), 10px); white-space: nowrap; }
+.room-ai-limit .icon { width: max(.16rem, 10px); height: max(.16rem, 10px); }
 .room-ai-limit.is-full { color: var(--amber); border-color: var(--amber); }
-.room-ai-limit > span { font-size: calc(.12 * var(--t)); }
-.room-matchmaking { display: inline-flex; align-items: center; justify-content: center; gap: .05rem; min-height: .36rem; padding: 0 .1rem; border: 1px solid var(--mint-700); background: var(--mint-a10); color: var(--mint-400); font-size: calc(.14 * var(--t)); white-space: nowrap; }
-.room-matchmaking .icon { width: .15rem; height: .15rem; }
+.room-ai-limit > span { font-size: max(calc(.12 * var(--t)), 10px); }
+.room-matchmaking { display: inline-flex; align-items: center; justify-content: center; gap: .05rem; min-height: .36rem; padding: 0 .1rem; border: 1px solid var(--mint-700); background: var(--mint-a10); color: var(--mint-400); font-size: max(calc(.14 * var(--t)), 10px); white-space: nowrap; }
+.room-matchmaking .icon { width: max(.15rem, 10px); height: max(.15rem, 10px); }
 .room-matchmaking.is-private { border-color: var(--amber); background: rgba(255, 180, 80, .08); color: var(--amber); }
 button.room-matchmaking:hover:not(:disabled) { border-color: var(--text-hi); color: var(--text-hi); }
 button.room-matchmaking:disabled { opacity: .45; cursor: default; }

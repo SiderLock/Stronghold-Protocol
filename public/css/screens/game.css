@@ -6,7 +6,16 @@
    ========================================================================================== */
 
 /* ---- screen shell ---------------------------------------------------------------------------- */
-.gm { background: transparent; }
+.gm {
+  background: transparent;
+  /* The prep camera reads these same dimensions in fieldHost.js. */
+  --prep-bond-top: 1.36;
+  --prep-shop-card-height: 2.24;
+}
+/* [ASSUMED] Compact the short landscape HUD while keeping its controls and the field separately usable. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .gm { --prep-bond-top: 1.16; --prep-shop-card-height: 1.85; }
+}
 /* Host test dock (public/js/ui/testDock.js DOCK_REM). Unitless rem, shared by the HUD and the dock.
    team-right = .team left .22 + avatar .8 + gap .1 + name 1.5 + info padding .18.
    bond-bottom = fieldHost.js HUD_REM.bondStripBottom. shop-top = HUD_REM.shopBarTop.
@@ -470,7 +479,7 @@
 .readybtn.is-busy { opacity: .7; }
 
 /* ---- bond strip ---------------------------------------------------------------------------------------- */
-.gm__bonds { position: absolute; left: 1.56rem; top: 1.36rem; right: 5.2rem; pointer-events: none;
+.gm__bonds { position: absolute; left: 1.56rem; top: calc(var(--prep-bond-top) * 1rem); right: 5.2rem; pointer-events: none;
   display: flex; align-items: flex-start; gap: max(.1rem, calc(8px * var(--sp-ui, 1))); }
 /* Only the bond discs (and the +N chip) take the pointer: the strip's box spans the width under the top bar, where the
    top board row's units stand (row 12 at 16:9 / 21:9 / 720p / phones, the boss field's row 5 in a boss prep) — it used
@@ -551,6 +560,7 @@
 .team--many .team__line { gap: .04rem; }
 .team--many .team__bubble { display: none; }
 .team__emote-feed { position: absolute; left: calc(100% + .1rem); top: 0; z-index: 4; display: flex; flex-direction: column; gap: .03rem; width: 2.55rem; max-height: min(2.72rem, calc(100% - .08rem)); overflow-y: auto; padding: .03rem; border: 1px solid var(--mint-800); background: rgba(8, 13, 11, .88); pointer-events: auto; scrollbar-width: thin; }
+.team:not(.team--many) .team__emote-feed { display: none; }
 .team__feed-row { display: flex; align-items: center; gap: .04rem; flex: none; height: .57rem; padding: .02rem .05rem; border-bottom: 1px solid var(--line); }
 .team__feed-row .pavatar { --pa: .35rem; }
 .team__feed-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-md); font-size: .12rem; }
@@ -619,6 +629,30 @@
 .team__ob, .team__back { align-self: flex-start; margin-top: .04rem; min-width: 1.1rem; animation: pop-in var(--t-fast) var(--ease-out); }
 .team__ob .btn__label, .team__back .btn__label { letter-spacing: .12em; }
 .team__back { border-color: rgba(255, 255, 255, .7); color: #fff; }
+
+/* [ASSUMED] Short landscape screens need readable identities and separate touch targets; long lists still scroll. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .team--scrollable:not(.team--many) { bottom: 1.12rem; width: max-content; max-width: 3.1rem; }
+  .team--scrollable:not(.team--many) .team__list { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: .08rem; pointer-events: auto; scrollbar-width: thin; }
+  .team--scrollable:not(.team--many) .team__bubble { display: none; }
+  .team--scrollable:not(.team--many) .team__emote-feed { display: flex; }
+  .team__row { min-height: 40px; }
+  .team--many .team__row { min-height: 44px; }
+  .team__btn .pavatar, .team--many .team__btn .pavatar { --pa: max(.8rem, 32px); }
+  .team__name, .team--many .team__name { max-width: 88px; font-size: max(10px, min(calc(.16 * var(--t)), 14px)); }
+  .team__line .lp--sm { font-size: max(.19rem, 10px); }
+  .team__status { width: max(.26rem, 14px); height: max(.26rem, 14px); }
+  .team__status .icon, .team__status.has-sprite .lsprite { width: max(.26rem, 12px); height: max(.26rem, 12px); }
+  .team__seat { font-size: max(.11rem, 8px); }
+  .team__ai { font-size: max(.11rem, 8px); }
+  .team__emote-feed { width: max(2.55rem, 32px, calc(130px * var(--sp-ui, 1))); }
+  .team__feed-row { height: max(.57rem, 32px); }
+  .team__feed-row .pavatar { --pa: max(.35rem, 24px); }
+  .team__feed-name { font-size: max(.12rem, 10px); }
+}
+@media (max-width: 767px) and (max-height: 520px) and (orientation: landscape) {
+  .gm:not(.is-collapsed) .team--scrollable { bottom: calc(.34rem + 2 * max(.56rem, 32px, calc(34px * var(--sp-ui, 1))) + 6px); }
+}
 
 /* player avatar (band icon / glyph) */
 .pavatar {

@@ -60,7 +60,7 @@
 
 /* ---- level card ---- */
 .lvcard {
-  position: relative; width: 1.24rem; height: 2.24rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .12rem;
+  position: relative; width: 1.24rem; height: calc(var(--prep-shop-card-height, 2.24) * 1rem); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .12rem;
   padding: .2rem .1rem .1rem; background: linear-gradient(180deg, #5fe0b9, #36b690); border: 0; color: var(--text-on-mint);
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - .14rem), calc(100% - .14rem) 100%, 0 100%);
   transition: filter var(--t-fast), transform var(--t-fast);
@@ -87,7 +87,7 @@
 .scard-wrap { display: flex; }
 .scard {
   --tc: var(--tier-1);
-  position: relative; width: 1.56rem; height: 2.24rem; padding: 0; overflow: hidden; text-align: left;
+  position: relative; width: 1.56rem; height: calc(var(--prep-shop-card-height, 2.24) * 1rem); padding: 0; overflow: hidden; text-align: left;
   display: flex; flex-direction: column; justify-content: flex-end;
   background: #151a18; border: 1px solid rgba(78, 216, 175, .35);
   transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast), box-shadow var(--t-fast);

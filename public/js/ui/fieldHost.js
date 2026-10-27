@@ -63,7 +63,7 @@ export function hudPadding(kind, size) {
  */
 export const HUD_REM = Object.freeze({
   bondStripTop: 1.36, bondStripBottom: 2.16, bondArrowPx: 44,
-  shopBarTop: 2.64, shopBarBorderPx: 3, shopTabTop: 0.8, shopTabBorderPx: 3, cornerTop: 0.8,
+  shopCardHeight: 2.24, shopBarTop: 2.64, shopBarBorderPx: 3, shopTabTop: 0.8, shopTabBorderPx: 3, cornerTop: 0.8,
 });
 
 /**
@@ -84,6 +84,8 @@ export const HUD_REM = Object.freeze({
  * teammate's board uses the 'normal' camera: no band. An armed shop card (two-tap buy, css/screens/game-shop.css
  * .scard.is-armed) rises 4 px above the bar's top on a phone and covers the bench pads' near corners by ≈ 3 px while it
  * stays armed — less than under the unchanged official camera at 1920×1080 (13 px above the bar, ≈ 11 px over the pads).
+ * The game screen's --prep-bond-top and --prep-shop-card-height keep the camera's fallback dimensions aligned with the
+ * responsive CSS, even before those controls mount or when the shop is absent.
  * @param {string} kind
  * @param {{ width: number, height: number }} size
  * @param {{ shop?: boolean }} [opts] `shop: false` = the folded shop's band
@@ -98,8 +100,18 @@ export function hudBands(kind, size, opts) {
   let safeBottom = 0;
   let corner = 0;
   let bondsBottom = 0;
+  let bondTop = HUD_REM.bondStripTop;
+  let shopCardHeight = HUD_REM.shopCardHeight;
   try {
     rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 100;
+    const game = document.querySelector('.gm');
+    const gameStyle = game ? getComputedStyle(game) : null;
+    const readSize = (name, fallback) => {
+      const n = parseFloat(gameStyle?.getPropertyValue?.(name));
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    bondTop = readSize('--prep-bond-top', bondTop);
+    shopCardHeight = readSize('--prep-shop-card-height', shopCardHeight);
     // 异形屏适配 (ui/screenFit.js): the board's host may not start at the viewport's top — the HUD rects are measured from it
     const oy = document.querySelector('.gm__field')?.getBoundingClientRect()?.top || 0;
     // the HUD layer starts below the top safe-area inset and ends above the bottom one (css/devices.css .gm__hud)
@@ -118,10 +130,10 @@ export function hudBands(kind, size, opts) {
   } catch { /* ignore */ }
   const bottom = folded
     ? Math.max(safeBottom + rem * HUD_REM.shopTabTop + HUD_REM.shopTabBorderPx, corner || safeBottom + rem * HUD_REM.cornerTop)
-    : Math.max(rem * HUD_REM.shopBarTop + HUD_REM.shopBarBorderPx, corner);
+    : Math.max(rem * (HUD_REM.shopBarTop - HUD_REM.shopCardHeight + shopCardHeight) + HUD_REM.shopBarBorderPx, corner);
   return {
-    top: Math.min(h * 0.4, Math.max(bondsBottom, safeTop + Math.max(rem * HUD_REM.bondStripBottom,
-      rem * HUD_REM.bondStripTop + HUD_REM.bondArrowPx))),
+    top: Math.min(h * 0.4, Math.max(bondsBottom, safeTop + Math.max(rem * (bondTop + HUD_REM.bondStripBottom - HUD_REM.bondStripTop),
+      rem * bondTop + HUD_REM.bondArrowPx))),
     bottom: Math.min(h * 0.4, bottom),
   };
 }
