@@ -1252,3 +1252,10 @@
 
 .ai-vote { display:flex; flex-wrap:wrap; gap:.12rem; align-items:center; margin:.15rem 0; padding:.1rem; border:1px solid #426055; }
 .ai-participation-entry { flex:none; }
+.ai-participation { position: relative; flex: none; }
+.ai-participation-entry.has-pending { border-color: #f5c664; color: #ffe7a1; box-shadow: 0 0 .15rem rgba(245, 198, 100, .55); }
+.ai-notice { position: absolute; left: 0; bottom: calc(100% + .12rem); z-index: 13; width: min(3.5rem, 70vw); pointer-events: auto; }
+.ai-notice__button { display: flex; flex-direction: column; gap: .06rem; width: 100%; padding: .15rem .2rem; text-align: left; color: #fff4d1; background: #252117; border: 1px solid #f5c664; border-left: .06rem solid #f5c664; box-shadow: 0 .06rem .22rem #000b; cursor: pointer; }
+.ai-notice__button strong { font-size: .17rem; }
+.ai-notice__button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .14rem; }
+.ai-notice__button:focus-visible { outline: 2px solid white; outline-offset: 2px; }

@@ -6,11 +6,15 @@ test('a spectator requests an AI in the browser, receives majority approval and 
   const {startServer}=await import('../../server/index.js'),{TestClient}=await import('../helpers/wsClient.js'),puppeteer=(await import('puppeteer-core')).default;
   const srv=await startServer({port:0,host:'127.0.0.1',quiet:true,botRehearsal:0}),clients=[],browser=await puppeteer.launch({executablePath:chrome,headless:true,args:['--no-sandbox','--no-proxy-server',`--explicitly-allowed-ports=${srv.port}`]});
   try{
-    const player=async name=>{const c=await TestClient.connect(srv.url.replace('http','ws')+'/ws');clients.push(c);c.id=(await c.hello(name)).playerId;return c;};
+    const player=async name=>{const c=await TestClient.connect(srv.url.replace('http','ws')+'/ws');clients.push(c);const w=await c.hello(name);c.id=w.playerId;c.token=w.token;return c;};
     const host=await player('Host');await host.request({t:'room.create',mode:'coop',difficulty:'NORMAL'});const room=[...srv.lobby.rooms.values()][0];
     await host.request({t:'room.setAiTakeover',on:true});
     const mate=await player('Mate');await mate.request({t:'room.join',code:room.code});await mate.request({t:'room.ready',ready:true});for(let i=0;i<2;i++)await host.request({t:'room.addBot'});await host.request({t:'room.start'});
     const m=room.match;m.startRound(1);m.phase='PREP';m.setDeadline(0);for(const p of m.order)p._botPrepToken=(p._botPrepToken||0)+1;m.flush(true);const bot=m.order[2];bot.funds=71;bot.acquireChess('chess_char_1_01_a',{fromPool:false});bot.dirty();m.flush(true);
+    await host.terminate();
+    const voter=await browser.newPage();await voter.setViewport({width:1024,height:768});
+    await voter.evaluateOnNewDocument(token=>{localStorage.setItem('sp.name','Host');sessionStorage.setItem('sp.entered','1');sessionStorage.setItem('sp.token',token);},host.token);
+    await voter.goto(srv.url+'/');await voter.waitForSelector('.gm__corner .ai-participation-entry');
     const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width:1440,height:900});
     await page.evaluateOnNewDocument(()=>{localStorage.setItem('sp.name','Late');sessionStorage.setItem('sp.entered','1');});await page.goto(srv.url+'/');
     await page.waitForFunction(async()=>{const {net}=await import('/js/net.js');return net.status==='online';});
@@ -19,7 +23,15 @@ test('a spectator requests an AI in the browser, receives majority approval and 
     await page.evaluate(id=>{const buttons=[...document.querySelectorAll('.modal button')];const button=buttons.find(b=>b.textContent.includes('申请接替')&&b.textContent.includes(id));if(!button)throw Error('AI request button absent');button.click();},bot.name);
     await page.waitForFunction(async()=>{const {store}=await import('/js/store.js');return store.get().room?.aiTakeoverVotes?.length===1;});
     const vote=room.aiTakeoverVotes[0];if(process.env.AI_TAKEOVER_SHOT){const panel=await page.$('.modal__box');await panel.evaluate(el=>{el.style.background='#102019';el.style.animation='none';el.style.transform='none';});const box=await panel.boundingBox();await page.screenshot({path:process.env.AI_TAKEOVER_SHOT,clip:box});}
-    await host.request({t:'room.aiVote',voteId:vote.id,approve:true});await mate.request({t:'room.aiVote',voteId:vote.id,approve:true});
+    await voter.waitForSelector('.ai-notice__button');
+    assert.match(await voter.$eval('.ai-notice__button', el => el.textContent), /Late/);
+    await voter.click('.ai-notice__button');
+    await voter.waitForSelector('.ai-vote');
+    await voter.evaluate(() => [...document.querySelectorAll('.ai-vote button')].find(b => b.textContent.trim() === '同意').click());
+    await voter.waitForFunction(async id => (await import('/js/store.js')).store.get().room?.aiTakeoverVotes?.[0]?.yes.includes(id), {}, host.id);
+    await voter.keyboard.press('Escape');
+    await voter.waitForFunction(() => !document.querySelector('.ai-notice'));
+    await mate.request({t:'room.aiVote',voteId:vote.id,approve:true});
     await page.waitForFunction(async id=>{const {store}=await import('/js/store.js');const s=store.get();return s.me.playerId===id&&s.match.private?.playerId===id&&!s.ui.restoring;},{},bot.playerId);
     assert.equal(bot.isBot,false);await page.reload();await page.waitForFunction(async id=>{const {store}=await import('/js/store.js');return store.get().me.playerId===id&&store.get().match.private?.playerId===id;},{},bot.playerId);
     assert.equal(bot.funds,71);
