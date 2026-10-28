@@ -71,8 +71,8 @@ import { hasScriptConsent, rememberScriptConsent, pageVersion } from '../content
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, emptyMatch, isSpectating, savePref } from '../store.js';
 import { data, useData, getConfig } from '../data.js';
-import { chessAvatarUrl, chessPortraitUrl } from '../ui/assetUrls.js';
-import { CARD_KEY, cardStore, setCard, cardOperators, cardContext, seatOperator, seatCardSkin, seatArtSrc } from '../ui/seatArt.js';
+import { chessAvatarUrl } from '../ui/assetUrls.js';
+import { CARD_KEY, cardStore, setCard, cardOperators, cardEnemies, cardPortraitUrl, cardContext, seatOperator, seatCardSkin, seatArtSrc } from '../ui/seatArt.js';
 import { skinsStore, SKINS_KEY, ownerSkin } from '../ui/skins.js';
 import { settingsStore } from '../ui/settingsStore.js';
 import { difficultyInfo, ProtocolSelect } from './lobby.js';
@@ -247,22 +247,27 @@ function CardThumb({ src, name }) {
  * the current choice takes the focus (no on-screen keyboard on a phone). A local picker: each tile wears this browser's
  * outfit for that operator (`localSkins`, docs/SKINS.md), as the card will.
  */
-function CardPicker({ current, list, m, localSkins = {}, onPick, onClose }) {
+function CardPicker({ current, list, enemies, m, localSkins = {}, onPick, onClose }) {
   const [q, setQ] = useState('');
   const [star, setStar] = useState(0);
+  const [kind, setKind] = useState(current?.startsWith('enemy_') ? 'enemy' : 'operator');
   const stars = useMemo(() => [...new Set(list.map((c) => c.rarity).filter((r) => r > 0))].sort((a, b) => b - a), [list]);
-  const known = !!current && list.some((c) => c.charId === current);
+  const known = !!current && [...list, ...enemies].some((c) => c.charId === current);
   const needle = q.trim().toLowerCase();
-  const shown = list.filter((c) => (!star || c.rarity === star)
+  const shown = (kind === 'enemy' ? enemies : list).filter((c) => (kind === 'enemy' || !star || c.rarity === star)
     && (!needle || [c.name, c.appellation].some((v) => String(v || '').toLowerCase().includes(needle))));
-  return html`<${Modal} open=${true} class="cardpick" micro="SEAT CARD OPERATOR" title=${t('名片干员')} width="min(10.4rem, 96vw)"
+  return html`<${Modal} open=${true} class="cardpick" micro="SEAT CARD PORTRAIT" title=${t('更换立绘')} width="min(10.4rem, 96vw)"
       onClose=${onClose} actions=${html`<${Button} variant="ghost" onClick=${onClose}>${t('关闭')}<//>`}>
     <div class="cardpick__bar">
-      <${TextField} class="cardpick__search" size="sm" icon="search" value=${q} onInput=${setQ} placeholder=${t('搜索干员')} />
-      <div class="cardpick__stars" role="radiogroup" aria-label=${t('稀有度')}>
+      <div class="cardpick__stars" role="group" aria-label=${t('立绘类别')}>
+        <button type="button" class=${kind === 'operator' ? 'is-on' : ''} aria-pressed=${kind === 'operator'} onClick=${() => setKind('operator')}>${t('干员')}</button>
+        <button type="button" class=${kind === 'enemy' ? 'is-on' : ''} aria-pressed=${kind === 'enemy'} onClick=${() => setKind('enemy')}>${t('敌人')}</button>
+      </div>
+      <${TextField} class="cardpick__search" size="sm" icon="search" value=${q} onInput=${setQ} placeholder=${kind === 'enemy' ? t('搜索敌人') : t('搜索干员')} />
+      ${kind === 'operator' ? html`<div class="cardpick__stars" role="radiogroup" aria-label=${t('稀有度')}>
         ${[0, ...stars].map((v) => html`<button key=${v} type="button" role="radio" aria-checked=${star === v ? 'true' : 'false'}
           class=${star === v ? 'is-on' : ''} onClick=${() => setStar(v)}>${v ? html`<span class="num">${v}★</span>` : t('全部')}</button>`)}
-      </div>
+      </div>` : null}
     </div>
     <div class="cardpick__grid" data-testid="card-picker">
       <button type="button" class=${`cardpick__op cardpick__op--auto${known ? '' : ' is-on'}`} aria-pressed=${known ? 'false' : 'true'}
@@ -270,7 +275,7 @@ function CardPicker({ current, list, m, localSkins = {}, onPick, onClose }) {
         <span class="cardpick__img"><${Icon} name="refresh" /></span><span class="cardpick__name">${t('默认')}</span>
       </button>
       ${shown.map((c) => {
-        const src = chessAvatarUrl(m, c, { skin: ownerSkin(c.charId, { localSkins }) });
+        const src = c.enemyKey ? cardPortraitUrl(m, c) : chessAvatarUrl(m, c, { skin: ownerSkin(c.charId, { localSkins }) });
         const on = known && c.charId === current;
         return html`<button key=${c.charId} type="button" class=${`cardpick__op r${c.rarity}${on ? ' is-on' : ''}`} aria-pressed=${on ? 'true' : 'false'}
             data-char=${c.charId} data-autofocus=${on ? '' : undefined} title=${c.name} onClick=${() => onPick(c.charId)}>
@@ -279,7 +284,7 @@ function CardPicker({ current, list, m, localSkins = {}, onPick, onClose }) {
         </button>`;
       })}
     </div>
-    ${shown.length ? null : html`<p class="cardpick__empty">${t('没有符合条件的干员')}</p>`}
+    ${shown.length ? null : html`<p class="cardpick__empty">${kind === 'enemy' ? t('没有符合条件的敌人') : t('没有符合条件的干员')}</p>`}
     <p class="cardpick__note"><${Icon} name="info" />${t('选择后，同盟里的博士都会看到这张立绘')}</p>
   <//>`;
 }
@@ -341,7 +346,7 @@ export function SeatCardView({ seat, index, room, facts, myId, busy, onAddBot, o
     <header class="rseat__strip"><i></i><span class="num">P${index + 1}</span>${exchange}</header>
     <div class="seat__art rseat__art">
       ${art
-        ? html`<img key=${art} class="seat__portrait" src=${art} alt="" draggable=${false} onError=${() => setBadArt((b) => (b.includes(art) ? b : [...b, art]))} />`
+        ? html`<img key=${art} class=${`seat__portrait${operator?.enemyKey ? ' seat__portrait--enemy' : ''}`} src=${art} alt="" draggable=${false} onError=${() => setBadArt((b) => (b.includes(art) ? b : [...b, art]))} />`
         : html`<${AvatarFrame} size="xl" name=${seat.name} seat=${index} bot=${seat.isBot} self=${isMe} ready=${state === 'ready'} offline=${offline} />`}
       <div class="rseat__top">
         ${isHostSeat ? html`<span class="rseat__host"><${Icon} name="crown" />${t('创建者')}</span>` : null}
@@ -554,10 +559,12 @@ export function RoomScreen() {
   // 名片干员: the operators a seat card can show and the default pool (ui/seatArt.js), one's own pick (a pref the sync
   // engine sends: ui/loadoutSync.js installCardSync), and the outfits the cards wear — this browser's choices and the
   // 「显示其他玩家的皮肤」 switch (docs/SKINS.md)
-  useData('chess', 'assets', 'config');
+  useData('chess', 'enemies', 'assets', 'config');
   const chess = data.get('chess');
   const cardList = useMemo(() => cardOperators(data.list('chess')), [chess]);
-  const cards = useMemo(() => cardContext(cardList), [cardList]);
+  const enemiesData = data.get('enemies'), assets = data.get('assets');
+  const enemyList = useMemo(() => cardEnemies(data.list('enemies'), assets), [enemiesData, assets]);
+  const cards = useMemo(() => cardContext(cardList, enemyList), [cardList, enemyList]);
   const myCard = useStore((s) => s[CARD_KEY], Object.is, cardStore);
   const localSkins = useStore((s) => s[SKINS_KEY], Object.is, skinsStore);
   const otherSkins = useStore((s) => s.otherSkins !== false, Object.is, settingsStore);
@@ -800,8 +807,8 @@ export function RoomScreen() {
         const skin = op ? seatCardSkin(s, op.chess.charId, { myId: me.playerId, localSkins, players: facts.occupied, otherSkins }) : null;
         return html`<${SeatCard} key=${s ? `p${s.playerId}` : `e${i}`} seat=${s} index=${i} room=${room} facts=${facts}
           myId=${me.playerId} busy=${busy} onAddBot=${addBot} onRemoveBot=${removeBot} onKick=${kick} onInvite=${() => copy('code')}
-          portrait=${op ? chessPortraitUrl(data.get('assets'), op.chess, { skin }) : null}
-          portraitDefault=${op && skin ? chessPortraitUrl(data.get('assets'), op.chess) : null} operator=${op?.chess} onPickCard=${() => setPicking(true)}
+          portrait=${op ? cardPortraitUrl(assets, op.chess, skin) : null}
+          portraitDefault=${op && skin ? cardPortraitUrl(assets, op.chess) : null} operator=${op?.chess} onPickCard=${() => setPicking(true)}
           connected=${online} onExchange=${exchangeSeat} onTransferHost=${transferHost} fresh=${shownRoom.current === room.code} />`;
       })}
       ${coop ? null : html`<aside class="solo-brief rs-brief brackets">
@@ -847,7 +854,7 @@ export function RoomScreen() {
             <//>`}
       </div>
     </footer>
-    ${picking ? html`<${CardPicker} current=${myCard} list=${cardList} m=${data.get('assets')} localSkins=${localSkins} onPick=${pickCard} onClose=${() => setPicking(false)} />` : null}
+    ${picking ? html`<${CardPicker} current=${myCard} list=${cardList} enemies=${enemyList} m=${assets} localSkins=${localSkins} onPick=${pickCard} onClose=${() => setPicking(false)} />` : null}
     ${protoOpen ? facts.isHost
       ? html`<${ProtocolSelect} roomMode=${room.mode} difficulty=${protoPick || room.difficulty} onDifficulty=${setProtoPick} onClose=${closeProto}
           onCreate=${confirmDifficulty} busy=${busy === 'diff' ? 'create' : null} online=${online} action=${t('确认')} hint=${protoHint} difficulties=${protoDifficulties} />`

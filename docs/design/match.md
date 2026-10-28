@@ -374,3 +374,8 @@ layout search inside the five-hook contract; `ioleta-adaptive` composes Russell-
 variants and contact repairs extend the list up to eight. Extension stops after a clean completed zero-leak result,
 or at a strict six-times-per-candidate total tick cap. Server and host Worker share RehearsalRun, limits and counters.
 Default legacy rules remain the baseline. See [BOT_STRATEGIES](../BOT_STRATEGIES.md).
+
+
+### Capacity fork: waiting-room portraits and AI names
+
+The waiting-room portrait picker offers visible operators and enemies with an available icon. An enemy selection is shared using `room.card`, checked against the room version’s enemy data, and shown as an icon; a missing image falls back to the existing avatar. Expanded rooms use a responsive scrollable card grid on mobile. The AI name pool has 20 distinct character names. These choices do not change match rules.

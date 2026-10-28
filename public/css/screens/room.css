@@ -888,3 +888,22 @@ button.room-matchmaking:disabled { opacity: .45; cursor: default; }
 /* The generic mobile 44 px hit area would cover the adjacent crown/remove button. Keep the vertical expansion,
    but restrict these paired controls horizontally to their own side of the visible gap. */
 .sp-coarse .room-screen .seat__actions .btn::before { width: calc(100% + .06rem); }
+
+/* Expanded rooms remain readable and scroll vertically on phones, including portrait and short landscape. */
+@media (max-width: 1000px) {
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, max(145px, 2.25rem)), 1fr));
+    justify-content: stretch; gap: max(8px, .12rem); padding: max(8px, .12rem);
+  }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat { min-height: max(210px, 3.8rem); }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__art { min-height: max(150px, 2.5rem); }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__portrait { object-fit: contain; object-position: center; }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__swap,
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__pick,
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__kick,
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__add { min-height: 36px; }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__name,
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__said { font-size: max(calc(.18 * var(--t)), 12px); }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__pick span { display: inline; }
+}
+.rseat__art img.seat__portrait--enemy { object-fit: contain; object-position: center; padding: 10%; }

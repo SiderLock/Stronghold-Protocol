@@ -693,9 +693,11 @@ export function installSkinsSync({ net, timers, target = skinsStore, notify, con
  * @param {{ net: any, timers?: { setTimeout: Function, clearTimeout: Function }, target?: ReturnType<typeof createStore>,
  *   getChessReady?: () => Promise<any>, listChess?: () => any[], notify?: (text: string) => void, content?: any }} deps
  */
-export function installCardSync({ net, timers, target = cardStore, getChessReady, listChess, notify, content = appContentSet, app = store, gate = null } = {}) {
+export function installCardSync({ net, timers, target = cardStore, getChessReady, listChess, getEnemiesReady, listEnemies, notify, content = appContentSet, app = store, gate = null } = {}) {
   const ready = getChessReady || (() => data.load('chess'));
   const list = listChess || (() => data.list('chess'));
+  const readyEnemies = getEnemiesReady || (() => data.load('enemies'));
+  const enemies = listEnemies || (() => data.list('enemies'));
   return installPrefSync({
     net, timers, target, notify, key: CARD_KEY, stateKey: CARD_SYNC_KEY, msgType: 'room.card', field: null, tag: 'card',
     lockedText: null, // room.card has no phase gate: never WRONG_PHASE / ROOM_STARTED
@@ -703,6 +705,10 @@ export function installCardSync({ net, timers, target = cardStore, getChessReady
     async prepare() {
       const want = target.get()[CARD_KEY];
       if (!want) return { charId: '' };
+      if (want.startsWith('enemy_')) {
+        if (await readyEnemies() == null) return null;
+        return { charId: enemies().some(e => e.key === want) ? want : '' };
+      }
       if (await ready() == null) return null;
       return { charId: cardOperators(list()).some((c) => c.charId === want) ? want : '' };
     },

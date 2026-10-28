@@ -10,7 +10,7 @@ import { StubMatch } from '../server/match/StubMatch.js';
 import { TestClient } from './helpers/wsClient.js';
 import { ERR } from '../shared/constants.js';
 import { getData } from '../server/data.js';
-import { cardOperators } from '../public/js/ui/seatArt.js';
+import { cardOperators, cardEnemies, cardContext, seatOperator, cardPortraitUrl } from '../public/js/ui/seatArt.js';
 
 const OPERATOR = 'char_498_inside';   // 隐现 (chess.json)
 const OTHER = 'char_1012_skadi2';     // 浊心斯卡蒂 (chess.json)
@@ -86,6 +86,21 @@ describe('room.card (lobby, stub match)', () => {
     const c = await pool.player('All');
     await createRoom(c, 'solo');
     for (const charId of list) await ok(c, { t: 'room.card', charId });
+  });
+
+  test('enemy portraits are selectable, synced to other players and reject unknown ids', async () => {
+    const data = getData();
+    const enemies = cardEnemies(Object.values(data.enemies), data.assets);
+    assert.ok(enemies.length > 0);
+    const enemy = enemies[0], host = await pool.player('Host'), guest = await pool.player('Guest');
+    const state = await createRoom(host);
+    await ok(guest, { t: 'room.join', code: state.code });
+    await ok(host, { t: 'room.card', charId: enemy.charId });
+    const seen = await guest.waitFor('room.state', s => seatOf(s, host.id)?.card === enemy.charId);
+    const selected = seatOperator(seatOf(seen, host.id), cardContext(cardOperators(Object.values(data.chess)), enemies));
+    assert.equal(selected.chess.charId, enemy.charId);
+    assert.ok(cardPortraitUrl(data.assets, selected.chess));
+    await err(host, { t: 'room.card', charId: 'enemy_999999_unknown' }, ERR.BAD_MSG);
   });
 
   test('every member sees it as room.state seats[].card; "" clears it; bots and card-less seats carry no key', async () => {

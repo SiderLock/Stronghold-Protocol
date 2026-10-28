@@ -44,6 +44,8 @@ server/match/
 
 ---
 
+Waiting-room portrait choices include visible operators and enemies with an icon in the current art manifest. Enemy keys use the existing `room.card` field and are checked against the room version’s enemies; missing art falls back to the usual avatar. The preference and room broadcast remain cosmetic. Expanded mobile rooms use a scrollable responsive card grid, and the AI name pool contains 20 distinct character names.
+
 ## 1. Match flow
 
 Capacity-fork waiting rooms allow seat exchanges before starting: empty / AI seats exchange immediately,

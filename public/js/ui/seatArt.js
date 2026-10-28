@@ -11,6 +11,7 @@
 
 import { createStore, loadPref, savePref } from '../store.js';
 import { ownerSkin } from './skins.js';
+import { enemyIconUrl, chessPortraitUrl } from './assetUrls.js';
 
 /** 名片干员: the player's own pick (a localStorage pref, sent as room.card). */
 export const CARD_PREF = 'room.card';
@@ -64,10 +65,21 @@ export function cardOperators(chessList) {
  * What the seat cards draw from: the pickable operators by charId and the default pool (5★/6★, by charId so every
  * client orders it the same).
  * @param {any[]} list cardOperators()
+ * @param {any[]} [enemies] cardEnemies()
  */
-export function cardContext(list) {
+export function cardEnemies(list, manifest) {
+  return (Array.isArray(list) ? list : []).filter(e => e && /^enemy_[A-Za-z0-9_]+$/.test(e.key || '') && enemyIconUrl(manifest, e.iconId || e.key))
+    .map(e => ({ ...e, charId: e.key, enemyKey: e.iconId || e.key }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+}
+
+export function cardPortraitUrl(manifest, card, skin = null) {
+  return card?.enemyKey ? enemyIconUrl(manifest, card.enemyKey) : chessPortraitUrl(manifest, card, { skin });
+}
+
+export function cardContext(list, enemies = []) {
   return {
-    byChar: new Map(list.map((c) => [c.charId, c])),
+    byChar: new Map([...list, ...enemies].map((c) => [c.charId, c])),
     pool: list.filter((c) => (c.rarity ?? 0) >= 5).sort((a, b) => (a.charId < b.charId ? -1 : a.charId > b.charId ? 1 : 0)),
   };
 }

@@ -62,7 +62,7 @@ describe('responsive room and team layout', { skip: !ENABLED && 'set SP_E2E=1 an
           await options[[4, 8, 10, 16, 20].indexOf(capacity)].tap();
         }
         await host.waitForFunction((n) => document.querySelectorAll('.rseat').length === n, {}, capacity);
-        for (const [w, h, inset] of [[640, 360, 0], [756, 366, 0], [844, 390, 47], [932, 430, 0]]) {
+        for (const [w, h, inset] of [[390, 844, 0], [430, 932, 0], [640, 360, 0], [756, 366, 0], [844, 390, 47], [932, 430, 0], [768, 1024, 0]]) {
           await host.setViewport(viewport(w, h, true));
           await host.evaluate((n) => {
             document.documentElement.style.setProperty('--sa-l', `${n}px`);

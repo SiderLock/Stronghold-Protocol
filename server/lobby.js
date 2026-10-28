@@ -278,7 +278,7 @@ export const DEFAULT_DIFFICULTY = 'FUNNY';
 export const SOLO_RECONNECT_FALLBACK_SEC = 86_400;
 
 /** Display names for AI teammates (the tutorial NPCs first, then a few familiar faces). */
-export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·惊蛰', 'AI·杜宾', 'AI·凯尔希', 'AI·可露希尔']); // i18n-ignore: player names (docs/I18N.md)
+export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·惊蛰', 'AI·杜宾', 'AI·凯尔希', 'AI·可露希尔', 'AI·陈', 'AI·星熊', 'AI·煌', 'AI·能天使', 'AI·德克萨斯', 'AI·银灰', 'AI·塞雷娅', 'AI·艾雅法拉', 'AI·伊芙利特', 'AI·推进之王', 'AI·斯卡蒂', 'AI·铃兰', 'AI·泥岩', 'AI·棘刺']); // i18n-ignore: player names (docs/I18N.md)
 
 const OK = Object.freeze({ ok: true });
 const fail = (code, detail) => (detail ? { error: code, detail } : { error: code });
@@ -339,6 +339,10 @@ function chessCharIds(data) {
     CHESS_IDS.set(chess, ids);
   }
   return ids;
+}
+
+function cardIdAllowed(data, id) {
+  return chessCharIds(data).has(id) || (!!data?.enemies && Object.hasOwn(data.enemies, id) && /^enemy_[A-Za-z0-9_]+$/.test(id));
 }
 
 /** Deep-frozen copy of checked 自选 picks (shared by the session, the seat and the match's PlayerState). */
@@ -1689,7 +1693,6 @@ export class Lobby {
     room.pluginNoticeKeys = {};
     room.replay = null;
     const data = this.dataFor(room);
-    const operators = chessCharIds(data);
     for (const s of [...room.seats, ...room.spectators]) {
       if (!s || /** @type {any} */ (s).isBot) continue;
       const seat = /** @type {Seat} */ (s);
@@ -1701,7 +1704,7 @@ export class Lobby {
       if (s.playerId !== room.hostId) s.ready = false;
       s.loadout = null; s.ops = null; s.notOwned = null; s.diy = null;
       s.loadoutCs = null; s.notOwnedCs = null; s.diyCs = null;
-      if (s.card && !operators.has(s.card)) s.card = null;
+      if (s.card && !cardIdAllowed(data, s.card)) s.card = null;
     }
     this.log.info(`[lobby] ${room.code} version → ${version} (${how})`);
     this.broadcastState(room);
@@ -1959,13 +1962,13 @@ export class Lobby {
   }
 
   /**
-   * 名片干员 (room.card): the operator whose portrait fills the player's seat card — a visible charId of the room's
-   * chess.json (the server's outside a room), '' for none. Kept on the session and the seat; a change is broadcast to the room.
+   * room.card: a visible operator charId or an enemy key in the room's data, '' for none.
+   * Kept on the session and the seat; a change is broadcast to the room.
    * Cosmetic: accepted in any phase, never touches a match.
    */
   card(session, { charId }) {
     const room = this.roomOf(session);
-    if (charId && !chessCharIds(this.dataFor(room)).has(charId)) return fail(ERR.BAD_MSG, 'unknown operator');
+    if (charId && !cardIdAllowed(this.dataFor(room), charId)) return fail(ERR.BAD_MSG, 'unknown operator or enemy');
     session.card = charId || null;
     const seat = room ? room.seatOf(session.playerId) : null;
     if (seat && seat.card !== session.card) {
@@ -2563,7 +2566,7 @@ export class Lobby {
    * @returns {Seat}
    */
   humanSeat(idx, session, room) {
-    const card = session.card && chessCharIds(this.dataFor(room)).has(session.card) ? session.card : null;
+    const card = session.card && cardIdAllowed(this.dataFor(room), session.card) ? session.card : null;
     return {
       seat: idx, playerId: session.playerId, name: session.name, isBot: false, ready: false, connected: session.connected, left: false,
       loadout: session.loadout || null,
