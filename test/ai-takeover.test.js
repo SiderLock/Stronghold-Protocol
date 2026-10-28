@@ -33,6 +33,30 @@ test('twenty-seat AI handover preserves the fixed pool group and both negotiated
   assert.equal((await late.request({t:'g.refresh'})).t,'ok');
   assert.ok(late.log.some(msg=>msg.t==='m.state'),'state deltas remain active after the identity handover');
 });
+test('a departed host can return as spectator, leave, and take over an AI', async t => {
+  const {room, m, host, mate, player} = await fixture(t);
+  const id = host.id, bot = m.order[2];
+  assert.equal((await host.request({t:'room.leave'})).t, 'ok');
+  assert.equal(room.seatOf(id).left, true);
+  assert.equal((await host.request({t:'room.spectate', code:room.code})).t, 'ok');
+  assert.equal((await host.request({t:'room.leave'})).t, 'ok');
+  assert.equal(room.spectatorOf(id), null);
+  assert.equal(m.spectators.has(id), false);
+  assert.equal((await host.request({t:'room.spectate', code:room.code})).t, 'ok');
+  await host.terminate();
+  const resumed = await player('Host', host.token);
+  assert.equal(resumed.id, id);
+  assert.equal(room.spectatorOf(id).connected, true);
+  assert.equal(room.seatOf(id).connected, false);
+  assert.equal((await resumed.request({t:'room.aiRequest', botId:bot.playerId})).t, 'ok');
+  const vote = room.aiTakeoverVotes[0];
+  resumed.clearInbox();
+  assert.equal((await mate.request({t:'room.aiVote', voteId:vote.id, approve:true})).t, 'ok');
+  await resumed.waitFor('welcome', w => w.playerId === bot.playerId);
+  assert.equal(room.spectatorOf(id), null);
+  assert.equal(bot.isBot, false);
+  assert.equal((await resumed.request({t:'room.leave'})).t, 'ok');
+});
 test('spectator AI handover needs a strict majority and retains inventory, identity and reconnect token',async t=>{
   const {srv,room,m,host,mate,late,player}=await fixture(t),bot=m.order[2],old=late.id,id=bot.playerId,token=late.token;bot.funds=71;const piece=bot.acquireChess('chess_char_1_01_a',{fromPool:false});
   assert.equal((await host.request({t:'room.aiRequest',botId:id})).t,'error','a player cannot replace another seat');

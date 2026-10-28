@@ -802,7 +802,7 @@ export class Lobby {
     session.notice = null;
     session.pendingResult = null;
     // a player seat, or a spectator seat (header): both carry `connected` / `name`
-    const seat = room.seatOf(session.playerId) || room.spectatorOf(session.playerId);
+    const seat = room.spectatorOf(session.playerId) || room.seatOf(session.playerId);
     this.clearGrace(session.playerId);
     // Only a visible change (reconnect, rename, new host) is broadcast; a plain resync (repeated hello on a
     // live socket) answers the requester alone, so hello spam cannot amplify into room-wide traffic.
@@ -951,7 +951,7 @@ export class Lobby {
     // a solo run may be resumed within the configured window (default 2 h); everything else keeps the registry's window
     session.resumeWindowMs = room && room.match && room.mode === 'solo' ? this.soloResumeWindowMs(room) : null;
     if (!room) return;
-    const player = room.seatOf(session.playerId);
+    const player = room.spectatorOf(session.playerId) ? null : room.seatOf(session.playerId);
     const seat = player || room.spectatorOf(session.playerId);
     seat.connected = false;
     // the page may come back as a new one (a reload): it loads and checks the room's content again (header "Gameplay
@@ -1452,10 +1452,10 @@ export class Lobby {
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (!room.needsContent || room.content?.cs !== cs) return OK;
     if (!session.connected) return OK;
-    const seat = room.seatOf(session.playerId) || room.spectatorOf(session.playerId);
+    const seat = room.spectatorOf(session.playerId) || room.seatOf(session.playerId);
     if (!seat) return OK;
     if (ctx && ctx.from && (ctx.from.seat !== seat || ctx.from.gen !== (seat.contentGen || 0))) return OK;
-    if (ok !== false && room.content?.trusted && room.seatOf(session.playerId) && seat.consentCs !== cs) return fail(ERR.PLUGIN_CONSENT);
+    if (ok !== false && room.content?.trusted && !room.spectatorOf(session.playerId) && seat.consentCs !== cs) return fail(ERR.PLUGIN_CONSENT);
     const state = ok === false ? 'failed' : 'ready';
     if (seat.content === state) return OK;
     seat.content = state;
@@ -2025,7 +2025,7 @@ export class Lobby {
    */
   settingsCs(room, playerId) {
     if (!room || !room.needsContent) return this.csOf(room);
-    const seat = room.seatOf(playerId) || room.spectatorOf(playerId);
+    const seat = room.spectatorOf(playerId) || room.seatOf(playerId);
     return seat && /** @type {any} */ (seat).content === 'ready' ? this.csOf(room) : UNVERIFIED_CS;
   }
 
@@ -2480,7 +2480,7 @@ export class Lobby {
       return fail(ERR.WRONG_PHASE, 'no running chat match');
     }
     if (matchId !== ctx.chat.matchId) return fail(ERR.BAD_TARGET, 'stale chat match');
-    const member = room.seatOf(session.playerId) || room.spectatorOf(session.playerId);
+    const member = room.spectatorOf(session.playerId) || room.seatOf(session.playerId);
     if (!session.connected || this.registry.byId(session.playerId) !== session || !member || member.isBot || member.left || !member.connected) {
       return fail(ERR.NOT_IN_ROOM);
     }
@@ -2551,7 +2551,7 @@ export class Lobby {
     if (!session.roomCode) return null;
     const room = this.rooms.get(session.roomCode);
     const seat = room ? room.seatOf(session.playerId) : null;
-    if (room && !seat && room.spectatorOf(session.playerId)) return room; // a spectator seat
+    if (room && (!seat || seat.left) && room.spectatorOf(session.playerId)) return room; // a spectator may have a departed match seat
     if (!room || !seat || seat.left || seat.isBot) { session.roomCode = null; return null; }
     return room;
   }
@@ -2776,7 +2776,7 @@ export class Lobby {
   /** Match unicast. @returns {boolean} */
   sendToPlayer(room, playerId, msg, encoded = null) {
     if (room.disposed) return false;
-    const seat = room.seatOf(playerId) || room.spectatorOf(playerId);
+    const seat = room.spectatorOf(playerId) || room.seatOf(playerId);
     if (!seat || seat.isBot || seat.left) return false;
     const session = this.registry.byId(playerId);
     if (!session || session.roomCode !== room.code) return false;
