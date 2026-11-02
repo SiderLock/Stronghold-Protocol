@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { link as linkFixture, unlink as unlinkFixture } from './helpers/links.js';
 import { findSpecifiers } from '../tools/check-imports.mjs';
 import { isPlayerFile, plan, resolveSpecifier, trackedFiles } from '../tools/package.mjs';
 import {
@@ -106,7 +107,7 @@ test('a packaged server boots and plays a bot match while ignoring external-AI s
     fs.mkdirSync(path.join(stage, 'tools'), { recursive: true });
     for (const name of links) {
       const from = path.join(ROOT, name);
-      if (fs.existsSync(from)) fs.symlinkSync(from, path.join(stage, name));
+      if (fs.existsSync(from)) linkFixture(from, path.join(stage, name));
     }
     omitLlmFromRelease(stage);
     for (const rel of LLM_RELEASE_EXCLUDE) {
@@ -173,7 +174,7 @@ test('a packaged server boots and plays a bot match while ignoring external-AI s
     }
     for (const name of links) {
       const link = path.join(stage, name);
-      try { if (fs.lstatSync(link).isSymbolicLink()) fs.unlinkSync(link); } catch { /* already gone */ }
+      try { if (fs.lstatSync(link).isSymbolicLink()) unlinkFixture(link); } catch { /* already gone */ }
     }
     fs.rmSync(stage, { recursive: true, force: true });
   }

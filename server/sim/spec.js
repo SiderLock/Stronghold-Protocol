@@ -194,8 +194,8 @@ export function createBattleFromSpec(spec, dataSource, opts = {}) {
  * damage locally and shows `server hp − local damage the server has not acknowledged yet`.
  *   damage(playerId, amount)  called by the sim; returns the damage dealt (≤ the remaining displayed hp; the hit that
  *                             would leave less than BOSS_POOL_MIN_HP (1) takes the rest)
- *   sync(serverHp, ackedCum)  a b.pool broadcast: the server's hp and how much of THIS field's cumulative damage
- *                             (`cum`) it has already counted
+ *   sync(serverHp, ackedCum, maxHp)  a b.pool broadcast: the server's hp and maximum after player exits, and how much
+ *                                   of THIS field's cumulative damage (`cum`) it has already counted
  *   cum / byPlayer            cumulative damage of this field (reported as b.progress.bossDmg / .by)
  * `hp` below 1 reads 0 (the leader is down; user playtest #6 item 5): the difference of the server's float hp and the
  * local counters can leave dust (3.6e-12) smaller than half an ulp of `cum`, which no hit could remove — `cum += dust`
@@ -233,7 +233,9 @@ export class LocalBossPool {
     return dealt;
   }
 
-  sync(serverHp, ackedCum) {
+  sync(serverHp, ackedCum, maxHp) {
+    const nextMax = Number(maxHp);
+    if (Number.isFinite(nextMax) && nextMax > 0) this.maxHp = nextMax;
     const h = Number(serverHp);
     if (Number.isFinite(h)) this.serverHp = Math.max(0, Math.min(this.maxHp, h));
     const a = Number(ackedCum);
@@ -470,22 +472,24 @@ export function compactResult(res) {
 export const RESULT_FRAME_BUDGET = 60 * 1024;
 
 /**
- * Keep a compact result under the frame budget (a larger frame closes the socket: the server would take the field over
- * at the very end). Never touches what settles LP / funds / layers of a normal field. In order: drop the per-unit
- * statistics, drop the leaks' `mods` (the server rebuilds them from the spec), and — boss fields only, whose leaks cost
- * team LP through b.progress — drop leak entries. Returns the (possibly) trimmed copy.
+ * Keep a compact result under the frame budget. Never truncate survivors of a normal / 联防 field: those entries
+ * settle LP and seed the next 联防 wave. Drop per-unit statistics first. A normal / 联防 field yields if it still does
+ * not fit: duplicate enemies may have different mods, so rebuilding a leak from its key alone can change its strength
+ * or bounty. Boss fields can drop leak mods and entries because b.progress already charged their team LP. Return null
+ * if the frame still cannot fit, so the client sends b.yield and the server re-simulates the field.
  * @param {object} result compactResult(...) output
  * @param {{ bossLike?: boolean, budget?: number, battleId?: string }} [o]
  */
 export function fitResult(result, { bossLike = false, budget = RESULT_FRAME_BUDGET, battleId = '' } = {}) {
-  const size = (r) => JSON.stringify({ t: 'b.result', battleId, result: r, rid: 2147483647 }).length;
+  const size = (r) => new TextEncoder().encode(JSON.stringify({ t: 'b.result', battleId, result: r, rid: 2147483647 })).length;
   if (!result || typeof result !== 'object' || size(result) <= budget) return result;
   const r = { ...result, perPlayer: {} };
   for (const [pid, p] of Object.entries(result.perPlayer || {})) r.perPlayer[pid] = { ...p, unitStats: [] };
   if (size(r) <= budget) return r;
+  if (!bossLike) return null;
   for (const p of Object.values(r.perPlayer)) p.leaked = (p.leaked || []).map((l) => ({ ...l, mods: null }));
-  if (size(r) <= budget || !bossLike) return r;
+  if (size(r) <= budget) return r;
   for (const p of Object.values(r.perPlayer)) p.leaked = [];
   if (Array.isArray(r.unspawned)) r.unspawned = [];
-  return r;
+  return size(r) <= budget ? r : null;
 }

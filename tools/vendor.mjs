@@ -42,6 +42,8 @@ export const VENDOR_FILES = Object.freeze([
   ['node_modules/htm/dist/htm.module.js', 'htm.module.js'],
   ['node_modules/three/build/three.core.js', 'three.core.js', true],
   ['node_modules/three/build/three.module.js', 'three.module.js', true],
+  ['node_modules/@zip.js/zip.js/dist/zip-native.min.js', 'zip-native.min.js'],
+  ['node_modules/@zip.js/zip.js/LICENSE', 'zip-LICENSE.txt'],
 ]);
 
 export function vendor({ log = console.log, warn = console.warn } = {}) {

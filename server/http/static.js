@@ -54,7 +54,8 @@
 //                an old page, a URL derived from another file's — the current file with `no-cache`
 //     /data/assets.json, /data/local-assets.json, /data/local-fx.json → the served manifests (assetViews.js: every
 //                art URL with its content-hash segment; no-cache, the ETag of the view) once the asset index is ready,
-//                the files as they are before that or without an index
+//                the files as they are before that or without an index. Runtime rv queries instead name the exact
+//                rewritten snapshot the page pinned; later asset-index generations cannot replace those immutable bytes.
 //
 // Files under public/assets/ and public/fonts/ get their content hash as ETag when the index has it (a file whose
 // size or mtime changed since asks for a rescan), others size + mtime. Traversal & dotfile protection, a directory
@@ -64,11 +65,13 @@
 
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { MEDIA_PREFIX } from '../../shared/media.js';
 import { splitHashedPath } from '../../shared/assetPaths.js';
 import { ROOT, noopLog } from './config.js';
 import { sendError, sendJson } from './common.js';
-import { MIME, CompressCache, IMMUTABLE_CACHE, isNotModified, serveFile, serveBuffer } from './files.js';
+import { MIME, GzipCache, CompressCache, IMMUTABLE_CACHE, isNotModified, serveBuffer, serveFile } from './files.js';
+import { RuntimeCache } from './runtimeCache.js';
 import { ASSET_INDEX_ROOTS, hashedFileOpts } from './assetIndex.js';
 import { serveMedia } from './media.js';
 import { createPluginRegistry, sameIdentity, statIdentity } from '../plugins/registry.js';
@@ -79,7 +82,7 @@ import { PACKS_URL, PACK_INDEX_FILE } from '../../shared/packs.js';
 import { PLUGINS_URL, PLUGIN_INDEX_VERSION, buildPluginIndex, extOf, isPackPath, isPluginId } from '../../shared/plugins/manifest.js';
 import { csUrlPart } from '../../shared/plugins/identity.js';
 import { FILE_URL_DIGITS, PLUGIN_AUDIO_EXTS, PLUGIN_FILES_URL, VISUAL_DOC_FILE, VISUAL_SETS_URL, VS_URL_DIGITS } from '../../shared/plugins/visual.js';
-import { SIM_WORKER_CSP } from './csp.js';
+import { SIM_WORKER_CSP, importMapHash, buildSiteCsp } from './csp.js';
 import { UI_FRAME_CSP } from '../../shared/plugins/ui.js';
 
 /** Browser stand-in of server/data.js, served at /data.js (see the header). Served byte for byte: its first line names the entry, server/index.js. */
@@ -115,7 +118,7 @@ const CS_FILE = /^\/cs\/([0-9a-f]{16})\/([A-Za-z0-9._\/-]{1,200})$/;
  * Create the static request handler.
  * @param {{ publicDir: string, dataDir: string, sharedDir: string, simDir?: string, packsDir?: string, pluginsDir?: string,
  *   packs?: ReturnType<typeof createPluginRegistry>, content?: import('../plugins/identity.js').VanillaContent | null,
- *   log?: object,
+ *   runtimeCache?: boolean, log?: object,
  *   assetIndex?: ReturnType<typeof import('./assetIndex.js').createAssetIndex> | null,
  *   views?: ReturnType<typeof import('./assetViews.js').createManifestViews> | null,
  *   visual?: ReturnType<typeof createVisualSets> | null,
@@ -131,7 +134,7 @@ const CS_FILE = /^\/cs\/([0-9a-f]{16})\/([A-Za-z0-9._\/-]{1,200})$/;
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, rawPath: string, query: string) => Promise<void>}
  */
 export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = path.join(ROOT, 'server', 'sim'), packsDir = path.join(ROOT, 'packs'),
-  pluginsDir = path.join(path.dirname(path.resolve(packsDir)), 'plugins'), packs = null, content = null, log = noopLog,
+  pluginsDir = path.join(path.dirname(path.resolve(packsDir)), 'plugins'), packs = null, content = null, runtimeCache, log = noopLog,
   assetIndex = null, views = null, visual = null, contents = null, versions = null }) {
   const registry = packs || createPluginRegistry({ publicDir, dataDir, packsDir, pluginsDir }, { log: /** @type {any} */ (log) });
   const sets = visual || (typeof registry.pluginFile === 'function' ? createVisualSets({ registry, log }) : null);
@@ -167,8 +170,12 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     return !servedReal.some((d) => real.startsWith(d + path.sep));
   };
   const shimBody = Buffer.from(DATA_SHIM_JS);
-  const shimTag = `"shim-${shimBody.length.toString(16)}"`;
-  const gzipCache = new CompressCache(); // brotli and gzip bodies (files.js)
+  const shimTag = `shim-${createHash('sha256').update(shimBody).digest('hex')}`;
+  const gzipCache = new GzipCache();
+  const manifestSource = views ? { ready: () => assetIndex?.whenReady(), get: (name) => views.get(name) } : null;
+  const runtime = new RuntimeCache({ publicDir, dataDir, sharedDir, simDir, shimBody, manifestSource, enabled: runtimeCache });
+  const immutable = 'public, max-age=31536000, immutable';
+  const stale = (req, res) => sendError(req, res, 409, '页面资源版本已变化，请刷新页面 · Runtime version changed, reload');
 
   return async function serveStatic(req, res, rawPath, query) {
     let decoded;
@@ -194,10 +201,10 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     const urlHash = hashed.hash;
     decoded = hashed.path;
     if (decoded === '/data.js') {
-      const headers = { 'Content-Type': MIME['.js'], 'Cache-Control': 'no-cache', ETag: shimTag, 'Content-Length': shimBody.length };
-      if (isNotModified(req, shimTag, new Date(0))) { delete headers['Content-Length']; res.writeHead(304, headers); res.end(); return; }
-      res.writeHead(200, headers);
-      res.end(req.method === 'HEAD' ? undefined : shimBody);
+      const version = await runtime.version(decoded, query);
+      if (version === false) { stale(req, res); return; }
+      await serveBuffer(req, res, shimBody, { type: MIME['.js'], tag: version ? `rv-${version.hash}` : shimTag,
+        cacheControl: version ? immutable : 'no-cache', cache: gzipCache });
       return;
     }
     // The plugin catalogue (server/plugins/registry.js; never cached) and the vanilla content set's manifest
@@ -289,7 +296,14 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
     if (views && (decoded === '/data/assets.json' || decoded === '/data/local-assets.json' || decoded === '/data/local-fx.json')) {
       const view = await views.get(decoded.slice('/data/'.length));
       if (view) {
-        await serveBuffer(req, res, { body: view.body, hash: view.hash, type: MIME['.json'], cacheControl: 'no-cache', key: `view:${decoded}`, cache: gzipCache });
+        // ?rv=<sha256 of these exact bytes> is the runtime pin (D022): immutable only when it matches,
+        // and the frozen pin keeps its bytes after a rescan.
+        const version = await runtime.version(decoded, query);
+        if (version === false) { stale(req, res); return; }
+        // A pinned manifest keeps its frozen bytes after a rescan (runtime body()).
+        const body = version ? (version.frozenBody || view.body) : view.body;
+        await serveBuffer(req, res, { body, hash: version ? `rv-${version.hash}` : view.hash, type: MIME['.json'],
+          cacheControl: version ? immutable : 'no-cache', key: `view:${decoded}`, cache: gzipCache });
         return;
       }
     }
@@ -341,6 +355,7 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       if (e && e.code === 'ENOENT' && mount.name === 'data' && segments.length === 1 && LOCAL_ART_MANIFESTS.has(segments[0])) {
         // Optional local-client art (DESIGN §13): an install without it gets an empty manifest instead of a 404,
         // so browsers don't log an error on every page load. Clients treat empty groups as "no local art".
+        if (new URLSearchParams(query).has('rv')) { stale(req, res); return; }
         res.writeHead(200, { 'Content-Type': MIME['.json'], 'Cache-Control': 'no-cache', 'Content-Length': EMPTY_LOCAL_ART.length });
         res.end(req.method === 'HEAD' ? undefined : EMPTY_LOCAL_ART);
       } else if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR' || e.code === 'EISDIR' || e.code === 'ENAMETOOLONG')) {
@@ -351,6 +366,15 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
         log.error('[http] stat failed', e);
         sendError(req, res, 500, '服务器内部错误 · Internal error');
       }
+      return;
+    }
+    const version = await runtime.version(decoded, query);
+    if (version === false) { stale(req, res); return; }
+    if (version) {
+      const body = await runtime.body(version, stat);
+      if (!body) { stale(req, res); return; }
+      await serveBuffer(req, res, body, { type: MIME[path.extname(absPath).toLowerCase()] || 'application/octet-stream',
+        tag: `rv-${version.hash}`, cacheControl: immutable, mtime: version.frozenBody ? null : stat.mtime, cache: gzipCache });
       return;
     }
     const first = segments[0] || '';
@@ -364,6 +388,21 @@ export function createStaticHandler({ publicDir, dataDir, sharedDir, simDir = pa
       const real = await fsp.realpath(absPath);
       const worker = await fsp.realpath(path.join(publicDir, 'js/battle/simWorker.js')).catch(() => null);
       if (real === worker) res.setHeader('Content-Security-Policy', SIM_WORKER_CSP);
+    }
+    if (mount.name === 'public' && absPath === path.join(mount.dir, 'index.html')) {
+      let rendered;
+      try { rendered = await runtime.renderIndex(absPath); }
+      catch (error) { log.warn?.('[http] runtime cache unavailable, serving revalidated HTML', error.message); }
+      if (rendered) {
+        // The served import map is rewritten (?rv= pins). Its CSP hash must match those bytes, or the
+        // browser blocks the inline map and every module fails to load.
+        const text = rendered.body.toString('utf8');
+        const m = /<script\s+type=["']importmap["']\s*>([\s\S]*?)<\/script>/.exec(text);
+        if (m) res.setHeader('Content-Security-Policy', buildSiteCsp([importMapHash(m[1])]));
+        // Only a content ETag validates generated HTML: index.html's mtime alone cannot detect a data-only update.
+        await serveBuffer(req, res, rendered.body, { type: MIME['.html'], tag: rendered.tag, cache: gzipCache });
+        return;
+      }
     }
     const indexed = mount.name === 'public' && segments.length > 1 && ASSET_INDEX_ROOTS.includes(segments[0]);
     const opts = indexed ? hashedFileOpts(assetIndex, segments.join('/'), stat, urlHash) : (urlHash ? { cacheControl: 'no-cache' } : {});

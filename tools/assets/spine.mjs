@@ -205,11 +205,17 @@ export function applyRoleFix(roles, fix, durations) {
   const out = { ...roles };
   const missing = [];
   const has = (n) => n == null || Object.hasOwn(durations || {}, n);
-  const clipOk = (c) => !!c && typeof c === 'object' && [c.begin, c.loop, c.end, c.idle].every(has);
+  const valid = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object'
+    ? [v.begin, v.loop, v.end, v.idle] : [null]).every(has);
   for (const [role, v] of Object.entries(fix)) {
-    // a clip name, a clip, null (no such role) — or for `skills` a map slot → clip, every slot's clips checked
-    const ok = typeof v === 'string' ? has(v) : v == null ? true : role === 'skills' ? Object.values(v).every(clipOk) : clipOk(v);
-    if (ok) out[role] = v;
+    if (role === 'skills' && v && typeof v === 'object') {
+      // An outfit can rename only one skill family. Validate each nested clip before borrowing a base-model fix.
+      out.skills = { ...roles.skills };
+      for (const [index, skill] of Object.entries(v)) {
+        if (valid(skill)) out.skills[index] = skill;
+        else missing.push(`skills.${index}`);
+      }
+    } else if (valid(v)) out[role] = v;
     else missing.push(role);
   }
   return { roles: out, missing };

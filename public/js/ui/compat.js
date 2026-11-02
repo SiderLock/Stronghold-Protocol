@@ -63,7 +63,10 @@ function cloneValue(v, seen) {
   let out;
   if (v instanceof Date) out = new Date(v.getTime());
   else if (v instanceof RegExp) out = new RegExp(v.source, v.flags);
-  else if (ArrayBuffer.isView(v)) out = new v.constructor(v);
+  else if (ArrayBuffer.isView(v)) {
+    const buffer = cloneValue(v.buffer, seen);
+    out = v instanceof DataView ? new DataView(buffer, v.byteOffset, v.byteLength) : new v.constructor(buffer, v.byteOffset, v.length);
+  }
   else if (v instanceof ArrayBuffer) out = v.slice(0);
   else if (v instanceof Map) {
     out = new Map();

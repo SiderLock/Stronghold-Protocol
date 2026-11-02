@@ -1,20 +1,24 @@
 // Normative message catalogue (DESIGN §8). Used by server (validation) and client (building requests).
 // Every client→server message is `{ t, rid?, ...fields }`. Unknown `t` or invalid fields ⇒ ERR.BAD_MSG.
 
-import { DIFFICULTIES, NAME_MAX_LEN, ROOM_CODE_LEN, MAX_SEATS, EMOTES, GEO, REHEARSAL_MAX_CANDIDATES } from './constants.js';
+import { DIFFICULTIES, NAME_MAX_LEN, ROOM_CODE_LEN, MAX_SEATS, ROOM_CAPACITIES, MAX_DRAFT_CARDS, EMOTES, GEO, REHEARSAL_MAX_CANDIDATES } from './constants.js';
 import { isDroppableChess } from './standIn.js';
 import { diySlotIds, validateDiyPicks } from './diy.js';
 import { cultivatedStats, isPotential, isCultivate, POTENTIAL_DEFAULT, CULTIVATE_DEFAULT, hasPotentialData } from './potential.js';
+import { isAssetCacheReadiness } from './assetCache.js';
+import { isChatTextInput } from './matchChat.js';
 import { isContentHash } from './plugins/identity.js';
 import { isPluginId } from './plugins/manifest.js';
 import { isTestCommand } from './testMode.js';
 import { PLUGIN_OFFER_SLOTS } from './plugins/limits.js';
+import { isSkinId, isCharId, isSkinSelection, isSkinPool } from './skins.js';
 
 // ---- tiny validators -------------------------------------------------------
 const isInt = (v, lo = -Infinity, hi = Infinity) => Number.isInteger(v) && v >= lo && v <= hi;
 const isStr = (v, max = 64) => typeof v === 'string' && v.length <= max;
 const isBool = (v) => typeof v === 'boolean';
 const isId = (v) => typeof v === 'string' && v.length > 0 && v.length <= 64 && /^[A-Za-z0-9_\-.:]+$/.test(v);
+const isRoomId = (v) => isStr(v, 36) && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(v);
 const isUid = (v) => isInt(v, 1, 2 ** 31);
 const isNum = (v, lo = -Infinity, hi = Infinity) => typeof v === 'number' && Number.isFinite(v) && v >= lo && v <= hi;
 const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
@@ -36,10 +40,14 @@ const isPeerDescription = (v) => isPlain(v) && (v.type === 'offer' || v.type ===
 const isPeerCandidate = (v) => isPlain(v) && isStr(v.candidate, 2048)
   && (v.sdpMid === null || isStr(v.sdpMid, 256)) && (v.sdpMLineIndex === null || isInt(v.sdpMLineIndex, 0, 65535));
 
+// A viewed group never grants authority: Match derives the player's own group, then checks these optional guards.
+const draftScope = { draftId: isId, groupId: (v) => isInt(v, 1, 5) };
+const draftScopeOptional = ['draftId', 'groupId'];
+
 // ---- client-side combat (DESIGN §14): b.progress / b.result payloads -------------------------------------------
 
 /** Size limits of a b.result payload (the whole frame also obeys the 64 KB inbound limit). */
-export const RESULT_LIMITS = Object.freeze({ players: 4, leaked: 400, unitsEnd: 64, unitStats: 160, layerGains: 40, mods: 16, unspawned: 400 });
+export const RESULT_LIMITS = Object.freeze({ players: 4, sources: MAX_SEATS, leaked: 400, unitsEnd: 64, unitStats: 160, layerGains: 40, mods: 16, unspawned: 400 });
 const BIG = 1e13;
 const isStat = (v) => v === undefined || isNum(v, 0, BIG);
 const isModVal = (v) => v === null || isNum(v, -BIG, BIG) || isStr(v, 64) || isBool(v);
@@ -283,27 +291,7 @@ export function checkLoadoutOps(ops, isOperator, changesWithPotential = null) {
  * `checkSkinSelection`: that entry is dropped and the rest kept. A skinId the manifest does not hold still draws the
  * operator's default model (`spineEntry`).
  */
-export const SKIN_LIMITS = Object.freeze({
-  // [ASSUMED] absolute ceiling of one message. The practical cap is the operator count of the room's content
-  // (checkSkinSelection drops the rest); 256 is above the vanilla roster (210) and the same order as the loadout's
-  // operator map. A larger map is refused whole, the way an over-long loadout is.
-  entries: 256, idLen: 64, charIdLen: 64,
-});
-/** A skinId. NOT `isId`: that allows only `[A-Za-z0-9_\-.:]`, while a skin key carries `@` and `#` (`char_002_amiya@winter#1`). The same character class as shared/plugins/visual.js `isSkinKey`. */
-export const isSkinId = (v) => typeof v === 'string' && v.length > 0 && v.length <= SKIN_LIMITS.idLen && /^[A-Za-z0-9_][A-Za-z0-9_@#+.\-]*$/.test(v);
-/**
- * An operator charId. Official ids are `char_<digits>_<token>` (character_table / data/chess.json: `char_498_inside`,
- * `char_1012_skadi2`, `char_4145_ulpia`, `char_616_pithst`). A plugin operator is `char_x_<id>`
- * (shared/plugins/recordsSchema.js). A chess id (`chess_char_1_01_a`) is not one: `isId` would accept it.
- */
-export const CHAR_ID = /^char_(?:x_[A-Za-z0-9_-]+|[0-9]+_[A-Za-z0-9_]+)$/;
-export const isCharId = (v) => typeof v === 'string' && v.length <= SKIN_LIMITS.charIdLen && CHAR_ID.test(v);
-/**
- * Structural check of `room.skins.skins`: a plain object of ≤ 256 entries, keyed by an operator charId, each value a
- * skinId. Anything else — an array, a null-prototype object, a chess id, a bad skin id, one more entry — is refused
- * as a whole (BAD_MSG). The room's own operator list is not known here.
- */
-export const isSkinSelection = (v) => isMap(v, SKIN_LIMITS.entries, isCharId, isSkinId);
+export { SKIN_LIMITS, SKIN_RANDOM_LIMITS, CHAR_ID, isSkinId, isCharId, isSkinSelection, isSkinPool } from './skins.js';
 
 const SKIN_OPS = new WeakMap();
 /**
@@ -502,9 +490,18 @@ export const C2S = {
   // `m.state` frames. Omitted by every client that cannot decode them — those keep receiving the plain frames, and a
   // server that does not know the field ignores it (it is only read after a full validateC2S pass).
   hello: { name: (v) => isStr(v, NAME_MAX_LEN) && v.trim().length > 0, token: (v) => v == null || isStr(v, 64), version: (v) => v == null || isInt(v, 0, 1e6),
-    noReplace: isBool, claimAt: (v) => isNum(v, 0, Number.MAX_SAFE_INTEGER), delta: (v) => v == null || isInt(v, 0, 1e6),
-    $optional: ['token', 'version', 'noReplace', 'claimAt', 'delta'] },
+    noReplace: isBool, claimAt: (v) => isNum(v, 0, Number.MAX_SAFE_INTEGER), wire: (v) => isInt(v, 0, 1e6), delta: (v) => v == null || isInt(v, 0, 1e6),
+    $optional: ['token', 'version', 'noReplace', 'claimAt', 'wire', 'delta'] },
   ping: { c: (v) => typeof v === 'number' && Number.isFinite(v) },
+  // Lightweight directory subscription; only the opened list carries one bounded page of room summaries.
+  'lobby.watch': { on: isBool, list: isBool, page: (v) => isInt(v, 0, 1e6), $optional: ['list', 'page'] },
+  // Admission metadata uses the existing wire-v1 extension slot; published position layouts stay unchanged.
+  'lobby.quickMatch': { capacity: (v) => ROOM_CAPACITIES.includes(v), assetCache: isAssetCacheReadiness, $optional: ['capacity', 'assetCache'] },
+  // Post-v1 types use the readable JSON fallback; public identities never expose hidden invitation codes.
+  'lobby.join': { roomId: isRoomId,
+    assetCache: isAssetCacheReadiness, $optional: ['assetCache'] },
+  'lobby.spectate': { roomId: isRoomId,
+    assetCache: isAssetCacheReadiness, $optional: ['assetCache'] },
   // test: only the literal true (DESIGN §34.8). Omit it for a normal room — `false` is a bad field, so a
   // string cannot sneak in as "not a test". The server still refuses it unless SP_TEST_MODE is on.
   // difficulty: may be left out — the room starts at the server's default (server/lobby.js DEFAULT_DIFFICULTY) and the
@@ -512,16 +509,20 @@ export const C2S = {
   // soloUnlimited: the timed-solo opt-out 「不限时」 (DESIGN §35.23.10). Optional, and only the literal boolean —
   // the server applies `true` solely to a solo room of a version whose solo is timed, and ignores it otherwise, so a
   // default create stays the message it was.
-  'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), test: (v) => v === true, version: isVersionId, soloUnlimited: isBool, $optional: ['test', 'difficulty', 'version', 'soloUnlimited'] },
-  'room.join': { $optional: ['testAck'], testAck: (v) => v === true, code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
+  'room.create': { mode: (v) => v === 'solo' || v === 'coop', difficulty: (v) => DIFFICULTIES.includes(v), capacity: (v) => ROOM_CAPACITIES.includes(v),
+    assetCache: isAssetCacheReadiness, test: (v) => v === true, version: isVersionId, soloUnlimited: isBool,
+    $optional: ['capacity', 'assetCache', 'test', 'difficulty', 'version', 'soloUnlimited'] },
+  'room.join': { code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v), assetCache: isAssetCacheReadiness,
+    testAck: (v) => v === true, $optional: ['assetCache', 'testAck'] },
   'p2p.enable': { enabled: isBool },
   'p2p.signal': { epoch: isId, to: isId, description: isPeerDescription, candidate: isPeerCandidate, $optional: ['description', 'candidate'] },
   'p2p.ready': { epoch: isId, ready: isBool, seq: (v) => Number.isSafeInteger(v) && v >= 0 },
   'room.leave': {},
   'room.ready': { ready: isBool },
   'room.setDifficulty': { difficulty: (v) => DIFFICULTIES.includes(v) },
-  // the co-op room option 「AI 队友最后选择」 (GitHub #338; host, before the match): the strategy and 机变 drafts order every
-  // human seat before every AI seat (server/match/match/phases.js humansFirst); room.state.aiPicksLast
+  'room.setCapacity': { capacity: (v) => ROOM_CAPACITIES.includes(v) },
+  'room.setMatchmaking': { allowed: isBool },
+  // Upstream compatibility: this branch exposes the manual-human-first rule as fixed on; disabling is refused.
   'room.setAiPicksLast': { on: isBool },
   // 「不限时」 (DESIGN §35.23.10; host, before the match, a solo room of a version whose solo is timed): the match's
   // preparation and 机变 stay untimed (Match opts.soloUnlimited). Off by default; room.state omits the key unless it is on.
@@ -532,13 +533,20 @@ export const C2S = {
   'room.aiRequest': { botId: isId },
   'room.aiVote': { voteId: (v) => typeof v === 'string' && v.length <= 16, approve: isBool },
   'room.addBot': {},
-  'room.removeBot': { seat: (v) => isInt(v, 0, MAX_SEATS - 1) },
+  'room.removeBot': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: isId, $optional: ['playerId'] },
   // the host removes another human before the match (server/lobby.js kick; community report #17); playerId = the one the
   // host confirmed — a seat that changed hands meanwhile is refused
   'room.kick': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: isId },
+  // Transfer names a current human, never a position that may have changed while the dialog was open.
+  'room.transferHost': { playerId: isId },
+  'room.requestSeat': { seat: (v) => isInt(v, 0, MAX_SEATS - 1), playerId: (v) => v === null || isId(v) },
+  'room.answerSeat': { requestId: isId, accept: isBool },
   'room.start': {},
   'room.rerollSetup': { setupRevision: (v) => isInt(v, 0, 2 ** 31) },
   'room.cancelReroll': { voteId: (v) => isInt(v, 1, 2 ** 31) },
+  // 申请重刷 (GitHub #854): a non-host asks the host to start the vote (server/match/match/setupVote.js
+  // askSetupReroll) — no setup changes; m.public.rerollRequests lists the pendings
+  'room.requestReroll': { setupRevision: (v) => isInt(v, 0, 2 ** 31) },
   // official versions (DESIGN §35.23, M1; before the match): the host proposes the room's version; the seated humans vote
   // like 重刷 (unanimous, a decline cancels, a lone human switches at once); room.state.version / versionVote
   'room.proposeVersion': { version: isVersionId },
@@ -549,10 +557,10 @@ export const C2S = {
   'room.loadout': { entries: isLoadoutEntries, ops: isLoadoutOps, $optional: ['ops'] },
   // 干员皮肤 (docs/SKINS.md): the appearances the player wears, keyed by operator charId; PUBLIC, so it is accepted in
   // any room phase (the loadout locks at INFO_CHECK because it changes what a unit does; a skin changes only the model)
-  'room.skins': { skins: isSkinSelection },
+  'room.skins': { skins: isSkinSelection, randomMode: optional(v => v === 'match'), skinPool: optional(isSkinPool) },
   // 名片干员 (PR #643 split 6): the operator whose portrait fills the player's seat card in the waiting room — an
   // operator charId ('' for none; the server keeps only a visible charId of the room's chess.json); cosmetic, any room phase
-  'room.card': { charId: (v) => v === '' || isCharId(v) },
+  'room.card': { charId: (v) => v === '' || isCharId(v) || (isId(v) && /^enemy_[A-Za-z0-9_]+$/.test(v)) },
   // operator ownership (干员持有, 0.2.0 补位): stored per session / seat; a match takes the list its seat had when it
   // started (an out-of-match setting — during a match it is stored for the next one: ROOM_STARTED)
   'room.ownership': { notOwned: isNotOwnedList },
@@ -562,7 +570,8 @@ export const C2S = {
   // spectator seats (remake feature, community report #26; MAX_SPECTATORS): take one of a co-op room's spectator seats —
   // in its lobby or while its match runs — never a player seat; the host frees one by playerId (the spectator gets
   // room.closed { reason: 'kicked' }). room.leave / g.leave leave a spectator seat like a player seat.
-  'room.spectate': { $optional: ['testAck'], testAck: (v) => v === true, code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v) },
+  'room.spectate': { code: (v) => isStr(v, ROOM_CODE_LEN + 2) && /^[A-Za-z0-9]+$/.test(v), assetCache: isAssetCacheReadiness,
+    testAck: (v) => v === true, $optional: ['assetCache', 'testAck'] },
   'room.removeSpectator': { playerId: isId },
   // the room's plugins (DESIGN §32, P1a; host, before the match — like a difficulty change it un-readies the others):
   // the plugins of this server the room switches on, in any order (the server closes the set over their requirements
@@ -584,11 +593,11 @@ export const C2S = {
   // match
   'g.infoReady': { setupRevision: (v) => isInt(v, 0, 2 ** 31), $optional: ['setupRevision'] },
   'g.rerollVote': { voteId: (v) => isInt(v, 1, 2 ** 31), agree: isBool },
-  'g.band': { bandId: isId },
-  'g.bandSkip': {},
+  'g.band': { bandId: isId, ...draftScope, $optional: draftScopeOptional },
+  'g.bandSkip': { ...draftScope, $optional: draftScopeOptional },
   // the strategy highlighted in the draft screen (user playtest #4 item 4): a turn that runs out takes it while it is
   // free (Match.timeoutBand); absent / null clears it
-  'g.bandFocus': { bandId: nullable(isId), $optional: ['bandId'] },
+  'g.bandFocus': { bandId: nullable(isId), ...draftScope, $optional: ['bandId', ...draftScopeOptional] },
   'g.buy': { slot: (v) => isInt(v, 0, 15) },
   'g.refresh': {},
   'g.freeze': {},
@@ -604,7 +613,7 @@ export const C2S = {
   // unequip (DESIGN §34.15): one equipped item back to the hand, else the visible temp window. Official rooms refuse it.
   'g.unequip': { itemUid: isUid },
   'g.reward': { idx: (v) => isInt(v, 0, 5) },
-  'g.choice': { idx: (v) => isInt(v, 0, 5), choiceId: isId, $optional: ['choiceId'] },
+  'g.choice': { idx: (v) => isInt(v, 0, MAX_DRAFT_CARDS - 1), choiceId: isId, ...draftScope, $optional: ['choiceId', ...draftScopeOptional] },
   // a plugin interaction window (PLUGIN API v2, docs/PLUGINS.md §10b): offerId is the window's declared id, idx the
   // slot picked; g.offerRefresh redraws one slot (the window's own `refresh.perSlot` bounds how often). The host
   // applies the window's declared effect primitive — a plugin never receives these messages itself.
@@ -612,6 +621,8 @@ export const C2S = {
   'g.offerRefresh': { offerId: isId, pluginId: isId, seq: (v) => isInt(v, 0, 1000000), cardId: optional(isId), idx: (v) => isInt(v, 0, PLUGIN_OFFER_SLOTS - 1) },
   'g.ready': { ready: isBool },
   'g.emote': { id: (v) => EMOTES.includes(v) },
+  // Match-only room communication, dispatched by Lobby independently of gameplay/spectator restrictions.
+  'room.chat': { matchId: isId, text: isChatTextInput },
   // playerId: the player tapped in the team panel (a 联防 / boss pair field shows two) — what an eliminated viewer or a
   // spectator seat follows from then on (Match.watchPref; community report of 2026-10-06, item 56)
   'g.watch': { fieldId: (v) => isStr(v, 32), playerId: isId, $optional: ['playerId'] },
@@ -619,6 +630,7 @@ export const C2S = {
   // solo pause (official PauseUp / ResumeUp, DESIGN §14): freezes the running battle (field clock, deadlines, the
   // browser's local runner) — solo matches only (co-op ⇒ WRONG_PHASE), only while a battle runs; m.public.paused
   'g.pause': { on: isBool },
+  'g.uniteSkipVote': { voteId: isId, $optional: ['voteId'] },
   // the stats the own board's units start their next battle with (user playtest #4 item 7; prep phases): answered by
   // the push m.unitStats { seq, round, units: [unitStatsEntry] }; `seq` is echoed so the client keeps the newest answer
   'g.unitStats': { seq: (v) => isInt(v, 0, 2 ** 31), $optional: ['seq'] },
@@ -639,7 +651,7 @@ export const C2S = {
     resolved: (v) => isInt(v, 0, 1e5),
     leaks: (v) => isNum(v, 0, 1e6), bossDmg: (v) => isNum(v, 0, BIG),
     by: (v) => isMap(v, RESULT_LIMITS.players, isId, (x) => isNum(x, 0, BIG)), done: isBool,
-    left: (v) => isMap(v, RESULT_LIMITS.players, isId, (x) => isInt(x, 0, 1e5)),
+    left: (v) => isMap(v, RESULT_LIMITS.sources, isId, (x) => isInt(x, 0, 1e5)),
     leaksBy: (v) => isMap(v, RESULT_LIMITS.players, isId, (x) => isNum(x, 0, 1e6)),
     $optional: ['resolved', 'leaks', 'bossDmg', 'by', 'done', 'left', 'leaksBy'],
   },
@@ -647,6 +659,8 @@ export const C2S = {
   // with gameplay plugins (P1c, DESIGN §32.6) the match refuses a result without it or with another one (and runs the
   // battle itself); a vanilla room's browser sends none
   'b.result': { battleId: isId, result: isBattleResult, cs: isContentHash, $optional: ['cs'] },
+  // A result too large for the socket (or beyond the result list caps) is re-simulated by the server instead.
+  'b.yield': { battleId: isId },
   // A delegated bot layout rehearsal (DESIGN §14): the match's current host answers the candidates it was handed with
   // the S2C 'b.rehearsal' frame. `choice` is the index of the candidate its browser picked, in the order the task sent
   // them — a malicious or buggy client can only name one of the server's own candidate layouts, never a layout or a
@@ -668,9 +682,14 @@ export const C2S = {
 // Server → client message types (documentation + client dispatch table keys).
 export const S2C = [
   'welcome', 'ok', 'error', 'pong',
+  'announcement.notice', // explicit server-owner command; publication alone never sends this push
+  'lobby.state',
   'p2p.config', 'p2p.signal', 'p2p.frame',
   'room.state', 'room.closed',
   'm.public', 'm.private', 'm.field', 'm.toast', 'm.ticker', 'm.emote', 'm.result',
+  // Post-v1 JSON fallback; repeated in welcome.emergency and match public freeze extensions.
+  'm.emergency',
+  'm.chat', 'm.chatState', // bounded ephemeral history; new types use v1's readable JSON fallback
   // m.layer { playerId, bondId, add } — own live prep layer gain; ephemeral, never replayed on resync.
   'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)

@@ -15,6 +15,8 @@ function fakeNet(count, { alive = true, session = {} } = {}) {
   net.log = { debug() {}, error() {}, info() {}, warn() {} };
   net.now = () => 10_000;
   net.closed = false;
+  net.emergency = { active: false };
+  net.handler = {};
   net.conns = new Map();
   for (let i = 0; i < count; i++) {
     const conn = {

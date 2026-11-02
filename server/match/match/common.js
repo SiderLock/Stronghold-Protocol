@@ -19,7 +19,7 @@ export const DELAYS = Object.freeze({
   SETTLE: 3000,
   BOT_ACTION: 900,
   BOT_STAGGER: 350,
-  PUBLIC_THROTTLE: 100,
+  PUBLIC_THROTTLE: 125,
 });
 
 /**

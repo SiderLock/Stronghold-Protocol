@@ -19,7 +19,7 @@ import {
 } from '../../public/js/ui/stats.js';
 import { createStore, emptyMatch } from '../../public/js/store.js';
 import { normalizeResult } from '../../public/js/ui/gameLogic.js';
-import { PHASE } from '../../shared/constants.js';
+import { MAX_SEATS, PHASE } from '../../shared/constants.js';
 
 /** A realistic m.result in the shape server/match/results.js buildResult emits (replayed byte-identically). */
 function baseResult(over = {}) {
@@ -135,6 +135,71 @@ describe('local stats: record building', () => {
     assert.equal(buildRecord(baseResult(), { myId: 'spec9', now: 1 }), null);
     assert.equal(buildRecord(baseResult({ players: [] }), { myId: 'p1', now: 1 }), null);
     assert.equal(buildRecord(null, { myId: 'p1' }), null);
+  });
+
+  test('a 20-player match keeps the final seat\'s own win or loss through storage, import and settlement replay', () => {
+    for (const victory of [true, false]) {
+      const selfId = 'p19';
+      const other = { ...baseResult().players[1], alive: !victory, victory: !victory };
+      const players = Array.from({ length: MAX_SEATS }, (_, seat) => ({ ...other, playerId: `p${seat}`, seat }));
+      players[19] = {
+        ...baseResult().players[0], playerId: selfId, seat: 19, alive: victory, victory,
+        roundsPassed: victory ? 16 : 7, eliminatedRound: victory ? null : 8, lp: victory ? 24 : 0,
+      };
+      const res = baseResult({ modeId: 'mode_multi_hard', players });
+      const checkOwnResult = (rec) => {
+        assert.equal(rec.players.length, MAX_SEATS);
+        assert.equal(rec.selfId, selfId);
+        const self = selfRowOf(rec);
+        assert.equal(self.playerId, selfId);
+        assert.equal(self.seat, 19);
+        assert.equal(self.alive, victory);
+        assert.equal(self.victory, victory);
+        assert.equal(self.bandId, 'band_amiya');
+        assert.equal(self.roundsPassed, victory ? 16 : 7);
+        assert.equal(self.stats.kills, 41);
+        const agg = aggregateStats([rec]);
+        assert.equal(agg.count, 1);
+        assert.equal(agg.wins, victory ? 1 : 0);
+        assert.deepEqual(agg.bands, { band_amiya: { games: 1, wins: victory ? 1 : 0 } });
+        assert.equal(agg.rounds.total, victory ? 16 : 7);
+        assert.equal(agg.sums.kills, 41);
+        assert.equal(agg.sums.gold, 880);
+      };
+      withStorage(() => {
+        const rec = buildRecord(res, { myId: selfId, roomMode: 'coop', now: 1000 });
+        checkOwnResult(rec);
+        assert.equal(saveStats(appendRecord(emptyStats(), rec).stats), true);
+        const loaded = loadStats();
+        checkOwnResult(loaded.records[0]);
+        const imported = importStats(JSON.parse(JSON.stringify(exportStats(loaded))), emptyStats());
+        assert.equal(imported.added, 1);
+        assert.equal(imported.dropped, 0);
+        checkOwnResult(imported.stats.records[0]);
+        const replay = recordToResult(imported.stats.records[0]);
+        assert.deepEqual(replay.players, rec.players);
+        assert.equal(replay.players.find((p) => p.playerId === selfId).victory, victory);
+        const view = normalizeResult(replay, null);
+        assert.equal(view.players.length, MAX_SEATS);
+        const self = view.players.find((p) => p.playerId === selfId);
+        assert.equal(self.alive, victory);
+        assert.equal(self.bandId, 'band_amiya');
+        assert.equal(self.roundsPassed, victory ? 16 : 7);
+        assert.equal(self.stats.kills, 41);
+        assert.equal(buildRecord(res, { myId: 'spec9', now: 2000 }), null, 'a spectator does not record this match');
+      });
+    }
+  });
+
+  test('spectator rows do not use the player capacity or count as a local player', () => {
+    const players = Array.from({ length: MAX_SEATS }, (_, seat) => ({ ...baseResult().players[0], playerId: `p${seat}`, seat }));
+    const spectator = { playerId: 'spec9', spectator: true, alive: false };
+    const res = baseResult({ players: [spectator, ...players] });
+    const rec = buildRecord(res, { myId: 'p19', now: 1000 });
+    assert.equal(rec.players.length, MAX_SEATS);
+    assert.deepEqual(rec.players.map((p) => p.playerId), players.map((p) => p.playerId));
+    assert.equal(selfRowOf(rec).playerId, 'p19');
+    assert.equal(buildRecord(res, { myId: spectator.playerId, now: 1000 }), null);
   });
 
   test('roomMode falls back to the modeId (single → solo, multi → coop, else null)', () => {
@@ -478,8 +543,8 @@ describe('local stats: bounded storage', () => {
       })),
       bigUnknown: 'y'.repeat(1e6),
     });
-    assert.ok(JSON.stringify(rec).length < 40_000, `${JSON.stringify(rec).length} chars`);
-    assert.equal(rec.players.length, 6);
+    assert.ok(JSON.stringify(rec).length < 140_000, `${JSON.stringify(rec).length} chars`);
+    assert.equal(rec.players.length, MAX_SEATS);
     assert.equal(rec.players[0].lineup.length, 12);
     assert.equal(rec.players[0].lineup[0].items.length, 4);
     assert.equal(rec.players[0].name.length, 24);

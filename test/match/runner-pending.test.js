@@ -256,7 +256,7 @@ test('solo pause during the catch-up: the paused time is not caught up', async (
   r.runner.dispose();
 });
 
-test('b.pool during the catch-up of a boss field reaches its Battle at once', async () => {
+test('b.pool during the catch-up of a boss field updates both HP and its resized maximum at once', async () => {
   const start = realBossStart();
   const r = rig();
   r.net.emit('b.start', { ...start, elapsed: 30 });
@@ -264,10 +264,28 @@ test('b.pool during the catch-up of a boss field reaches its Battle at once', as
   await tick();
   assert.equal(r.runner._entries.size, 0, 'still catching up');
   const pool = r.built[0].sharedBoss;
-  const hp = pool.maxHp * 0.75;
-  r.net.emit('b.pool', { hp, max: pool.maxHp, teamLp: 20, acked: { [start.fieldId]: pool.cum } });
+  const max = pool.maxHp * 0.75;
+  const hp = max * 0.75;
+  r.net.emit('b.pool', { hp, max, teamLp: 20, acked: { [start.fieldId]: pool.cum } });
+  assert.equal(pool.maxHp, max, 'the pending battle sees the resized pool');
   assert.ok(Math.abs(pool.hp - hp) < 1e-6, 'the server hp when everything is acknowledged');
   await r.frames(3);
+  assert.equal(r.runner._entries.get(start.battleId).battle, r.built[0]);
+  r.runner.dispose();
+});
+
+test('b.pool while the sim loader is pending: the constructed boss field uses the latest HP and maximum', async () => {
+  const start = realBossStart();
+  const r = rig();
+  await startAt(r, 'load', start);
+  const max = start.spec.boss.poolMax * 0.75;
+  const hp = max * 0.75;
+  r.net.emit('b.pool', { hp, max, teamLp: 20, acked: { [start.fieldId]: 0 } });
+  await prepared(r, 'load');
+  assert.equal(r.built.length, 1, 'only one battle was constructed');
+  const pool = r.built[0].sharedBoss;
+  assert.equal(pool.maxHp, max, 'the latest maximum replaces the stale b.start maximum');
+  assert.ok(Math.abs(pool.hp - hp) < 1e-6, 'the latest pool HP is used before any simulation tick');
   assert.equal(r.runner._entries.get(start.battleId).battle, r.built[0]);
   r.runner.dispose();
 });

@@ -240,6 +240,9 @@ export class Client {
       // media element swaps, and an <img> whose src changes while it loads (the shop's 冻结 icon flips between
       // frozen_icon and frozen_icon2): the browser cancels the old request — not a failure of the page
       if (err === 'net::ERR_ABORTED' && /\.(mp3|ogg|wav|m4a|png|webp|jpe?g|gif|svg)(\?|$)/.test(r.url())) return;
+      // Optional cache status uses an explicit 15 s AbortController budget. A cold full-asset catalog can exceed it;
+      // cache-manager tests check the unavailable/retry state. HTTP errors and all other failed requests stay visible.
+      if (err === 'net::ERR_ABORTED' && new URL(r.url()).pathname === '/api/asset-cache/status') return;
       this.problems.push(`requestfailed: ${r.url()} ${err}`);
     });
     page.on('response', (r) => { if (r.status() >= 400) this.problems.push(`http ${r.status()}: ${r.url()}`); });

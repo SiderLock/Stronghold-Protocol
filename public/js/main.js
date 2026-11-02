@@ -44,9 +44,10 @@ import { render } from '../vendor/preact.module.js';
 import { useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
 import { ConnectionBanner } from './ui/connBanner.js';
+import { EmergencyBanner } from './ui/emergencyBanner.js';
 import { ToastHost, toast, toastError, describeError } from './ui/toasts.js';
 import { net, identity, NetError } from './net.js';
-import { store, useStore, emptyMatch, selectRoute, sessionResetNotice, isSpectating } from './store.js';
+import { store, useStore, emptyMatch, selectRoute, sessionResetNotice, isSpectating, emergencyActive } from './store.js';
 import { data } from './data.js';
 import { GAME_FILES } from './ui/gameComponents.js';
 import { TitleScreen, sanitizeName } from './screens/title.js';
@@ -58,9 +59,12 @@ import { audio, installAudio } from './audio.js';
 import { installLobbyMedia } from './ui/lobbyMedia.js';
 import { settingsStore } from './ui/settings.js';
 import { GuideHost } from './ui/guide.js';
+import { AnnouncementHost, installAnnouncements } from './ui/announcements.js';
+import { UrgentAnnouncementHost, installUrgentAnnouncements } from './ui/urgentAnnouncements.js';
+import { AssetCacheHost, installAssetCache } from './ui/assetCache.js';
 import { installDeviceSupport, useFullscreen, useScreenWakeLock } from './ui/device.js';
+import { gpu } from './ui/glInfo.js';
 import { isCombatPhase } from './ui/gameLogic/phases.js';
-import { registerImportedAssetWorker } from './assetCache.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost, useStatsOpen } from './screens/stats.js';
 import { CoveredVersionVote } from './ui/versionVote.js';
@@ -68,9 +72,12 @@ import { installRehearsal } from './battle/rehearsal.js';
 import { recordResult, installStatsRecorder } from './ui/stats.js';
 import { installLoadoutSync, installOwnershipSync, installDiySync, installSkinsSync, installCardSync, installSettingsViews, loadoutStore } from './ui/loadoutSync.js';
 import { startBuildGuard } from './ui/buildGuard.js';
+import { MAX_SEATS } from '../../shared/constants.js';
 import { initLang, useLang, tickerText } from './ui/lang.js';
 import { t, N_, translateWire } from '../../shared/i18n.js';
 import { recordError, installTrafficMeter } from './diag.js';
+import { installMatchChat } from './matchChat.js';
+import { assetCache } from './assetCache.js';
 import { installContent, installContentSet } from './content.js';
 import { cosmetics } from './cosmetics.js';
 import { sanitizeVersions, roomVersion, isDefaultVersion, matchFrameVersion } from './versions.js';
@@ -78,13 +85,13 @@ import { sanitizeVersions, roomVersion, isDefaultVersion, matchFrameVersion } fr
 const RESTORE_GRACE_MS = 1500;
 const JOIN_DELAY_MS = 350;
 const TICKER_KEEP = 20;
-const EMOTE_KEEP = 20;
+const EMOTE_KEEP = MAX_SEATS * 4; // keep several seconds of messages even when every seat sends together
 
 const SCREENS = { title: TitleScreen, lobby: LobbyScreen, room: RoomScreen, game: GameScreen };
 
 /** Copy of a server message without transport fields. */
 function payload(msg) {
-  const { t, rid, ...rest } = msg; // eslint-disable-line no-unused-vars
+  const { t, rid, ...rest } = msg;
   return rest;
 }
 
@@ -150,6 +157,21 @@ function maybeFinishRestore() {
   }
 }
 
+/** Narrow-band emergency recovery may delay the large match snapshot after welcome. */
+function scheduleRestoreExpiry() {
+  clearTimeout(restoreTimer);
+  if (!store.get().ui.restoring || emergencyActive()) return;
+  restoreTimer = setTimeout(() => {
+    if (emergencyActive()) return;
+    const s = store.get();
+    const patch = {};
+    if (s.room && roomStateAt < welcomeAt) patch.room = null;
+    if (s.match.public && matchAt < welcomeAt) patch.match = emptyMatch();
+    store.set(patch);
+    store.patch('ui', { restoring: false });
+  }, RESTORE_GRACE_MS);
+}
+
 /**
  * Leave whatever room / match was on screen for the lobby with nothing stale left behind: open imperative dialogs,
  * the post-resume restore timer, ticker lines and emote bubbles of the old match (the battle runner and the 暂离 flag
@@ -168,6 +190,7 @@ function backToLobby() {
 const pluginCount = (content) => (content && Number.isInteger(content.plugins) && content.plugins > 0 ? content.plugins : 0);
 
 function onWelcome(msg) {
+  onEmergency(msg.emergency);
   identity.saveToken(msg.token);
   identity.rememberMatch(null);
   const prev = store.get();
@@ -198,17 +221,20 @@ function onWelcome(msg) {
   } else if (prev.room || prev.match.public) {
     // Resumed session: the server re-pushes room/match state; drop whatever it doesn't.
     store.patch('ui', { restoring: true });
-    clearTimeout(restoreTimer);
-    restoreTimer = setTimeout(() => {
-      const s = store.get();
-      const patch = {};
-      if (s.room && roomStateAt < welcomeAt) patch.room = null;
-      if (s.match.public && matchAt < welcomeAt) patch.match = emptyMatch();
-      store.set(patch);
-      store.patch('ui', { restoring: false });
-    }, RESTORE_GRACE_MS);
+    scheduleRestoreExpiry();
   }
   schedulePendingJoin();
+}
+
+/** Tiny emergency frames are applied immediately, before any larger match push. */
+function onEmergency(msg) {
+  const wasActive = !!store.get().emergency?.active;
+  const active = msg?.active === true;
+  store.set({ emergency: active ? { active: true, reason: msg.reason || 'bandwidth',
+    since: Number.isFinite(msg.since) && msg.since > 0 ? msg.since : net.serverNow(),
+    ...(Number.isFinite(msg.retryAt) ? { retryAt: msg.retryAt } : {}) } : null });
+  assetCache.setEmergency(active);
+  if (wasActive && !active) toast(t('服务器带宽紧急保护已解除，对局继续；在线补齐需手动恢复'), 'success', { ttl: 6000 });
 }
 
 function onRoomState(msg) {
@@ -247,6 +273,7 @@ function wireNet() {
     store.set({
       connection: {
         status: snap.status, ping: snap.ping, attempt: snap.attempt, retryAt: snap.retryAt,
+        quality: snap.quality,
         lastError: snap.lastError, everOnline: cur.everOnline || snap.status === 'online',
       },
     });
@@ -266,6 +293,7 @@ function wireNet() {
     toast(known ? t(known) : typeof msg.reason === 'string' && msg.reason.length < 60 ? t('同盟已关闭：{reason}', { reason: msg.reason }) : t('同盟已关闭'), 'warn');
   });
   net.on('m.public', (msg) => { matchAt = Date.now(); store.patch('match', { public: payload(msg) }); maybeFinishRestore(); });
+  net.on('m.emergency', onEmergency);
   net.on('m.private', (msg) => { matchAt = Date.now(); store.patch('match', { private: payload(msg) }); });
   net.on('m.layer', (msg) => {
     const s = store.get();
@@ -307,6 +335,8 @@ function wireNet() {
 
   // Entering (title → lobby) while already online also needs the deep-link join.
   store.subscribe((s, prev) => {
+    // Stop cleanup immediately on either emergency signal; once both clear, give snapshots a fresh normal grace.
+    if (emergencyActive(s) !== emergencyActive(prev)) scheduleRestoreExpiry();
     if (s.session.entered && !prev.session.entered) schedulePendingJoin();
     // in a room (co-op or solo, also a resumed one) a match is near: its data starts downloading
     if (s.room && !prev.room) warmGameData();
@@ -368,10 +398,14 @@ function App() {
     ${error ? html`<${ScreenCrashed} error=${error} reset=${resetError} />` : html`<${Screen} key=${route} />`}
     <${TrustedNotice} />
     <${ConnectionBanner} />
+    <${EmergencyBanner} />
     <${ToastHost} />
     <${UiHosts} />
     <${GuideHost} />
     <${ReleaseNotesHost} />
+    <${AnnouncementHost} />
+    <${UrgentAnnouncementHost} />
+    <${AssetCacheHost} />
     <${LoadoutHost} />
     <${StatsHost} />
     <${VoteOverOverlays} />
@@ -423,8 +457,7 @@ async function boot() {
   installTrafficMeter();
   // touch / hover / fullscreen classes, zoom-gesture blocking, rotation re-layout (ui/device.js, css/devices.css)
   installDeviceSupport();
-  // Hashed art a player imported. HTTPS or localhost only; a failure here must not stop boot.
-  void registerImportedAssetWorker();
+  // One merged asset worker serves the imported art and the pre-cache; installAssetCache() below registers it.
   // A page restored from the back/forward cache has a dead socket and a stale token choice: start over.
   window.addEventListener('pageshow', (ev) => { if (ev.persisted) location.reload(); });
   // Pick this tab's reconnect token (asks other live tabs; ≤150 ms) while fonts load.
@@ -440,6 +473,10 @@ async function boot() {
   }));
 
   wireNet();
+  installMatchChat({ net, appStore: store });
+  installAnnouncements({ appStore: store, selectRoute, net, restoreGraceMs: RESTORE_GRACE_MS });
+  installUrgentAnnouncements({ net });
+  installAssetCache();
   installStatsRecorder(store); // follows the match on screen, so a 放弃模拟 can be recorded (ui/stats.js)
   // the loadout / 干员持有 / 自选 settings by operator, shown for the data on screen (DESIGN §35.23; a v1 store migrates)
   installSettingsViews();
@@ -485,6 +522,11 @@ async function boot() {
   await Promise.all([waitForFonts(1200), connectWhenReady, langReady]);
   const root = document.getElementById('app');
   render(html`<${App} />`, root);
+  // 星愿 / Twinkstar and other Chromium builds with a broken GPU/driver pairing cannot make a WebGL context at all
+  // (their own forum's fix is "close hardware acceleration"): say so once instead of leaving a blank battle field.
+  if (!gpu.webgl) {
+    setTimeout(() => toast(t('这个浏览器无法创建 WebGL 画面，战斗会退到简化视图。可以试试：在浏览器设置里关闭「硬件加速」后重启浏览器，或更新显卡驱动，或用 Chrome / Edge 最新版打开。'), 'warn', { ttl: 30000 }), 1500);
+  }
 
   const splash = document.getElementById('boot');
   if (splash) {

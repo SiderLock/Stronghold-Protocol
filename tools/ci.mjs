@@ -380,7 +380,9 @@ async function smoke(env) {
     }
     if (!health) return await fail(`no 200 from ${base}/healthz within 30 s`);
     console.log(`GET /healthz → ${health.trim()}`);
-    const index = await fetch(base + '/', { signal: AbortSignal.timeout(10000) });
+    // The first page freezes the runtime manifest after the local asset index is ready (fork D022).
+    // A full multi-version/skin install can stat >50,000 files; healthz intentionally responds before that scan.
+    const index = await fetch(base + '/', { signal: AbortSignal.timeout(60000) });
     const html = await index.text();
     if (!index.ok) return await fail(`GET / → HTTP ${index.status}`);
     if (!/<html/i.test(html)) return await fail('GET / does not contain <html');

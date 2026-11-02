@@ -80,7 +80,8 @@ export const emptyMatch = () => ({ public: null, private: null, field: null, res
 
 /** Initial app state (exported for tests and resets). */
 export const initialState = Object.freeze({
-  connection: { status: 'idle', ping: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
+  connection: { status: 'idle', ping: null, quality: null, attempt: 0, retryAt: 0, lastError: null, everOnline: false },
+  emergency: /** @type {any} */ (null),
   me: { playerId: null, name: '', token: null },
   content: null,
   // how many unofficial plugins the server has (DESIGN §32 P1a: /healthz or welcome `content.plugins`; content.js)
@@ -157,6 +158,26 @@ export function sessionResetNotice(prev, playerId) {
 export function serverNow() {
   const off = store.get().clock?.offset;
   return Date.now() + (Number.isFinite(off) ? off : 0);
+}
+
+/** Server emergency protection can arrive before the larger match state. @param {any} [s] */
+export function emergencyActive(s = store.get()) {
+  return !!(s?.emergency?.active || s?.match?.public?.emergencyFrozen);
+}
+
+/** The server epoch at which emergency protection froze the match, or null. @param {any} [s] */
+export function emergencyClockAt(s = store.get()) {
+  const at = [];
+  if (s?.emergency?.active && Number.isFinite(s.emergency.since) && s.emergency.since > 0) at.push(s.emergency.since);
+  const pub = s?.match?.public;
+  if (pub?.emergencyFrozen && Number.isFinite(pub.emergencyFrozenAt) && pub.emergencyFrozenAt > 0) at.push(pub.emergencyFrozenAt);
+  return at.length ? Math.min(...at) : null;
+}
+
+/** Match countdowns stop during emergency protection; network clocks keep using serverNow(). @param {number} [now] @param {any} [s] */
+export function matchClockNow(now = serverNow(), s = store.get()) {
+  const at = emergencyClockAt(s);
+  return at == null ? now : Math.min(now, at);
 }
 
 /**

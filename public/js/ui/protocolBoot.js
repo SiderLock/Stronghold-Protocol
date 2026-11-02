@@ -44,9 +44,8 @@ export function onBootArt(fn) {
 }
 
 /**
- * Fetch the sprites early — as a room is entered (main.js warmGameData, once the art list is in), when the match screen
- * opens (screens/game.js) and when the band draft mounts (screens/bandDraft.js) —, once per page; the first call that
- * finds the art list loaded starts it. A missing pack never turns ready.
+ * Fetch the sprites after briefing, once the band draft mounts (screens/bandDraft.js), once per page.
+ * A missing pack never turns ready; opening-page images retain priority.
  */
 export function preloadBootArt() {
   if (bootArt !== null || typeof Image !== 'function') return;
@@ -60,6 +59,7 @@ export function preloadBootArt() {
   const imgs = [];
   for (const src of urls) {
     const img = new Image();
+    img.fetchPriority = 'low';
     imgs.push(img);
     img.onload = () => {
       left -= 1;

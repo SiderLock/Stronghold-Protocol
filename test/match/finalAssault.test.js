@@ -107,9 +107,9 @@ test('boss pool = bloodPoint[difficulty] × the players alive at the fight\'s st
   // Research numbers (data/tuning.json left out).
   const { tuning, ...RAW } = DATA; // eslint-disable-line no-unused-vars
   const gd = new GameData(RAW, 'mode_multi_hard');
-  for (const n of [1, 2, 3, 4]) assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000 * n, `${n} alive`);
+  for (const n of [1, 2, 3, 4, 8, 10, 16, 20]) assert.equal(bossPoolHp(gd, 'boss_1', n), 1800000 * n, `${n} alive`);
   assert.equal(bossPoolHp(gd, 'boss_1'), 1800000 * 4, 'no count given: a full team');
-  assert.equal(bossPoolHp(gd, 'boss_1', 9), 1800000 * 4, 'at most aliveFull (4) players');
+  assert.equal(bossPoolHp(gd, 'boss_1', 9), 1800000 * 9, 'larger rooms receive the full per-player pool');
   assert.equal(gd.bossPoolHp('boss_1', 2), bossPoolHp(gd, 'boss_1', 2), 'GameData agrees');
   assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_abyss'), 'boss_5', 1), 3000000, 'solo: the table value');
   assert.equal(bossPoolHp(new GameData(RAW, 'mode_single_funny'), 'boss_2', 1), 225000);
@@ -125,7 +125,7 @@ test('boss pool = bloodPoint[difficulty] × the players alive at the fight\'s st
   assert.equal(bossPoolHp(scaled, 'boss_1', 2), 900000);
   assert.equal(bossPoolHp(scaled, 'boss_1', 1), 450000);
   assert.equal(bossPoolHp(scaled, 'boss_1'), 1800000, 'no count given: a full team');
-  assert.equal(bossPoolHp(scaled, 'boss_1', 9), 1800000, 'never above the data value');
+  assert.equal(bossPoolHp(scaled, 'boss_1', 9), 4050000, 'legacy aliveScaling also supports larger teams');
   // a mode's own entry overrides the global one
   const perMode = { ...RAW, config: { ...RAW.config, modes: { ...RAW.config.modes, mode_multi_hard: { ...RAW.config.modes.mode_multi_hard, bossHpScale: { ...RAW.config.modes.mode_multi_hard.bossHpScale, perPlayer: false } } } } };
   assert.equal(bossPoolHp(new GameData(perMode, 'mode_multi_hard'), 'boss_1', 3), 1800000, 'the mode entry first');
@@ -143,6 +143,31 @@ test('boss pool = bloodPoint[difficulty] × the players alive at the fight\'s st
   assert.equal(pool.damage('a', 5), 0);
   assert.equal(pool.damage('a', NaN), 0);
   assert.equal(pool.byPlayer.get('a'), 60);
+  const resized = new SharedBossPool(400);
+  resized.damage('a', 100);
+  resized.rescale(300);
+  assert.equal(resized.maxHp, 300);
+  assert.equal(resized.hp, 225, 'leaving preserves the remaining HP percentage');
+  const nearlyDown = new SharedBossPool(1000);
+  nearlyDown.damage('a', 999);
+  nearlyDown.rescale(250);
+  assert.equal(nearlyDown.hp, 1, 'a player exit cannot defeat a leader that still had HP');
+});
+
+test('a player leaving during an eight-player leader fight shrinks the shared pool without changing its HP percentage', () => {
+  const h = makeMatch({ humans: 8, fake: true, instant: false, seed: 81 }).start().autoHumans();
+  h.drive(() => h.m.phase === PHASE.FINAL_ASSAULT);
+  const m = h.m;
+  assert.equal(m.alivePlayers().length, 8);
+  const originalMax = m.bossPool.maxHp;
+  m.bossPool.damage('p_0', originalMax / 4);
+  m.onLeave('p_7');
+  assert.equal(m.alivePlayers().length, 7);
+  assert.equal(m.bossPool.maxHp, Math.round(originalMax * 7 / 8));
+  assert.equal(m.bossPool.hp, Math.round(m.bossPool.maxHp * 0.75));
+  assert.equal(m.errorCount, 0);
+  h.invariants();
+  m.dispose();
 });
 
 for (const n of [1, 2, 3, 4]) {

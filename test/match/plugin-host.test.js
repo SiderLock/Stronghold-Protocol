@@ -78,6 +78,32 @@ const frames = () => { const out = { sent: [], broadcast: [], ended: [] }; out.e
 const bots = (n) => Array.from({ length: n }, (_, i) => ({ seat: i, playerId: `ai_${i}`, name: `AI ${i}`, isBot: true, connected: true }));
 
 describe('match hosts (P1c): a content set\'s matches in a match host of its own', () => {
+  for (const transport of ['process', 'worker']) test(`reroll requests cross the ${transport} proxy without starting a vote`, { timeout: 60000 }, async () => {
+    const contents = setsOf(pluginsDir({ reroll: [{ data: ['patch.json'] }, { 'patch.json': bondPatch(0.31) }] }));
+    const resolved = contents.resolve(['reroll']);
+    assert.ok(resolved.ok);
+    contents.hold(resolved.set.cs);
+    const hosts = createMatchHosts({ contents, log: quiet, options: { transport } });
+    try {
+      const out = frames();
+      const seats = [0, 1].map((seat) => ({ seat, playerId: `p_${seat}`, name: `P${seat}`, isBot: false, connected: true }));
+      const m = hosts.create(resolved.set.cs, matchOpts(resolved.set.cs, seats, out));
+      m.start();
+      assert.deepEqual(await m.askSetupReroll('p_1', 0), { ok: true });
+      const asked = out.broadcast.filter((p) => p.t === 'm.public').at(-1);
+      assert.deepEqual(asked.rerollRequests, [{ playerId: 'p_1' }]);
+      assert.equal(asked.rerollVote, null);
+      assert.ok(asked.deadline > 0, 'asking does not pause the countdown in a plugin host');
+      assert.deepEqual(await m.requestSetupReroll('p_0', 0), { ok: true });
+      const voting = out.broadcast.filter((p) => p.t === 'm.public').at(-1);
+      assert.equal(voting.deadline, 0);
+      assert.deepEqual(voting.rerollRequests, []);
+      assert.deepEqual(await m.cancelSetupReroll('p_0', voting.rerollVote.id), { ok: true });
+      assert.deepEqual(await m.askSetupReroll('p_1', 0), { error: ERR.RATE });
+      m.dispose();
+    } finally { hosts.close(); }
+  });
+
   test('the transport: a child process by default; a worker thread only with SP_MATCH_HOST=worker', { timeout: 60_000 }, async () => {
     const was = process.env.SP_MATCH_HOST;
     try {

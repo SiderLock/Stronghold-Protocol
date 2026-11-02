@@ -3,7 +3,7 @@
 // Every inbound JSON frame is appended to an inbox. `waitFor(type, predicate)` consumes the first matching
 // frame already in the inbox or the next one to arrive (so there is no race between an action and the
 // wait for its effect). `request(msg)` assigns a `rid` and resolves with the server's direct reply
-// (`ok` / `error` / `welcome` / `pong` carrying that rid).
+// (`ok` / `error` / `welcome` / `pong` / `lobby.state` carrying that rid).
 //
 //   const c = await TestClient.connect(`ws://127.0.0.1:${port}/ws`);
 //   const welcome = await c.hello('Doctor');
@@ -12,28 +12,32 @@
 //   await c.close();
 
 import WebSocket from 'ws';
+import { WIRE_VERSION, encodeWire, decodeWire } from '../../shared/wireCodec.js';
 
-const REPLY_TYPES = new Set(['ok', 'error', 'welcome', 'pong']);
+const REPLY_TYPES = new Set(['ok', 'error', 'welcome', 'pong', 'lobby.state']);
 
 export class TestClient {
   /**
    * Open a socket and resolve once connected.
    * @param {string} url ws://host:port/ws
-   * @param {{ timeout?: number, wsOptions?: object }} [opts] wsOptions are passed to `new WebSocket`
+   * @param {{ timeout?: number, wsOptions?: object, wire?: boolean }} [opts] wsOptions are passed to `new WebSocket`
    * @returns {Promise<TestClient>}
    */
-  static connect(url, { timeout = 3000, wsOptions = {} } = {}) {
+  static connect(url, { timeout = 3000, wsOptions = {}, wire = false } = {}) {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url, wsOptions);
       const timer = setTimeout(() => { ws.terminate(); reject(new Error(`connect timeout ${url}`)); }, timeout);
-      ws.once('open', () => { clearTimeout(timer); resolve(new TestClient(ws)); });
+      ws.once('open', () => { clearTimeout(timer); resolve(new TestClient(ws, wire)); });
       ws.once('error', (e) => { clearTimeout(timer); reject(e); });
     });
   }
 
   /** @param {WebSocket} ws */
-  constructor(ws) {
+  constructor(ws, wire = false) {
     this.ws = ws;
+    this.wantWire = wire;
+    this.wireVersion = 0;
+    this.rawLog = [];
     /** @type {any[]} unconsumed frames */
     this.inbox = [];
     /** @type {any[]} every frame ever received (never consumed) */
@@ -53,7 +57,12 @@ export class TestClient {
     ws.on('message', (data, isBinary) => {
       if (isBinary) return;
       let msg;
-      try { msg = JSON.parse(data.toString()); } catch { return; }
+      try {
+        const raw = JSON.parse(data.toString());
+        this.rawLog.push(raw);
+        msg = decodeWire(raw, 's2c');
+        if (msg.t === 'welcome') this.wireVersion = msg.wire === WIRE_VERSION ? WIRE_VERSION : 0;
+      } catch { return; }
       this.log.push(msg);
       const i = this.waiters.findIndex((w) => w.match(msg));
       if (i >= 0) {
@@ -77,7 +86,7 @@ export class TestClient {
     const out = { ...msg };
     if (out.rid === undefined) out.rid = this.nextRid++;
     if (out.rid === null) delete out.rid;
-    this.ws.send(JSON.stringify(out));
+    this.ws.send(JSON.stringify(this.wireVersion && out.t !== 'hello' ? encodeWire(out, 'c2s') : out));
     return out.rid;
   }
 
@@ -133,7 +142,8 @@ export class TestClient {
    * @param {string} name @param {string} [token] @param {object} [extra]
    */
   async hello(name, token, extra = {}) {
-    const reply = await this.request({ t: 'hello', name, version: 1, ...(token ? { token } : {}), ...extra });
+    const reply = await this.request({ t: 'hello', name, version: 1, ...(this.wantWire ? { wire: WIRE_VERSION } : {}),
+      ...(token ? { token } : {}), ...extra });
     if (reply.t !== 'welcome') throw new Error(`hello failed: ${JSON.stringify(reply)}`);
     return reply;
   }

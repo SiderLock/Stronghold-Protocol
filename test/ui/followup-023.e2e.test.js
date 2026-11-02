@@ -2,19 +2,36 @@
 import { seedReleaseRead } from '../helpers/releaseNotes.js';
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const CACHE = path.resolve(ROOT, '.cache');
 const CHROME = process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const ENABLED = process.env.SP_E2E === '1' && existsSync(CHROME);
 describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
-  let server, browser, base;
+  let server, browser, base, announcementsDir;
   before(async () => {
     const { startServer } = await import('../../server/index.js');
     const puppeteer = (await import('puppeteer-core')).default;
-    server = await startServer({ port: 0, host: '127.0.0.1', quiet: true });
+    // Keep operator-managed runtime announcements out of these unrelated UI flows.
+    // Recovery/automatic-announcement races are covered by announcements-ui.test.js.
+    mkdirSync(CACHE, { recursive: true });
+    announcementsDir = mkdtempSync(path.resolve(CACHE, 'upstream-v023-followup-empty-announcements-'));
+    server = await startServer({ port: 0, host: '127.0.0.1', quiet: true, announcementsDir });
     base = `http://127.0.0.1:${server.port}`;
     browser = await puppeteer.launch({ executablePath: CHROME, headless: true, args: ['--no-sandbox'] });
   });
-  after(async () => { await browser?.close(); await server?.close(); });
+  after(async () => {
+    try { await browser?.close(); } finally {
+      try { await server?.close(); } finally {
+        if (announcementsDir) {
+          assert.equal(path.dirname(announcementsDir), CACHE);
+          rmSync(announcementsDir, { recursive: true, force: true });
+        }
+      }
+    }
+  });
   async function pageIn(ctx, phone = false, random = null) {
     const page = await ctx.newPage();
     await page.setViewport({ width: phone ? 844 : 1440, height: phone ? 390 : 900 });
@@ -42,13 +59,15 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       assert.equal(await b.evaluate(() => globalThis.__SP__.store.get().connection.status), 'online');
       await b.close();
       await a.click('[data-testid="resume-local-match"]');
-      await a.waitForSelector('.modal .btn--block');
+      await a.waitForSelector('.resume-match .btn--block');
+      assert.equal(await a.evaluate(() => globalThis.__SP__.store.get().ui.resumePromptOpen), true);
       await a.evaluate(() => { globalThis.recoveryDocument = true; });
-      await a.click('.modal .btn--block');
+      await a.click('.resume-match .btn--block');
       await a.waitForFunction(() => globalThis.__SP__?.store.get().match.public?.phase === 'INFO_CHECK');
       const after = await a.evaluate(() => { const s = globalThis.__SP__.store.get(); return { id: s.me.playerId, code: s.room.code }; });
       assert.deepEqual(after, before);
       assert.equal(await a.evaluate(() => globalThis.recoveryDocument), true, 'welcome arrives in the same document');
+      await a.waitForFunction(() => globalThis.__SP__.store.get().ui.resumePromptOpen === false);
     } finally { await ctx.close(); }
   });
   test('a refreshing match window keeps its seat while its init is waiting and another window clicks recovery', async () => {
@@ -89,8 +108,8 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       await owner.waitForFunction(() => typeof globalThis.finishIdentityInit === 'function');
       await guest.bringToFront();
       await guest.click('[data-testid="resume-local-match"]');
-      await guest.waitForSelector('.modal .btn--block');
-      await guest.click('.modal .btn--block');
+      await guest.waitForSelector('.resume-match .btn--block');
+      await guest.click('.resume-match .btn--block');
       await guest.waitForFunction(() => document.body.textContent.includes('此对局仍在其他窗口中'));
       assert.equal(await owner.evaluate(() => sessionStorage.getItem('sp.token')), before.token);
       await owner.evaluate(() => globalThis.finishIdentityInit());
@@ -110,19 +129,25 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       }
     } finally { await ctx.close(); }
   });
-  test('co-op opening reroll shows a unanimous vote, clears stale readiness, lets another seat start one and a rejection cancels it', { timeout: 45000 }, async () => {
+  test('co-op opening reroll shows a unanimous vote, clears stale readiness and can be rejected', { timeout: 60000 }, async (t) => {
     const ctx = await browser.createBrowserContext();
+    const evidence = path.resolve(CACHE, `pr857-reroll-edge-${Date.now()}`);
+    mkdirSync(evidence, { recursive: true });
+    t.diagnostic(`Edge screenshots: ${evidence}`);
     try {
       const host = await pageIn(ctx), guest = await pageIn(ctx);
       const code = await host.evaluate(async () => {
         const { net, store } = globalThis.__SP__;
-        await net.request('room.create', { mode: 'coop', difficulty: 'NORMAL' });
+        await net.request('room.create', { mode: 'coop', difficulty: 'NORMAL', capacity: 20 });
+        for (let i = 0; i < 18; i++) await net.request('room.addBot');
         return store.get().room.code;
       });
       await guest.evaluate(async (code) => {
         const { net } = globalThis.__SP__;
         await net.request('room.join', { code }); await net.request('room.ready', { ready: true });
       }, code);
+      const spectator = await pageIn(ctx, true);
+      await spectator.evaluate((code) => globalThis.__SP__.net.request('room.spectate', { code }), code);
       await host.evaluate(() => globalThis.__SP__.net.request('room.start', {}));
       for (const p of [host, guest]) await p.waitForFunction(() => globalThis.__SP__.store.get().match.public?.phase === 'INFO_CHECK', { polling: 50 });
       await guest.evaluate(() => globalThis.__SP__.net.request('g.infoReady', { setupRevision: 0 }));
@@ -153,6 +178,46 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
       await host.click('.brief-reroll .btn--danger');
       await guest.waitForFunction(() => !globalThis.__SP__.store.get().match.public.rerollVote, { polling: 50 });
       assert.equal(await host.evaluate(() => globalThis.__SP__.store.get().match.public.setupRevision), 1);
+      // A guest asks the host to start the vote (GitHub #854): the ask lists for the host and changes nothing—
+      // the host still starts the vote, and both players agree to it.
+      await guest.bringToFront();
+      // The guest's own tab may still render the rejected vote: wait until its panel is back to the single ask button.
+      await guest.waitForFunction(() => {
+        const el = document.querySelector('.brief-reroll');
+        const buttons = el ? el.querySelectorAll('button') : [];
+        return buttons.length === 1 && !buttons[0].disabled;
+      }, { polling: 50 });
+      await guest.click('.brief-reroll button');
+      await host.waitForFunction(() => (globalThis.__SP__.store.get().match.public.rerollRequests || []).length === 1, { polling: 50 });
+      assert.equal(await host.evaluate(() => globalThis.__SP__.store.get().match.public.setupRevision), 1);
+      assert.equal(await guest.evaluate(() => !!document.querySelector('.brief-reroll button[disabled]')), true);
+      assert.equal(await guest.evaluate(() => globalThis.__SP__.store.get().room.seats.find((p) => p?.playerId === globalThis.__SP__.net.playerId).seat), 19);
+      assert.equal(await spectator.$('.brief-reroll'), null, 'a spectator has no request button');
+      await host.bringToFront();
+      await host.waitForFunction(() => document.querySelector('.brief-reroll__players')?.textContent.includes('申请重刷本局'));
+      await host.screenshot({ path: path.join(evidence, 'host-request-desktop.png') });
+      await guest.setViewport({ width: 844, height: 390 });
+      await guest.bringToFront();
+      await guest.screenshot({ path: path.join(evidence, 'guest-request-phone.png') });
+      assert.equal(await guest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      // Wait out the documented server anti-burst interval before the host's next proposal.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await host.bringToFront();
+      await host.click('.brief-reroll button');
+      await spectator.waitForSelector('.brief-reroll');
+      assert.equal(await spectator.$$eval('.brief-reroll button', (buttons) => buttons.length), 0, 'a spectator sees a read-only vote');
+      await spectator.screenshot({ path: path.join(evidence, 'spectator-vote-phone.png') });
+      await guest.waitForSelector('.brief-reroll .btn--primary');
+      await guest.bringToFront();
+      await Promise.all([
+        host.waitForFunction(() => globalThis.__SP__.store.get().match.public?.setupRevision === 2, { polling: 50 }),
+        guest.click('.brief-reroll .btn--primary'),
+      ]);
+      // The host's frame can land a tick before the guest's, so wait for both facts instead of reading a raw race.
+      await guest.waitForFunction(() => {
+        const p = globalThis.__SP__.store.get().match.public;
+        return p.setupRevision === 2 && !p.rerollVote;
+      }, { polling: 50 });
     } finally { await ctx.close(); }
   });
   test('operator voice selection persists across reload and follows global after reset', async () => {
@@ -212,11 +277,39 @@ describe('0.2.3 follow-up client features', { skip: !ENABLED }, () => {
     const ctx = await browser.createBrowserContext();
     try {
       const page = await pageIn(ctx, true);
+      await page.setViewport({ width: 844, height: 390, hasTouch: true });
+      await page.waitForFunction(() => globalThis.__SP__?.store.get().connection.status === 'online' && document.querySelector('.lobby-screen'));
       for (const lang of ['zh-CN', 'en', 'ja', 'ko', 'zh-TW']) {
         await page.evaluate(async (lang) => {
           await (await import('/js/ui/lang.js')).switchLang(lang);
           (await import('/js/ui/settings.js')).updateSettings({ textSize: 'xl' });
         }, lang);
+        const toolbar = await page.$eval('.lobby-screen .topbar', (e) => {
+          const heading = e.querySelector('.topbar__center').getBoundingClientRect();
+          const rowCenters = [...e.querySelector('.topbar__right').children].filter((x) => x.matches('button,.me-chip')).map((x) => {
+            const r = x.getBoundingClientRect(); return r.top + r.height / 2;
+          });
+          return { coarse: document.documentElement.classList.contains('sp-coarse'), headingCenter: heading.left + heading.width / 2,
+            headingBottom: heading.bottom, rowCenters };
+        });
+        assert.equal(toolbar.coarse, true, 'phone fixture has real touch hit areas');
+        assert.ok(Math.abs(toolbar.headingCenter - 422) < 1, `${lang}: heading stays centered`);
+        assert.ok(Math.max(...toolbar.rowCenters) - Math.min(...toolbar.rowCenters) < 2, `${lang}: tools and player card share one row`);
+        // Narrow screens retain one tool row: scroll each control into view before checking access.
+        for (const button of await page.$$('.lobby-screen .topbar button')) {
+          await button.evaluate((e) => e.scrollIntoView({ block: 'nearest', inline: 'center' }));
+          const control = await button.evaluate((e) => {
+            const r = e.getBoundingClientRect();
+            return { text: e.textContent.trim(), height: r.height, width: r.width, left: r.left, right: r.right, top: r.top, bottom: r.bottom,
+              hit: e.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) };
+          });
+          assert.ok(control.height >= 44, `${lang}: ${control.text} contains its 44px touch target`);
+          assert.ok(control.width >= 44, `${lang}: ${control.text} contains its 44px touch width`);
+          assert.ok(control.top >= toolbar.headingBottom && control.left >= 0 && control.right <= 844 && control.bottom <= 390,
+            `${lang}: ${control.text} fits below the heading and inside the phone`);
+          assert.equal(control.hit, true, `${lang}: ${control.text} center hits its own control`);
+        }
+        await page.$eval('[data-testid="settings-btn"]', (e) => e.scrollIntoView({ block: 'nearest', inline: 'center' }));
         await page.click('[data-testid="settings-btn"]');
         await page.waitForSelector('.modal .set-list');
         const overflow = await page.$eval('.modal__body', (e) => e.scrollWidth - e.clientWidth);

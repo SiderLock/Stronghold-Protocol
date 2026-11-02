@@ -22,7 +22,7 @@ function soloLobby(t) {
   const session = registry.create('Player');
   lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' });
   const room = lobby.roomOf(session);
-  const ctx = { results: new Map(), members: [{ playerId: session.playerId, isBot: false, left: false }] };
+  const ctx = { results: new Map(), chat: new Map(), members: [{ playerId: session.playerId, isBot: false, left: false }] };
   session.connected = true;
   session.activeMatchCtx = ctx;
   session.ws = socket();
@@ -53,7 +53,7 @@ test('without encoded bytes both paths still encode, and a disposed room stays a
   assert.equal(session.ws.frames.length, 1, 'a disposed room sends nothing');
 });
 
-test('a slow member still has its battle snapshots dropped, and a disconnected member is skipped', (t) => {
+test('a slow member drops battle snapshots and defers public state until drained; disconnected members are skipped', async (t) => {
   const { lobby, session, room, ctx } = soloLobby(t);
   const slow = lobby.registry.create('Slow');            // a spectator whose send queue is already deep
   slow.connected = true;
@@ -74,7 +74,10 @@ test('a slow member still has its battle snapshots dropped, and a disconnected m
 
   const pub = '{"t":"m.public","marker":"x"}';
   lobby.matchBroadcast(room, ctx, { t: 'm.public', marker: 'x' }, pub);
-  assert.equal(slow.ws.frames.length, 1, 'only snapshots are droppable: the slow member still gets this one');
+  assert.equal(slow.ws.frames.length, 0, 'public state waits behind the existing queued bytes');
+  slow.ws.bufferedAmount = 0;
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(slow.ws.frames.length, 1, 'public state is retained and delivered after the socket drains');
   assert.equal(slow.ws.frames[0], pub, 'and it is still the encoded bytes');
   assert.equal(gone.ws.frames.length, 0, 'a disconnected member stays a no-op');
   assert.equal(session.ws.frames.length, 2);

@@ -274,7 +274,7 @@ test('缪尔赛思 wearing 变形同构体 + 维式重锤 counts twice for 维�
 });
 
 test('consume-on-equip built-ins: 盟约之币 funds, 随身身份牌 layers, 人事部文档 cap 9, 博士投影 promote; Arts limit', () => {
-  const { m, ps } = prep(27);
+  const { h, m, ps } = prep(27);
   const id = chessOfTier(2).find((c) => m.pool.has(c));
   const a = give(m, ps, id);
   ps.funds = 0;
@@ -303,7 +303,6 @@ test('consume-on-equip built-ins: 盟约之币 funds, 随身身份牌 layers, �
   ps.hand.forEach((p, i) => { if (p && p.kind === 'item') ps.hand[i] = null; });
   checkInvariants(m);
   m.handle('p_0', { t: 'g.ready', ready: true });
-  const h = { sched: m.sched };
   h.sched.runUntil(() => m.phase === PHASE.PREP && m.round === 2, { maxSteps: 1e6 });
   // the bot-free solo round needs a combat → it ran; now at R2
   assert.equal(b.id, DATA.chess[b.id].goldenId ? b.id : b.id);

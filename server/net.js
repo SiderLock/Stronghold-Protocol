@@ -3,8 +3,8 @@
 // Responsibilities:
 //   * Session objects (playerId, secret reconnect token, name, bound socket, connection state) and the
 //     SessionRegistry that resolves reconnect tokens and expires sessions after the reconnect window (10 min; the
-//     lobby may extend it per session via `session.resumeWindowMs` — a solo run: 24 h, see server/lobby.js).
-//   * Per-connection pipeline: token-bucket rate limit (40 msg/s) → JSON decode → schema validation
+//     lobby may extend it per session via `session.resumeWindowMs` — a solo run: default 2 h, see server/lobby.js).
+//   * Per-connection pipeline: token-bucket rate limit (40 msg/s) → JSON/negotiated wire decode → schema validation
 //     (shared/protocol.js) → `hello`/`ping` handling → dispatch to the lobby handler → `ok`/`error`
 //     reply echoing the request id (`rid`). Intents whose answer is a large state resend (`g.watch` →
 //     m.field) also draw from a second, much smaller bucket (2/s, burst 6), so one socket cannot turn
@@ -32,7 +32,7 @@
 //   welcomeInfo() → object (optional)      extra fields of every `welcome` (never one of its own keys): the lobby's
 //                                          `diyKitted` (0.2.0 自选编队 — which operators a DIY slot may field) and
 //                                          `content` ({ vanilla: <cs> }, the server's content hash — DESIGN §32)
-//   onMessage(session, msg) → { ok: true } | { error: ERR code, detail?: string } | undefined — or a Promise of one
+//   onMessage(session, msg) → { ok: true, reply?: object } | { error: ERR code, detail?: string } | undefined — or a Promise of one
 //                                          (a room whose match runs in a match host worker, DESIGN §32.6: the reply
 //                                          goes out when it settles; a rejection is INTERNAL)
 //   routeGame(session, msg) → same (optional): client-side combat reports `b.progress` / `b.result` (DESIGN §14) go
@@ -43,11 +43,16 @@
 import { prepareStateFrame, negotiateStateDelta, resetStateDelta, setStateDeltaRoom } from './stateTransport.js';
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
+import { performance } from 'node:perf_hooks';
 import { C2S, validateC2S } from '../shared/protocol.js';
 import { ERR, ERR_TEXT, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
+import { WIRE_VERSION, encodeWire, decodeWire } from '../shared/wireCodec.js';
+import { RecentPeak } from '../shared/networkTiming.js';
+import { createConnectionMetrics } from './connectionMetrics.js';
 
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
 export const NET_DEFAULTS = Object.freeze({
+  compactWire: process.env.SP_COMPACT_WIRE !== '0',
   ratePerSec: 40,               // token bucket refill rate
   rateBurst: 40,                // token bucket capacity
   abuseDropsPerSec: 400,        // rate-limited messages within one second before the socket is closed (1008)
@@ -70,7 +75,8 @@ export const NET_DEFAULTS = Object.freeze({
  * room.loadout (a ≤ 160-entry map and ≤ 256 operator settings validated against the game data; the client debounces its
  * edits), room.ownership
  * (a ≤ 160-id list, the same way), room.diy (≤ 8 自选 picks checked against the data, the same way), room.spectate
- * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate) and
+ * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate),
+ * lobby.spectate / lobby.watch with on:true/list:true (a paginated room directory, at most 50 rows per reply), and
  * room.setPlugins (a new visual set: every member downloads its art manifest — server/plugins/visualSet.js).
  * room.skins (docs/SKINS.md) is a small `{ [charId]: skinId }` map, sent on every edit of the appearance; a changed map
  * re-broadcasts room.state to a waiting room (its seat cards wear it: room.state seats[].skins). room.card (名片干员, PR
@@ -80,7 +86,7 @@ export const NET_DEFAULTS = Object.freeze({
  * room.proposeVersion (DESIGN §35.23) stays host-proposed: an accepted proposal by a lone human switches the room's
  * version — every page then downloads that version's data.
  */
-export const HEAVY_TYPES = new Set(['g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'room.setPlugins', 'room.skins', 'room.card', 'room.rerollSetup', 'room.proposeVersion', 'state.resync']);
+export const HEAVY_TYPES = new Set(['lobby.spectate', 'lobby.watch', 'room.requestSeat', 'room.answerSeat', 'g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'room.setPlugins', 'room.skins', 'room.card', 'room.rerollSetup', 'room.proposeVersion', 'state.resync']);
 
 /** Close codes (see header). */
 export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY: 1008, SHUTDOWN: 1001 });
@@ -134,6 +140,7 @@ export class Session {
     /** @type {Readonly<Record<string, string>> | null} chosen operator skins (lobby-owned, docs/SKINS.md): keyed by
      * charId; PUBLIC, unlike the loadout (a teammate sees your skin through Match.publicView().players[].skins) */
     this.skins = null;
+    this.skinRandomPool = null;
     /** @type {string | null} 名片干员 (lobby-owned, PR #643 split 6): the charId whose portrait fills this player's seat card in
      * the waiting room; PUBLIC (room.state seats[].card), cosmetic */
     this.card = null;
@@ -143,7 +150,7 @@ export class Session {
     this.limitKey = null;
     /**
      * @type {number | null} lobby-owned extension of the reconnect window for this session (ms; null = the registry's
-     * window). A solo run keeps its session resumable for the official `singleReconnectTime` (24 h) — see lobby.js.
+     * window). A solo run keeps its session resumable for 2 h by default — see lobby.js.
      */
     this.resumeWindowMs = null;
   }
@@ -186,11 +193,11 @@ export class SessionRegistry {
   }
 
   /** @param {unknown} token @returns {Session | null} a live (non-expired) session for this token */
-  byToken(token) {
+  byToken(token, { allowExpired = () => false } = {}) {
     if (typeof token !== 'string' || token.length === 0) return null;
     const s = this.byTokenMap.get(token);
     if (!s) return null;
-    if (this.isExpired(s, this.now())) return null;
+    if (this.isExpired(s, this.now()) && !allowExpired(s)) return null;
     return s;
   }
 
@@ -285,6 +292,116 @@ export function encode(msg) {
 }
 
 const onSendDone = (err) => { void err; }; // errors surface through the socket's 'error'/'close' events
+// A transport capability belongs to the physical socket, never the room/session that survives reconnects.
+const wireVersions = new WeakMap();
+// Frozen matches retain their socket even if an old queue is already full. Do not grow that queue;
+// resync/recovery supplies state later. Ordinary operation retains the existing hard-buffer guard.
+const emergencySockets = new WeakSet();
+const deliveries = new WeakMap();
+const STATE_QUEUE_BYTES = 64 * 1024;
+
+function deliveryOf(ws) {
+  let state = deliveries.get(ws);
+  if (!state) {
+    state = { pending: null, timer: null, coalesced: 0, dropped: 0,
+      sendMs: new RecentPeak(() => performance.now()), inFlight: new Map() };
+    deliveries.set(ws, state);
+    ws.once?.('close', () => {
+      clearTimeout(state.timer);
+      state.pending = null;
+      state.inFlight.clear();
+      deliveries.delete(ws);
+    });
+  }
+  return state;
+}
+
+/** Transport evidence, not proof of which end of the internet link is congested. */
+function deliveryMetrics(ws) {
+  const state = deliveries.get(ws);
+  const now = performance.now();
+  let sendMs = state?.sendMs.read() ?? null;
+  if (state) for (const at of state.inFlight.values()) sendMs = Math.max(sendMs ?? 0, now - at);
+  return { queuedBytes: Number(ws.bufferedAmount) || 0, sendMs, coalesced: state?.coalesced ?? 0, dropped: state?.dropped ?? 0 };
+}
+
+function flushLatest(ws, state) {
+  clearTimeout(state.timer);
+  state.timer = null;
+  const pending = state.pending;
+  state.pending = null;
+  if (pending) queuePrepared(ws, pending.frame, { droppable: pending.droppable });
+}
+
+export const wireVersionOf = (ws) => ws ? wireVersions.get(ws) || 0 : 0;
+const setWireVersion = (ws, version) => wireVersions.set(ws, version);
+
+/** Encode JSON once per broadcast; compact JSON is generated lazily once, shared with every v1 recipient. */
+export function prepareMessage(msg, encoded = null) {
+  const json = encoded ?? encode(msg);
+  let compact;
+  let latestKey = null;
+  try {
+    if (msg?.t === 'm.public' && msg.rid == null) {
+      latestKey = JSON.stringify([msg.phase, msg.round, msg.setupRevision, msg.deadline, msg.paused, msg.emergencyFrozen]);
+    }
+  } catch { /* Unserializable frames retain the existing null/false send result. */ }
+  return {
+    json,
+    message: msg,
+    // Only adjacent full public snapshots of the same phase may replace one another. Every other
+    // message is an ordering barrier. Deadline/pause/revision changes are barriers too.
+    latestKey,
+    get compact() {
+      if (compact === undefined) {
+        try { compact = JSON.stringify(encodeWire(JSON.parse(json), 's2c')); }
+        catch { compact = json; } // Preserve the existing readable protocol if a future shape is not representable.
+      }
+      return compact;
+    },
+  };
+}
+
+/** A prepared broadcast is immutable JSON text; compression contexts remain per socket in ws. */
+export function sendPrepared(ws, frame, opts) {
+  if (!frame || frame.json == null) return false;
+  if (!canQueue(ws, opts)) return false;
+  const state = deliveryOf(ws);
+  if (state.pending && state.pending.key !== frame.latestKey) flushLatest(ws, state);
+  if (frame.latestKey && (state.pending || ws.bufferedAmount >= STATE_QUEUE_BYTES)) {
+    if (state.pending) state.coalesced++;
+    state.pending = { key: frame.latestKey, frame, droppable: !!opts?.droppable };
+    if (!state.timer) {
+      const retry = () => {
+        state.timer = null;
+        if (!canQueue(ws)) { state.pending = null; return; }
+        if (ws.bufferedAmount < STATE_QUEUE_BYTES) flushLatest(ws, state);
+        else { state.timer = setTimeout(retry, 50); state.timer.unref?.(); }
+      };
+      state.timer = setTimeout(retry, 50);
+      state.timer.unref?.();
+    }
+    return true;
+  }
+  // An unicast, reply, combat event or phase change always follows the preceding snapshot.
+  if (state.pending) flushLatest(ws, state);
+  return queuePrepared(ws, frame, opts);
+}
+
+// Delta baselines describe reliable frames already queued on this socket. A deferred snapshot may be replaced,
+// so it must not prepare or commit a delta until it drains. The compact codec accepts the new envelope as JSON.
+function queuePrepared(ws, frame, opts) {
+  const stateFrame = prepareStateFrame(ws, frame.message, frame.json);
+  if (!stateFrame.usable) {
+    // Invalid worker bytes cannot establish a delta baseline. Send the independently encoded full object.
+    const fallback = prepareMessage(frame.message);
+    return queueRaw(ws, wireVersionOf(ws) === WIRE_VERSION ? fallback.compact : fallback.json, opts);
+  }
+  const data = wireVersionOf(ws) === WIRE_VERSION && stateFrame.data === frame.json ? frame.compact : stateFrame.data;
+  const queued = queueRaw(ws, data, opts);
+  if (queued) stateFrame.commit();
+  return queued;
+}
 
 /**
  * Send an already-encoded frame. Skips when the socket is not OPEN, when `droppable` and the socket is
@@ -295,16 +412,53 @@ const onSendDone = (err) => { void err; }; // errors surface through the socket'
  * @returns {boolean} true when the frame was queued
  */
 export function sendRaw(ws, data, { droppable = false } = {}) {
-  if (!ws || ws.readyState !== WS_OPEN || typeof data !== 'string') return false;
+  if (!canQueue(ws, { droppable })) return false;
+  if (typeof data === 'string') {
+    try {
+      const msg = JSON.parse(data);
+      if (msg && typeof msg === 'object' && !Array.isArray(msg)) {
+        return sendPrepared(ws, prepareMessage(msg, data), { droppable });
+      }
+    } catch { /* Non-JSON callers retain the raw send contract. */ }
+  }
+  const state = deliveries.get(ws);
+  if (state?.pending) flushLatest(ws, state);
+  // Stored end-of-match frames and lobby summaries use legacy JSON; replay through the same negotiated boundary.
+  if (wireVersionOf(ws) === WIRE_VERSION && typeof data === 'string') {
+    try { data = JSON.stringify(encodeWire(JSON.parse(data), 's2c')); } catch { /* legacy fallback */ }
+  }
+  return queueRaw(ws, data, { droppable });
+}
+
+function canQueue(ws, { droppable = false } = {}) {
+  if (!ws || ws.readyState !== WS_OPEN) return false;
   try {
     const queued = ws.bufferedAmount;
-    if (queued > NET_DEFAULTS.hardBufferBytes) { ws.terminate(); return false; }
-    if (droppable && queued > NET_DEFAULTS.snapDropBytes) return false;
-    ws.send(data, onSendDone);
+    if (queued > NET_DEFAULTS.hardBufferBytes) {
+      if (!emergencySockets.has(ws)) ws.terminate();
+      return false;
+    }
+    if (droppable && queued > NET_DEFAULTS.snapDropBytes) { deliveryOf(ws).dropped++; return false; }
     return true;
   } catch {
     return false;
   }
+}
+
+function queueRaw(ws, data, opts) {
+  if (typeof data !== 'string' || !canQueue(ws, opts)) return false;
+  const state = deliveryOf(ws);
+  const id = {};
+  const at = performance.now();
+  if (state.inFlight.size < 64) state.inFlight.set(id, at);
+  try {
+    ws.send(data, (err) => {
+      state.inFlight.delete(id);
+      state.sendMs.add(Math.max(0, performance.now() - at));
+      onSendDone(err);
+    });
+    return true;
+  } catch { state.inFlight.delete(id); return false; }
 }
 
 /** True for frames that may be skipped under backpressure (only battle snapshots). */
@@ -318,17 +472,8 @@ export const isDroppable = (msg) => !!msg && msg.t === 'b.snap';
  * @returns {boolean}
  */
 export function send(ws, msg, encoded = null) {
-  const bytes = encoded == null ? encode(msg) : encoded;
-  if (bytes == null) return false;
-  // state kinds go through the delta transport: it owns the per-connection baseline, so commit() only runs after the
-  // frame was really queued (a dropped or terminated socket must not advance it).
-  const frame = prepareStateFrame(ws, msg, bytes);
-  // Pre-encoded bytes that are not a JSON object cannot be a baseline: fall back to the full frame encoded here.
-  const data = frame.usable ? frame.data : encode(msg);
-  if (data == null) return false;
-  const ok = sendRaw(ws, data, { droppable: isDroppable(msg) });
-  if (ok && frame.usable) frame.commit();
-  return ok;
+  if (!canQueue(ws, { droppable: isDroppable(msg) })) return false;
+  return sendPrepared(ws, prepareMessage(msg, encoded), { droppable: isDroppable(msg) });
 }
 
 /**
@@ -513,6 +658,8 @@ class Connection {
     this.key = addr.key;
     this.openedAt = now;
     this.alive = true;
+    this.pendingPingAt = null;
+    this.pongRttMs = 0;
     /** @type {Session | null} */
     this.session = null;
     this.bucket = new TokenBucket(opts.ratePerSec, opts.rateBurst, now);
@@ -555,6 +702,9 @@ export class Network {
     /** @type {Map<string, number>} open sockets per client network key */
     this.connsPerKey = new Map();
     this.closed = false;
+    this.emergency = { active: false, reason: null, since: 0, retryAt: 0 };
+    this.metrics = createConnectionMetrics();
+    this._lastDiagnosticLog = -Infinity;
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
     this.heartbeatTimer.unref?.();
     const sweepMs = Math.max(20, Math.min(15_000, Math.floor(this.opts.reconnectWindowMs / 4)));
@@ -564,6 +714,63 @@ export class Network {
 
   /** Number of open sockets. */
   get connectionCount() { return this.conns.size; }
+
+  diagnostics() {
+    let queuedBytes = 0, maxSendMs = 0, coalesced = 0, dropped = 0;
+    for (const ws of this.conns.keys()) {
+      const sample = deliveryMetrics(ws);
+      queuedBytes += sample.queuedBytes;
+      maxSendMs = Math.max(maxSendMs, sample.sendMs ?? 0);
+      coalesced += sample.coalesced;
+      dropped += sample.dropped;
+    }
+    return { ...this.metrics.snapshot(), queuedBytes, maxSendMs, coalesced, dropped, ...this.congestion() };
+  }
+
+  /** A tiny non-droppable notice goes before match resyncs; never disconnect existing players. */
+  setEmergency(state) {
+    const previous = this.emergency;
+    const active = !!state.active;
+    this.emergency = { active, reason: active ? state.reason || 'bandwidth' : null,
+      since: active ? state.startedAt || state.since || this.now() : 0,
+      retryAt: active ? state.retryAt || 0 : 0 };
+    if (previous.active && !active) {
+      // The reconnect window must not expire merely because the server froze the match.
+      const now = this.now();
+      for (const session of this.registry.all()) {
+        if (!session.connected && session.disconnectedAt != null && this.handler.allowEmergencyResume?.(session)) {
+          session.disconnectedAt += Math.max(0, now - Math.max(previous.since, session.disconnectedAt));
+        }
+      }
+    }
+    const frame = prepareMessage({ t: 'm.emergency', ...this.emergency });
+    for (const [ws, conn] of this.conns) {
+      if (active && conn.session && this.handler.allowEmergencyResume?.(conn.session)) emergencySockets.add(ws);
+      else emergencySockets.delete(ws);
+      if (!conn.closing) sendPrepared(ws, frame);
+    }
+  }
+
+  /** Only gameplay connections corroborate a slow downloader; a slow visitor cannot freeze other matches. */
+  congestion() {
+    let congestedConnections = 0; let maxBufferedBytes = 0; let delayedHeartbeats = 0;
+    let activeConnections = 0;
+    const activeNetworks = new Set(); const congestedNetworks = new Set(); const delayedNetworks = new Set();
+    const now = this.now();
+    for (const [ws, conn] of this.conns) {
+      if (conn.closing || !conn.session || !this.handler.roomOf?.(conn.session)?.match) continue;
+      activeConnections++;
+      const key = conn.key || conn.session.playerId;
+      activeNetworks.add(key);
+      const bytes = Number(ws.bufferedAmount) || 0;
+      maxBufferedBytes = Math.max(maxBufferedBytes, bytes);
+      if (bytes >= 64 * 1024) { congestedConnections++; congestedNetworks.add(key); }
+      if (conn.pendingPingAt != null && now - conn.pendingPingAt > 3000) { delayedHeartbeats++; delayedNetworks.add(key); }
+    }
+    return { activeConnections, activeNetworks: activeNetworks.size, congestedConnections,
+      congestedNetworks: congestedNetworks.size, delayedHeartbeats, delayedNetworks: delayedNetworks.size,
+      impairedNetworks: new Set([...congestedNetworks, ...delayedNetworks]).size, maxBufferedBytes };
+  }
 
   /** Number of authenticated sessions bound to a live socket (what the online cap counts). */
   get onlineCount() {
@@ -601,7 +808,13 @@ export class Network {
     ws.on('message', (data, isBinary) => {
       try { this.onFrame(conn, data, isBinary); } catch (e) { this.log.error('[net] frame handler crashed', e); }
     });
-    ws.on('pong', () => { conn.alive = true; if (conn.session && conn.session.ws === ws) conn.session.lastSeen = this.now(); });
+    ws.on('pong', () => {
+      const now = this.now();
+      conn.alive = true;
+      if (conn.pendingPingAt != null) conn.pongRttMs = Math.max(0, now - conn.pendingPingAt);
+      conn.pendingPingAt = null;
+      if (conn.session && conn.session.ws === ws) conn.session.lastSeen = now;
+    });
     ws.on('error', (e) => { this.log.debug?.('[net] socket error', e?.code || e?.message); });
     ws.on('close', () => { try { this.onClose(conn); } catch (e) { this.log.error('[net] close handler crashed', e); } });
   }
@@ -625,13 +838,19 @@ export class Network {
         conn.close(CLOSE.POLICY, 'rate limit');
         return;
       }
-      this.reply(conn, errorMsg(ERR.RATE, peekRid(data, isBinary)));
+      this.reply(conn, errorMsg(ERR.RATE, peekRid(data, isBinary, wireVersionOf(conn.ws))));
       return;
     }
 
     if (isBinary) { this.reply(conn, errorMsg(ERR.BAD_MSG, undefined, 'binary frame')); return; }
     let msg;
-    try { msg = JSON.parse(data.toString('utf8')); } catch { this.reply(conn, errorMsg(ERR.BAD_MSG, undefined, 'invalid json')); return; }
+    try {
+      msg = JSON.parse(data.toString('utf8'));
+      if (Array.isArray(msg)) {
+        if (wireVersionOf(conn.ws) !== WIRE_VERSION) throw new Error('wire not negotiated');
+        msg = decodeWire(msg, 'c2s');
+      }
+    } catch { this.reply(conn, errorMsg(ERR.BAD_MSG, undefined, 'invalid json or compact wire')); return; }
     const rid = msg && typeof msg === 'object' ? msg.rid : undefined;
     // Own-property check first: validateC2S alone would accept inherited keys like "constructor".
     if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.t !== 'string' || !Object.hasOwn(C2S, msg.t)) {
@@ -643,14 +862,24 @@ export class Network {
     if (reason) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, reason)); return; }
 
     if (msg.t === 'ping') {
-      const pong = { t: 'pong', c: msg.c, s: now };
+      const { queuedBytes, sendMs } = deliveryMetrics(conn.ws);
+      const d = { ...this.metrics.snapshot(), queuedBytes, sendMs };
+      const pong = { t: 'pong', c: msg.c, s: now, d };
+      if ((d.loopMs >= 100 || d.handlerMs >= 100 || queuedBytes >= STATE_QUEUE_BYTES || sendMs >= 250)
+          && now - this._lastDiagnosticLog >= 30000) {
+        this._lastDiagnosticLog = now;
+        this.log.warn('[net] delivery delayed', this.diagnostics());
+      }
       if (validRid(rid)) pong.rid = rid;
       this.reply(conn, pong);
       return;
     }
     if (msg.t === 'hello') { this.onHelloMsg(conn, msg, now); return; }
     if (!conn.session) { this.reply(conn, errorMsg(ERR.BAD_MSG, rid, 'hello required')); return; }
-    if (HEAVY_TYPES.has(msg.t) && !conn.heavy.take(now)) { this.reply(conn, errorMsg(ERR.RATE, rid, `${msg.t} too often`)); return; }
+    // Lobby presence is a small summary and unsubscription is cleanup; only an opened paged directory
+    // consumes the heavy-response budget. This keeps a rapid close/route change from leaving a stale watcher.
+    const heavy = HEAVY_TYPES.has(msg.t) && !(msg.t === 'lobby.watch' && (!msg.on || !msg.list));
+    if (heavy && !conn.heavy.take(now)) { this.reply(conn, errorMsg(ERR.RATE, rid, `${msg.t} too often`)); return; }
 
     // A client that missed a delta asks for a full frame (shared/stateDelta.js StateReceiver). Dropping the baseline is
     // the point: the next frame of every state channel is then a full one, which is what restores the client. The state
@@ -663,6 +892,7 @@ export class Network {
     }
 
     let res;
+    const handlingAt = performance.now();
     try {
       // client-side combat reports (b.progress / b.result, DESIGN §14) belong to the running match like 'g.*' intents:
       // handed to the lobby's match router when the handler has one (server/lobby.js routeGame)
@@ -672,11 +902,16 @@ export class Network {
       this.log.error(`[net] handler crashed on ${msg.t}`, e);
       res = { error: ERR.INTERNAL };
     }
+    this.metrics.handler.add(performance.now() - handlingAt);
     if (res && typeof res.then === 'function') {
       // an answer that has to wait (DESIGN §32.6: a room whose match runs in a match host worker answers once the worker
       // has — server/lobby.js keeps each such room's messages in order): sent when it settles; a rejection is INTERNAL.
       // A vanilla room never answers this way, so its replies go out exactly as before
-      Promise.resolve(res).then((r) => this.answer(conn, msg, rid, r), (e) => {
+      Promise.resolve(res).then((r) => {
+        this.metrics.handler.add(performance.now() - handlingAt);
+        this.answer(conn, msg, rid, r);
+      }, (e) => {
+        this.metrics.handler.add(performance.now() - handlingAt);
         this.log.error(`[net] handler failed on ${msg.t}`, e);
         this.answer(conn, msg, rid, { error: ERR.INTERNAL });
       });
@@ -697,7 +932,7 @@ export class Network {
       // surface as an error toast in the browser)
       if (msg.t === 'b.progress' && !validRid(rid)) return;
       this.reply(conn, errorMsg(isErrCode(res.error) ? res.error : ERR.INTERNAL, rid, res.detail));
-    } else if (validRid(rid)) this.reply(conn, { t: 'ok', rid });
+    } else if (validRid(rid)) this.reply(conn, res?.reply ? { ...res.reply, rid } : { t: 'ok', rid });
   }
 
   /** @param {Connection} conn @param {any} msg @param {number} now */
@@ -714,7 +949,16 @@ export class Network {
     let resumed = false;
     const repeat = !!session;
     if (!session) {
-      session = msg.token ? this.registry.byToken(msg.token) : null;
+      session = msg.token ? this.registry.byToken(msg.token, { allowExpired: (s) =>
+        this.emergency.active && !!this.handler.allowEmergencyResume?.(s) }) : null;
+      // Upgrade cannot identify a resume token. Reject before allocating/replacing any identity,
+      // while preserving running matches' original members' authenticated reconnects.
+      if (this.emergency.active && (!session || !this.handler.allowEmergencyResume?.(session))) {
+        this.reply(conn, { t: 'm.emergency', ...this.emergency });
+        this.reply(conn, errorMsg(ERR.SERVER_EMERGENCY, rid));
+        conn.close(CLOSE.POLICY, 'bandwidth emergency');
+        return;
+      }
       if (session) {
         if (session.connected && session.ws && session.ws !== conn.ws
           && (msg.noReplace || (Number.isFinite(msg.claimAt) && session.claimAt != null && msg.claimAt > session.claimAt))) {
@@ -748,16 +992,20 @@ export class Network {
     session.lastSeen = now;
     session.addr = conn.ip;
     session.limitKey = conn.key;
-    // Opt-in state deltas (shared/stateDelta.js): a hello may name the version it decodes. A repeated hello keeps the
-    // baseline it already has, a client that never names one (or names an unknown version) keeps getting plain frames.
     negotiateStateDelta(conn.ws, msg.delta);
+    if (this.emergency.active && this.handler.allowEmergencyResume?.(session)) emergencySockets.add(conn.ws);
 
     let extra = null;
     try { extra = this.handler.welcomeInfo?.() ?? null; } catch (e) { this.log.error('[net] welcomeInfo crashed', e); }
-    const welcome = { ...(extra && typeof extra === 'object' ? extra : null), t: 'welcome', playerId: session.playerId, token: session.token, name: session.name, serverNow: now, version: PROTOCOL_VERSION, resumed };
+    const welcome = { ...(extra && typeof extra === 'object' ? extra : null), t: 'welcome', playerId: session.playerId, token: session.token, name: session.name, serverNow: now, version: PROTOCOL_VERSION, resumed,
+      emergency: this.emergency };
+    const wire = this.opts.compactWire && msg.wire === WIRE_VERSION ? WIRE_VERSION : 0;
+    if (wire) welcome.wire = wire;
     if (session.aiTakeoverFrom) { welcome.takeoverFrom = session.aiTakeoverFrom; session.aiTakeoverFrom = null; }
     if (validRid(rid)) welcome.rid = rid;
-    this.reply(conn, welcome);
+    // Repeated hello may renegotiate too. The acknowledgement is always readable JSON and precedes all pushes.
+    setWireVersion(conn.ws, wire);
+    queueRaw(conn.ws, encode(welcome));
     try {
       this.handler.onHello?.(session, { resumed, repeat });
     } catch (e) {
@@ -837,8 +1085,11 @@ export class Network {
         conn.close(CLOSE.HELLO_TIMEOUT, 'hello timeout');
         return;
       }
-      if (!conn.alive) { conn.ws.terminate(); return; }
+      if (!conn.alive && !(this.emergency.active && conn.session && this.handler.allowEmergencyResume?.(conn.session))) {
+        conn.ws.terminate(); return;
+      }
       conn.alive = false;
+      conn.pendingPingAt ??= now;
       conn.ws.ping();
     } catch (e) {
       this.log.debug?.('[net] heartbeat error', e?.message);
@@ -848,7 +1099,12 @@ export class Network {
   /** Purge expired sessions and tell the handler. */
   sweep() {
     let expired;
-    try { expired = this.registry.sweep(this.now()); } catch (e) { this.log.error('[net] sweep crashed', e); return; }
+    try {
+      // Do not remove a frozen match's original seats while the server is refusing newcomers.
+      expired = [...this.registry.all()].filter((session) => this.registry.isExpired(session, this.now())
+        && !(this.emergency.active && this.handler.allowEmergencyResume?.(session)));
+      for (const session of expired) this.registry.remove(session);
+    } catch (e) { this.log.error('[net] sweep crashed', e); return; }
     for (const s of expired) {
       try { this.handler.onExpire?.(s); } catch (e) { this.log.error('[net] onExpire crashed', e); }
     }
@@ -863,6 +1119,7 @@ export class Network {
     this.closed = true;
     clearInterval(this.heartbeatTimer);
     clearInterval(this.sweepTimer);
+    this.metrics.close();
     for (const conn of this.conns.values()) {
       conn.close(code, reason);
       const t = setTimeout(() => { try { conn.ws.terminate(); } catch { /* ignore */ } }, 1000);
@@ -872,10 +1129,11 @@ export class Network {
 }
 
 /** Best-effort rid extraction for rate-limited frames (so the client's pending request resolves). */
-function peekRid(data, isBinary) {
+function peekRid(data, isBinary, wire = 0) {
   if (isBinary || !data || data.length > PEEK_RID_MAX_BYTES) return undefined;
   try {
-    const m = JSON.parse(data.toString('utf8'));
+    const raw = JSON.parse(data.toString('utf8'));
+    const m = Array.isArray(raw) && wire === WIRE_VERSION ? decodeWire(raw, 'c2s') : raw;
     return m && typeof m === 'object' ? m.rid : undefined;
   } catch {
     return undefined;

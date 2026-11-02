@@ -45,7 +45,7 @@ test('selection: runtime files in; tests, maintainer tools, other docs, dev page
   const { keep, drop } = selectTracked([
     'server/index.js', 'server/sim/rng.js', 'shared/constants.js', 'public/index.html', 'public/js/main.js', 'public/i18n/en.json',
     'data/chess.json', 'data/i18n/en.json', 'tools/setup.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs', 'tools/doctor.mjs',
-    'tools/crop-board-atlas.mjs', 'tools/assets/plan.mjs', 'tools/assets/local-enemy-spines.json', 'tools/assets/local-token-spines.json',
+    'tools/announcements.mjs', 'docs/ANNOUNCEMENTS.md', 'tools/crop-board-atlas.mjs', 'tools/assets/plan.mjs', 'tools/assets/local-enemy-spines.json', 'tools/assets/local-token-spines.json',
     'tools/local-extract/extract.py',
     'tools/local-extract/LICENSE-Ark-Unpacker.txt', 'scripts/start.sh', 'scripts/start-windows.bat', 'scripts/start-windows-sandbox.bat', 'scripts/launch.mjs',
     'scripts/install-service-windows.ps1', 'docs/PLAYING.md', 'docs/DEPLOY.md', ...RUNTIME_RESEARCH, 'package.json',
@@ -58,15 +58,18 @@ test('selection: runtime files in; tests, maintainer tools, other docs, dev page
     'public/vendor/pixi.min.js', 'data/local-assets.json', 'handoff/HANDOFF.md', '.github/workflows/ci.yml', 'types/core.js',
     'eslint.config.js', 'jsconfig.json', 'Dockerfile', '.dockerignore', '.gitignore', '.gitattributes', 'AGENTS.md', '.env',
     'server/.env.production', 'pv/clip.mp4', '3，9，11回合情况/note.txt', 'review/a.md', '.cache/x', 'server/__pycache__/a.pyc',
-    'public/.DS_Store', 'tools/local-extract/.venv-extract/x.py', 'node_modules/ws/index.js',
+    'public/.DS_Store', 'tools/local-extract/.venv-extract/x.py', 'node_modules/ws/index.js', 'runtime/announcements/index.json',
   ]);
   for (const f of ['server/index.js', 'public/i18n/en.json', 'data/i18n/en.json', 'tools/assets/local-enemy-spines.json',
     'tools/assets/local-token-spines.json', 'tools/local-extract/LICENSE-Ark-Unpacker.txt', 'scripts/install-service-windows.ps1', 'scripts/start-windows-sandbox.bat',
     'docs/research/07-assets.json', 'CHANGELOG.md']) {
     assert.ok(keep.includes(f), `keeps ${f}`);
   }
-  assert.equal(keep.length, 36, keep.join(' '));
-  assert.equal(drop.length, 40, drop.join(' '));
+  assert.equal(keep.length, 38, keep.join(' '));
+  assert.ok(keep.includes('tools/announcements.mjs'));
+  assert.ok(keep.includes('docs/ANNOUNCEMENTS.md'));
+  assert.ok(drop.includes('runtime/announcements/index.json'));
+  assert.equal(drop.length, 41, drop.join(' '));
   assert.ok(!keep.some((f) => drop.includes(f)));
 });
 
@@ -81,12 +84,21 @@ test('refusal list: 0.1.x\'s entries and what 0.2.0 leaves out, at the path or u
   for (const p of ['server/index.js', 'docs/research/03-operators.json', 'testing.md', 'public/js/review.js']) assert.ok(!isRefused(p), p);
 });
 
+test('server owner CLI and guide ship while persistent AI settings stay private', () => {
+  const { keep, drop } = selectTracked([
+    'server/serverSettings.js', 'tools/server-settings.mjs', 'docs/SERVER_SETTINGS.md',
+    'runtime/server-settings.json', 'runtime/server-a/server-settings.json',
+  ]);
+  assert.deepEqual(keep, ['docs/SERVER_SETTINGS.md', 'server/serverSettings.js', 'tools/server-settings.mjs']);
+  assert.deepEqual(drop, ['runtime/server-a/server-settings.json', 'runtime/server-settings.json']);
+});
+
 test('the real tracked tree: runtime in, the rest out; every shipped import, npm entry point, research table and spawned tool ships', () => {
   const p = plan(ROOT, { lite: true, allowDirty: true, scan: false, measure: false });
   assert.deepEqual(p.problems, []);
   const got = new Set(p.files);
   for (const f of ['server/index.js', 'tools/setup.mjs', 'tools/fetch-assets.mjs', 'scripts/start.sh', 'docs/PLAYING.md', 'docs/DEPLOY.md',
-    'package-lock.json', 'NOTICE.md', ...RUNTIME_RESEARCH]) assert.ok(got.has(f), f);
+    'package-lock.json', 'NOTICE.md', 'tools/announcements.mjs', 'docs/ANNOUNCEMENTS.md', ...RUNTIME_RESEARCH]) assert.ok(got.has(f), f);
   for (const f of ['tools/golden.mjs', 'tools/package.mjs', 'scripts/make-windows-bundle.mjs', 'docs/DESIGN.md', 'eslint.config.js', 'Dockerfile']) {
     assert.ok(!got.has(f), f);
   }
@@ -113,8 +125,8 @@ test('import specifiers resolve like the server mounts; npm entry points must sh
   assert.equal(resolveSpecifier('server/a.js', 'node:fs'), null);
   assert.equal(resolveSpecifier('server/a.js', 'ws'), null);
   const pkg = { main: 'server/index.js', scripts: { start: 'node server/index.js', setup: 'node tools/setup.mjs', doctor: 'node tools/golden.mjs',
-    launch: 'node scripts/launch.mjs', postinstall: 'node tools/vendor.mjs', vendor: 'node tools/vendor.mjs', assets: 'node tools/vendor.mjs && node tools/fetch-assets.mjs' } };
-  const shipped = ['server/index.js', 'tools/setup.mjs', 'scripts/launch.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs'];
+    launch: 'node scripts/launch.mjs', postinstall: 'node tools/vendor.mjs', vendor: 'node tools/vendor.mjs', assets: 'node tools/vendor.mjs && node tools/fetch-assets.mjs', 'assets:pack': 'node tools/asset-cache-pack.mjs' } };
+  const shipped = ['server/index.js', 'tools/setup.mjs', 'scripts/launch.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs', 'tools/asset-cache-pack.mjs'];
   assert.deepEqual(entryProblems(pkg, shipped), ['npm run doctor: tools/golden.mjs is not shipped']);
   assert.deepEqual(entryProblems({ ...pkg, scripts: { ...pkg.scripts, doctor: undefined } }, shipped), ['npm script "doctor" is missing']);
 });
@@ -140,6 +152,7 @@ function fakeCheckout() {
   };
   const scripts = { start: 'node server/index.js', setup: 'node tools/setup.mjs', doctor: 'node tools/doctor.mjs', launch: 'node scripts/launch.mjs',
     postinstall: 'node tools/vendor.mjs', vendor: 'node tools/vendor.mjs', assets: 'node tools/vendor.mjs && node tools/fetch-assets.mjs',
+    'assets:pack': 'node tools/asset-cache-pack.mjs',
     test: 'node --test', golden: 'node tools/golden.mjs', package: 'node tools/package.mjs' };
   put('package.json', JSON.stringify({ name: 'sp-test', version: '9.9.9', main: 'server/index.js', scripts, dependencies: {} }));
   put('package-lock.json', JSON.stringify({ name: 'sp-test', version: '9.9.9', lockfileVersion: 3, packages: { '': { name: 'sp-test' } } }));
@@ -153,13 +166,13 @@ function fakeCheckout() {
   put('data/chess.json', '{}\n');
   put('data/assets.json', JSON.stringify({ chars: { a: { avatar: '/assets/char/a.png' } }, ui: { b: '/assets/ui/b%20c.png' }, fonts: { css: '/fonts/fonts.css' } }));
   put('tools/setup.mjs', "import { n } from './assets/network.mjs';\n");
-  for (const f of ['tools/assets/network.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs', 'tools/doctor.mjs', 'tools/crop-board-atlas.mjs',
-    'tools/local-extract/extract.py', 'tools/golden.mjs', 'tools/build-data.mjs', 'tools/package.mjs', 'scripts/launch.mjs',
+  for (const f of ['tools/announcements.mjs', 'tools/assets/network.mjs', 'tools/vendor.mjs', 'tools/fetch-assets.mjs', 'tools/doctor.mjs', 'tools/crop-board-atlas.mjs',
+    'tools/local-extract/extract.py', 'tools/asset-cache-pack.mjs', 'tools/asset-cache/zip.mjs', 'tools/golden.mjs', 'tools/build-data.mjs', 'tools/package.mjs', 'scripts/launch.mjs',
     'scripts/make-windows-bundle.mjs', 'test/a.test.js', 'handoff/HANDOFF.md', '.github/workflows/ci.yml', 'types/core.js', 'eslint.config.js',
     'Dockerfile', 'AGENTS.md', 'review/notes.md', 'docs/DESIGN.md', 'docs/research/00-INDEX.md', 'docs/research/10-networking-hosting.md']) put(f);
   put('scripts/start.sh', '#!/usr/bin/env bash\nexec node scripts/launch.mjs\n');
   fs.chmodSync(path.join(dir, 'scripts/start.sh'), 0o755);
-  for (const f of ['README.md', 'CHANGELOG.md', 'LICENSE', 'NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'docs/PLAYING.md', 'docs/DEPLOY.md']) put(f, `# ${f}\n`);
+  for (const f of ['README.md', 'CHANGELOG.md', 'LICENSE', 'NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'docs/PLAYING.md', 'docs/DEPLOY.md', 'docs/ANNOUNCEMENTS.md', 'docs/ASSET_CACHE.md']) put(f, `# ${f}\n`);
   for (const f of [...RUNTIME_RESEARCH, 'docs/research/01-core-data.json']) put(f, '{}\n');
   put('docs/img/x.jpg', PNG);
   put('.gitignore', 'public/assets/\npublic/fonts/\npublic/vendor/\ndata/local-assets.json\n.cache/\npv/\n');
@@ -187,9 +200,9 @@ const runTool = (args) => spawnSync(process.execPath, [TOOL, ...args], { encodin
 const listed = (stdout) => stdout.split('\n').filter((l) => l.startsWith('file ')).map((l) => l.slice(5));
 
 const SHIPPED_TRACKED = ['CHANGELOG.md', 'LICENSE', 'NOTICE.md', 'README.md', 'THIRD-PARTY-NOTICES.md', 'data/assets.json', 'data/chess.json',
-  'docs/DEPLOY.md', 'docs/PLAYING.md', ...RUNTIME_RESEARCH, 'package-lock.json', 'package.json', 'public/index.html', 'public/js/main.js',
+  'docs/ANNOUNCEMENTS.md', 'docs/ASSET_CACHE.md', 'docs/DEPLOY.md', 'docs/PLAYING.md', ...RUNTIME_RESEARCH, 'package-lock.json', 'package.json', 'public/index.html', 'public/js/main.js',
   'public/js/util.js', 'scripts/launch.mjs', 'scripts/start.sh', 'server/index.js', 'server/sim/rng.js', 'shared/constants.js',
-  'tools/assets/network.mjs', 'tools/crop-board-atlas.mjs', 'tools/doctor.mjs', 'tools/fetch-assets.mjs', 'tools/local-extract/extract.py',
+  'tools/announcements.mjs', 'tools/asset-cache-pack.mjs', 'tools/asset-cache/zip.mjs', 'tools/assets/network.mjs', 'tools/crop-board-atlas.mjs', 'tools/doctor.mjs', 'tools/fetch-assets.mjs', 'tools/local-extract/extract.py',
   'tools/setup.mjs', 'tools/vendor.mjs', 'server/release-without-llm'].sort();
 const ART = ['data/local-assets.json', 'public/assets/char/a.png', 'public/assets/local/g/x.png', 'public/assets/local/g/x.webp',
   'public/assets/local/spine/token/token_x/token_x.skel', 'public/assets/ui/b c.png', 'public/fonts/fonts.css', 'public/fonts/x.woff2'];
@@ -329,7 +342,7 @@ test('the stage drops dishonest npm scripts and rewrites unshipped doc links', {
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const stage = path.join(out, `${FOLDER}-v9.9.9-lite`, FOLDER);
     const stagedPkg = JSON.parse(fs.readFileSync(path.join(stage, 'package.json'), 'utf8'));
-    assert.deepEqual(Object.keys(stagedPkg.scripts).sort(), ['assets', 'doctor', 'launch', 'postinstall', 'setup', 'start', 'vendor']);
+    assert.deepEqual(Object.keys(stagedPkg.scripts).sort(), ['assets', 'assets:pack', 'doctor', 'launch', 'postinstall', 'setup', 'start', 'vendor']);
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).scripts.test, 'node --test');
     const host = 'https://github.com/sganggs/Stronghold-Protocol';
     const got = fs.readFileSync(path.join(stage, 'README.md'), 'utf8');

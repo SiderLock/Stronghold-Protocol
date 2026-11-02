@@ -64,7 +64,7 @@ export class MatchMessaging {
     if (m) this._privDirty.add(m.mate);
   }
 
-  /** Send pending m.private (per player, only when changed) and m.public (throttled ≤ 10/s). */
+  /** Send pending m.private (per player, only when changed) and m.public (normally throttled ≤ 8/s). */
   flush(forcePublic = false) {
     if (this.disposed) return;
     if (this._privDirty.size) {

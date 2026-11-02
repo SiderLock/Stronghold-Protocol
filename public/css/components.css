@@ -991,6 +991,11 @@
 }
 /* transitional states (connecting / re-handshaking) only appear if they last longer than .6 s */
 .conn-banner--soft { animation: conn-in-soft var(--t-med) var(--ease-out) .6s backwards; }
+.conn-banner--quality {
+  max-width: min(90vw, 7rem); width: max-content; pointer-events: none;
+  font-size: max(12px, calc(.16 * var(--t))); line-height: 1.4; gap: 6px; padding: 6px 9px;
+}
+.conn-banner--quality .icon { width: max(14px, .22rem); height: max(14px, .22rem); flex-shrink: 0; }
 @keyframes conn-in { from { opacity: 0; transform: translate(-50%, .12rem); } }
 @keyframes conn-in-soft { from { opacity: 0; visibility: hidden; transform: translate(-50%, .12rem); } }
 /* In a match the top-centre capsule (round / phase / kills), the ticker strip under it and the bottom centre
@@ -1003,6 +1008,33 @@
 .sp-in-match.sp-conn .toast-host { top: calc(2.0rem + var(--sa-t, 0px)); }
 .conn-banner .icon { width: .22rem; height: .22rem; color: var(--orange-hi); }
 .conn-banner__sub { color: var(--text-lo); font-family: var(--font-num); font-size: calc(.15 * var(--t)); }
+
+/* Emergency protection stays visible even when the socket remains connected. */
+.emergency-banner {
+  position: fixed;
+  bottom: calc(.24rem + var(--sa-b, 0px));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: calc(var(--z-toast) + 1);
+  display: flex;
+  align-items: center;
+  gap: .12rem;
+  max-width: 92vw;
+  padding: .12rem .2rem;
+  background: rgba(28, 14, 5, .98);
+  border: 1px solid var(--amber);
+  box-shadow: 0 .08rem .3rem rgba(0, 0, 0, .65);
+  color: var(--text-hi);
+  font-size: calc(.17 * var(--t));
+  line-height: 1.45;
+}
+.emergency-banner .icon { flex: none; width: .24rem; height: .24rem; color: var(--amber); }
+.sp-in-match .emergency-banner { top: calc(1.34rem + var(--sa-t, 0px)); bottom: auto; }
+.sp-emergency-setup .emergency-banner { top: calc(1.28rem + var(--sa-t, 0px)); bottom: auto; }
+.sp-emergency-setup :is(.brief__main, .draft__main) { padding-top: .84rem; }
+.sp-emergency .toast-host { top: calc(.96rem + var(--sa-t, 0px)); }
+.sp-in-match.sp-emergency .toast-host { top: calc(2.15rem + var(--sa-t, 0px)); }
+.sp-emergency .conn-banner { bottom: calc(1.12rem + var(--sa-b, 0px)); top: auto; }
 
 /* ---- misc shared bits ------------------------------------------------------------------------------ */
 .kv { display: flex; align-items: baseline; gap: .08rem; }

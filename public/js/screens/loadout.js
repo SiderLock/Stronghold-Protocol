@@ -52,10 +52,12 @@ import {
   setOps, resetOps,
 } from '../ui/loadoutModel.js';
 import { loadoutStore, openLoadout, closeLoadout, setEntries, setOpsMap, applyLoadoutEntries, setNotOwned, applyOwnershipImport, setDiyPicks, applyDiyImport, importedEntries, importedNotOwned } from '../ui/loadoutSync.js';
+import { skinsStore, setSkins, SKINS_KEY } from '../ui/skins.js';
 import { OperatorVoice } from '../ui/operatorVoice.js';
 // 皮肤 (docs/SKINS.md): a self-contained section — everything it does lives in ui/skinPicker.js, so this screen keeps
 // one import and one line in its detail body
 import { SkinSection } from '../ui/skinPicker.js';
+import { SkinRandomControls } from '../ui/skinRandom.js';
 import { CultivationSelects, CultivationSection, cultivationView, potentialEditable } from './cultivation.js';
 import { cultivationCharIds } from '../../../shared/protocol.js';
 import { setOwned, notOwnedCount, serializeOwnership, parseOwnershipImport, OWNERSHIP_IMPORT_MAX_BYTES } from '../ui/ownershipModel.js';
@@ -71,7 +73,7 @@ import { diyCount, sanitizeDiyPicks, setPick, serializeDiy, parseDiyImport, DIY_
 import { t, tParts, N_ } from '../../../shared/i18n.js';
 import { copyText } from '../ui/clipboard.js';
 import { toast } from '../ui/toasts.js';
-import { reducedMotion } from '../ui/device.js';
+import { reducedMotion, FullscreenButton } from '../ui/device.js';
 
 export { openLoadout, closeLoadout };
 
@@ -708,8 +710,8 @@ function LoadoutScreen({ st }) {
   const openExport = () => setIo(tab === 'ownership'
     // (by operator, every version's — DESIGN §35.23; a v1 store still migrating exports what it has)
     ? { mode: 'export', kind: 'ownership', text: serializeOwnership(loadoutStore.get().notOwnedChars || []) }
-    : tab === 'diy' ? { mode: 'export', kind: 'diy', text: serializeDiy(loadoutStore.get().diy, { version: loadoutStore.get().diyVersion }) }
-      : { mode: 'export', kind: 'loadout', text: serializeExport(loadoutStore.get().byChar || {}, { ops: loadoutStore.get().ops }) });
+    : tab === 'diy' ? { mode: 'export', kind: 'diy', text: serializeDiy(loadoutStore.get().diy, { version: loadoutStore.get().diyVersion, skins: skinsStore.get()[SKINS_KEY] }) }
+      : { mode: 'export', kind: 'loadout', text: serializeExport(loadoutStore.get().byChar || {}, { ops: loadoutStore.get().ops, skins: skinsStore.get()[SKINS_KEY] }) });
   const openImport = () => setIo({ mode: 'import', kind: tab, text: '' });
   const ioCopy = async () => {
     const ok = await copyText(ioText);
@@ -726,6 +728,10 @@ function LoadoutScreen({ st }) {
     if (f.size > (ioOwn ? OWNERSHIP_IMPORT_MAX_BYTES : LOADOUT_IMPORT_MAX_BYTES)) { toast(ioOwn ? t('文件过大，请选择「导出」下载的干员持有文件') : t('文件过大，请选择「导出」下载的调配文件'), 'error'); return; }
     try { setIo({ ...io, mode: 'import', text: await readFileText(f) }); } catch { toast(t('读取文件失败'), 'error'); }
   };
+  // 时装: the envelopes carry `{ [charId]: skinId }` (docs/SKINS.md 导出 / 导入). MERGED, never replacing: a payload
+  // that says nothing about an operator leaves that operator's choice alone, so an older export (no `skins` at all) and
+  // a file from another season cannot clear choices this browser already has.
+  const applySkinChoices = (skins) => { if (skins) setSkins({ ...(skinsStore.get()[SKINS_KEY] || {}), ...skins }); };
   const ioApply = () => {
     // an import before chess.json is loaded, or when it never arrived, would sanitise every entry away — refuse instead
     // of wiping the loadout
@@ -735,8 +741,11 @@ function LoadoutScreen({ st }) {
       const r = parseDiyImport(ioText);
       if (!r.ok) { toast(t('导入失败：{error}', { error: t(r.error, r.params) }), 'error'); return; }
       const { applied, dropped } = applyDiyImport(r.picks, diyData(), loadoutStore.get().diyKitted || []);
+      const nSkins = Object.keys(r.skins || {}).length;
+      applySkinChoices(r.skins);
       setIo(null);
-      toast(applied ? t('已导入 {n} 个自选名额', { n: applied }) + (dropped ? t('（另有 {n} 项不可用，未导入）', { n: dropped }) : '') : t('已导入：全部名额为空'), dropped ? 'warn' : 'success');
+      toast((applied ? t('已导入 {n} 个自选名额', { n: applied }) + (dropped ? t('（另有 {n} 项不可用，未导入）', { n: dropped }) : '') : t('已导入：全部名额为空'))
+        + (nSkins ? t('（含 {n} 名干员的时装）', { n: nSkins }) : ''), dropped ? 'warn' : 'success');
       return;
     }
     if (ioOwn) {
@@ -762,10 +771,14 @@ function LoadoutScreen({ st }) {
     const nOps = r.ops ?? 0;
     // nothing survived sanitising (unknown chess, or every choice already the default): keep the current loadout
     if (!applied && !nOps) { toast(t('导入失败：这份数据在当前版本没有可用的调配，未做任何改动'), 'error'); return; }
+    // 时装 rides along: the appearances of the operators this file names (docs/SKINS.md 导出 / 导入)
+    const nSkins = Object.keys(res.skins || {}).length;
+    applySkinChoices(res.skins);
     setIo(null);
-    toast(!applied ? t('已导入 {n} 名干员的潜能与练度', { n: nOps })
+    toast((!applied ? t('已导入 {n} 名干员的潜能与练度', { n: nOps })
       : dropped ? t('已导入 {applied} 名干员（另有 {dropped} 项未导入）', { applied, dropped })
-        : t('已导入 {applied} 名干员的调配', { applied }), dropped ? 'warn' : 'success');
+        : t('已导入 {applied} 名干员的调配', { applied })) + (nSkins ? t('（含 {n} 名干员的时装）', { n: nSkins }) : ''),
+    dropped ? 'warn' : 'success');
   };
 
   // Esc closes; ←/→ browse the filtered roster (not while typing in the search field)
@@ -872,6 +885,8 @@ function LoadoutScreen({ st }) {
           ? html`<${Button} variant="ghost" size="md" icon="chevronLeft" class="lo-back" onClick=${() => setTab('loadout')} title=${t('返回干员调配')}>${t('干员调配')}<//>`
           : html`<${Button} variant="ghost" size="md" icon="chevronLeft" class="lo-back" onClick=${closeLoadout} aria-label=${t('返回')} title=${t('返回 (Esc)')}>${t('返回')}<//>`}
         ${deck ? html`<button type="button" class="lo-info" data-testid="loadout-help" onClick=${() => setHelp(true)} aria-label=${t('卡片视图说明')} title=${t('卡片视图说明')}><${Icon} name="info" /></button>` : null}
+        <${FullscreenButton} class="lo-fs" />
+        <${SkinRandomControls} />
       </div>
       ${deck ? html`<div class="lo-top__center">
         ${tab === 'loadout' ? html`<${MicroLabel} tone="mint">${quick ? 'QUICK ASSEMBLE' : 'OPERATOR LOADOUT'}<//>

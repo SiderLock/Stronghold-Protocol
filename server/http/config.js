@@ -107,6 +107,7 @@ export function assetIndexOptionsFrom(opts, publicDir) {
  */
 export function netOptionsFrom(opts, log = null) {
   const netOptions = {};
+  if (typeof opts.compactWire === 'boolean') netOptions.compactWire = opts.compactWire;
   for (const k of NET_OPTION_KEYS) {
     if (opts[k] != null) netOptions[k] = opts[k];
   }
@@ -142,7 +143,7 @@ export function parseRoomCode(v) {
 export function lobbyOptionsFrom(opts, log = null) {
   const lobbyOptions = {};
   for (const k of LOBBY_OPTION_KEYS) {
-    if (opts[k] != null) lobbyOptions[k] = opts[k];
+    if (opts[k] != null || (k === 'soloReconnectWindowMs' && opts[k] === null)) lobbyOptions[k] = opts[k];
   }
   applyEnvLimits(lobbyOptions, LOBBY_LIMIT_ENV, log);
   // Per instance only: startServer({ roomCode }) or the --room-code argument parsed by server/index.js. No environment

@@ -297,11 +297,20 @@ export class MatchTestCommands {
 
   _testAdvance() {
     const held = this._testHeld;
-    if (!held || typeof held.fn !== 'function') return fail(ERR.WRONG_PHASE);
-    this._testHeld = null;
-    this._testArmed = null;
-    held.fn();
-    return OK;
+    if (held && typeof held.fn === 'function') {
+      this._testHeld = null;
+      this._testArmed = null;
+      held.fn();
+      return OK;
+    }
+    // Parallel group drafts hold one expire per group (armDraftTurnTimer); advance the first remaining.
+    if (this._testDraftHolds && this._testDraftHolds.size) {
+      const [key, fn] = this._testDraftHolds.entries().next().value;
+      this._testDraftHolds.delete(key);
+      fn();
+      return OK;
+    }
+    return fail(ERR.WRONG_PHASE);
   }
 
   _testShop(ps, slots) {
@@ -335,6 +344,18 @@ export class MatchTestCommands {
       this.testTimers = true;
       this._testHeld = null;
       if (held) this.setDeadline(held.seconds, held.fn, { silent: !!held.silent });
+      // Re-arm every held group-draft turn from the stored expire (parallel groups).
+      if (this._testDraftHolds && this._testDraftHolds.size) {
+        const holds = [...this._testDraftHolds.entries()];
+        this._testDraftHolds.clear();
+        const groups = this.phase === PHASE.SP_DRAFT && this.sp ? this.sp.groups
+          : this.phase === PHASE.BAND_DRAFT && this.draft ? this.draft.groups : [];
+        for (const [key, fn] of holds) {
+          const g = groups.find((x) => String(x.token ?? x.id ?? '') === key) || groups.find((x) => !x.done);
+          const ms = this.bandTurnMs();
+          this.armDraftTurnTimer(g, ms, fn, { singleGroupHold: false });
+        }
+      }
     } else {
       this.testTimers = false;
       const armed = this._testArmed;
@@ -342,6 +363,18 @@ export class MatchTestCommands {
       this._phaseTimer = null;
       this.deadline = 0;
       this._testHeld = armed || null;
+      // Pause live group-draft turn timers into per-group holds (original expire on g._expire).
+      if (this._testDraftHolds) {
+        const groups = this.phase === PHASE.SP_DRAFT && this.sp ? this.sp.groups
+          : this.phase === PHASE.BAND_DRAFT && this.draft ? this.draft.groups : [];
+        for (const g of groups) {
+          if (g.done) continue;
+          if (g.timer) { this.cancel(g.timer); g.timer = null; }
+          if (typeof g._expire === 'function') {
+            this._testDraftHolds.set(String(g.token ?? g.id ?? ''), g._expire);
+          }
+        }
+      }
     }
     if (this.phase === PHASE.BAND_DRAFT && this.draft) this.draft.turnDeadline = this.deadline;
     this.markPublic();

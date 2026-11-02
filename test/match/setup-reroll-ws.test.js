@@ -73,6 +73,7 @@ test('real four-player sockets: any seat proposes, unanimous sync, reconnect and
     assert.equal(p.deadline, fresh[0].deadline, 'all players share the same new deadline');
     assert.equal(Math.ceil((p.deadline - p.serverNow) / 1000), 25, 'each player sees a fresh 25-second countdown');
     assert.equal(p.rerollVote, null);
+    assert.deepEqual(p.rerollRequests, []);
     assert.ok(p.players.every((ps) => !ps.ready));
   }
   assert.notDeepEqual(setupOf(fresh[0]), { ...setupOf(initial), setupRevision: 1 });

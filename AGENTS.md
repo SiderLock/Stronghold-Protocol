@@ -4,6 +4,10 @@ Entry point for AI coding assistants (Codex, Claude Code, Cursor, Copilot …) w
 indexes the existing documents and their hard rules; when this file and a linked document disagree, the document wins.
 Human contributors: [CONTRIBUTING.md](CONTRIBUTING.md) is the same material in full.
 
+This fork's capacity and announcement extensions follow the approved decisions in
+[docs/development/DECISIONS.md](docs/development/DECISIONS.md); start local maintenance and upstream merges at
+[docs/development/README.md](docs/development/README.md). The upstream references below describe the original scope.
+
 ## What this is
 
 A non-commercial fan remake of Arknights「卫戍协议：盟约」 that runs in the browser: a Node.js server (economy, rounds,

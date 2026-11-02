@@ -47,7 +47,8 @@ import { ruleOption } from '../../../shared/plugins/rules.js';
 import { OWNERSHIP_PREF, parseStoredOwnership, parseStoredOwnershipChars, toStoredOwnership, toStoredOwnershipV1, cleanIds, sanitizeNotOwned,
   notOwnedView, rebaseChars } from './ownershipModel.js';
 import { parseStoredDiy, toStoredDiy, cleanPicks, sanitizeDiyPicks, diyPrefKey } from './diyModel.js';
-import { skinsStore, SKINS_KEY, SKINS_SYNC_KEY, parseStoredSkins } from './skins.js';
+import { skinsStore, SKINS_KEY, SKINS_SYNC_KEY, SKINS_RANDOM_MODE_KEY, parseStoredSkins, acceptMatchSkins } from './skins.js';
+import { skinPoolFromManifest } from '../../../shared/skins.js';
 import { cardStore, CARD_KEY, CARD_SYNC_KEY, cardOperators } from './seatArt.js';
 import { needsContent, serverDefaultVersion } from '../versions.js';
 import { DEFAULT_VERSION } from '../../../shared/versions.js';
@@ -643,23 +644,43 @@ export function installOwnershipSync({ net, timers, target = loadoutStore, notif
  * changes the payload and is sent; one that does not spends no heavy-message budget (`seatBound: false`). Without the data
  * (it failed to load) the map goes whole and the server filters it.
  * @param {{ net: any, timers?: { setTimeout: Function, clearTimeout: Function }, target?: ReturnType<typeof createStore>,
- *   notify?: (text: string) => void, operatorsReady?: () => Promise<Set<string>|null> }} deps
+ *   notify?: (text: string) => void, operatorsReady?: () => Promise<Set<string>|null>, assetsReady?: () => Promise<any> }} deps
  */
-export function installSkinsSync({ net, timers, target = skinsStore, notify, content = appContentSet, app = store, gate = null, operatorsReady } = {}) {
+export function installSkinsSync({ net, timers, target = skinsStore, notify, content = appContentSet, app = store, gate = null, operatorsReady,
+  assetsReady = () => data.load('assets').then(() => data.get('assets')) } = {}) {
   const operators = operatorsReady || (async () => {
     const [chess, backups] = await Promise.all([data.load('chess'), data.load('backups')]);
     return chess == null || backups == null ? null : operatorCharIds({ chess: data.getRaw('chess'), backups: data.getRaw('backups') });
   });
-  return installPrefSync({
-    net, timers, target, notify, content, app, gate, seatBound: false, key: SKINS_KEY, stateKey: SKINS_SYNC_KEY, msgType: 'room.skins', field: 'skins', tag: 'skins',
+  const sync = installPrefSync({
+    net, timers, target, notify, content, app, gate, seatBound: false, key: [SKINS_KEY, SKINS_RANDOM_MODE_KEY, 'skinCatalogueRevision'],
+    stateKey: SKINS_SYNC_KEY, msgType: 'room.skins', field: null, tag: 'skins',
     lockedText: N_('这台服务器不接受皮肤选择，只有本机保存'),
     async prepare() {
       const all = parseStoredSkins(target.get()[SKINS_KEY]);
-      if (!Object.keys(all).length) return all; // nothing to filter: no data download for it
+      const random = target.get()[SKINS_RANDOM_MODE_KEY] === 'match';
+      if (!random && !Object.keys(all).length) return { skins: all }; // no data download for a clear
       const ids = await operators();
-      return ids ? Object.fromEntries(Object.entries(all).filter(([id]) => ids.has(id))) : all;
+      const skins = ids ? Object.fromEntries(Object.entries(all).filter(([id]) => ids.has(id))) : all;
+      if (!random) return { skins };
+      const manifest = await assetsReady();
+      if (!manifest || !ids) return null; // keep the old plan until this room's catalogue is ready
+      return { skins, randomMode: 'match', skinPool: skinPoolFromManifest(manifest, ids) };
     },
   });
+  const offPublic = net.on('m.public', msg => {
+    const me = app?.get?.()?.me?.playerId;
+    if (!me) return;
+    const own = msg?.players?.find(p => p.playerId === me);
+    if (own) acceptMatchSkins(own.skins || {}, target);
+  });
+  const offAssets = data.subscribe(name => {
+    if (name === 'assets' && target.get()[SKINS_RANDOM_MODE_KEY] === 'match') {
+      target.set({ skinCatalogueRevision: (target.get().skinCatalogueRevision || 0) + 1 });
+    }
+  });
+  const offOverlay = loadoutStore.subscribe((s, prev) => { if (prev.open && !s.open) void sync.flush(); });
+  return { flush: sync.flush, dispose() { offPublic?.(); offAssets(); offOverlay(); sync.dispose(); } };
 }
 
 /**
@@ -673,13 +694,16 @@ export function installSkinsSync({ net, timers, target = skinsStore, notify, con
  * them, so teammates kept the old card); BAD_MSG is final ('error', logged).
  * @param {{ net: any, timers?: { setTimeout: Function, clearTimeout: Function }, target?: ReturnType<typeof createStore>,
  *   getChessReady?: () => Promise<any>, getBackupsReady?: () => Promise<any>, listChess?: () => any[],
- *   listBackups?: () => any, notify?: (text: string) => void, content?: any }} deps
+ *   listBackups?: () => any, getEnemiesReady?: () => Promise<any>, listEnemies?: () => any[],
+ *   notify?: (text: string) => void, content?: any }} deps
  */
-export function installCardSync({ net, timers, target = cardStore, getChessReady, getBackupsReady, listChess, listBackups, notify, content = appContentSet, app = store, gate = null } = {}) {
+export function installCardSync({ net, timers, target = cardStore, getChessReady, getBackupsReady, listChess, listBackups, getEnemiesReady, listEnemies, notify, content = appContentSet, app = store, gate = null } = {}) {
   const ready = getChessReady || (() => data.load('chess'));
   const readyBackups = getBackupsReady || (() => data.load('backups'));
   const list = listChess || (() => data.list('chess'));
   const backupsOf = listBackups || (() => data.get('backups'));
+  const readyEnemies = getEnemiesReady || (() => data.load('enemies'));
+  const enemies = listEnemies || (() => data.list('enemies'));
   return installPrefSync({
     net, timers, target, notify, key: CARD_KEY, stateKey: CARD_SYNC_KEY, msgType: 'room.card', field: null, tag: 'card',
     lockedText: null, // room.card has no phase gate: never WRONG_PHASE / ROOM_STARTED
@@ -687,6 +711,10 @@ export function installCardSync({ net, timers, target = cardStore, getChessReady
     async prepare() {
       const want = target.get()[CARD_KEY];
       if (!want) return { charId: '' };
+      if (want.startsWith('enemy_')) {
+        if (await readyEnemies() == null) return null;
+        return { charId: enemies().some(e => e.key === want) ? want : '' };
+      }
       if (await ready() == null) return null;
       // a chess operator needs nothing more: the common pick goes out before backups.json is asked for
       if (cardOperators(list()).some((c) => c.charId === want)) return { charId: want };

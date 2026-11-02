@@ -1,6 +1,6 @@
 // WebSocket permessage-deflate (server/http/websocket.js WS_DEFLATE, host bandwidth layer 0). A browser-like client
-// negotiates it with server context takeover and an 8 KB server window; a large JSON frame goes out compressed and the
-// same frame again costs a fraction (the window is kept); a frame under the 1 KB threshold stays plain even though the
+// negotiates it with server context takeover and an 32 KB server window; a large JSON frame goes out compressed and the
+// same frame again costs a fraction (the window is kept); a frame under the 256 B threshold stays plain even though the
 // context is kept, on its own RSV1 bit; a client that requires `server_no_context_takeover` gets no such saving, which
 // is what makes the "context is kept" assertion meaningful; every connection has its own window.
 // Frame sizes come from a raw client that parses the frames itself (test/helpers/wsRawClient.js): a socket byte counter
@@ -55,39 +55,39 @@ describe('WebSocket permessage-deflate', () => {
   before(async () => { srv = await fakeServer(); });
   after(async () => { await srv.close(); });
 
-  test('negotiated with server context takeover and an 8 KB server window; small frames stay plain', async () => {
+  test('negotiated with server context takeover and an 32 KB server window; small frames stay plain', async () => {
     const { response, frames } = await exchange(srv, [SMALL, BIG]);
     assert.match(response, /sec-websocket-extensions: permessage-deflate/i);
     assert.doesNotMatch(response, /server_no_context_takeover/);
     assert.match(response, new RegExp(`server_max_window_bits=${WS_DEFLATE.serverMaxWindowBits}`));
-    assert.equal(WS_DEFLATE.threshold, 1024);
+    assert.equal(WS_DEFLATE.threshold, 256);
 
     const [small, big] = frames;
     assert.equal(small.text, SMALL, 'a small payload arrives intact');
-    assert.equal(small.rsv1, false, 'under 1 KB: no compressed bit, even with the context kept');
-    assert.ok(small.bytes < 1024, `and it is not inflated: ${small.bytes} B`);
+    assert.equal(small.rsv1, false, 'under 256 B: no compressed bit, even with the context kept');
+    assert.ok(small.bytes < 256, `and it is not inflated: ${small.bytes} B`);
     assert.equal(big.text, BIG, 'a large payload arrives intact');
-    assert.equal(big.rsv1, true, 'from 1 KB up: compressed');
+    assert.equal(big.rsv1, true, 'from 256 B up: compressed');
     assert.ok(BIG.length > 10000);
     assert.ok(big.bytes < BIG.length / 4, `compressed on the wire: ${big.bytes} B for ${BIG.length} of payload`);
   });
 
-  test('the 1 KB threshold is decided on UTF-8 bytes: 1,023 stays plain, 1,024 is compressed', async () => {
+  test('the 256 B threshold is decided on UTF-8 bytes: 255 stays plain, 256 is compressed', async () => {
     const exact = (n) => {
       const head = '{"t":"pad","s":"';
       const tail = '"}';
       return head + 'x'.repeat(n - Buffer.byteLength(head) - Buffer.byteLength(tail)) + tail;
     };
-    const under = exact(1023);
-    const at = exact(1024);
-    assert.equal(Buffer.byteLength(under, 'utf8'), 1023);
-    assert.equal(Buffer.byteLength(at, 'utf8'), 1024);
+    const under = exact(255);
+    const at = exact(256);
+    assert.equal(Buffer.byteLength(under, 'utf8'), 255);
+    assert.equal(Buffer.byteLength(at, 'utf8'), 256);
     const { frames } = await exchange(srv, [under, at]);
     assert.equal(frames[0].text, under);
-    assert.equal(frames[0].rsv1, false, '1,023 B: below the threshold, no compressed bit');
-    assert.equal(frames[0].bytes, 1023 + 4, 'and sent as-is (2 + 2 bytes of header)');
+    assert.equal(frames[0].rsv1, false, '255 B: below the threshold, no compressed bit');
+    assert.equal(frames[0].bytes, 255 + 4, 'and sent as-is (2 + 2 bytes of header)');
     assert.equal(frames[1].text, at);
-    assert.equal(frames[1].rsv1, true, '1,024 B: at the threshold, compressed');
+    assert.equal(frames[1].rsv1, true, '256 B: at the threshold, compressed');
   });
 
   test('the window is kept across frames: the same frame twice costs less the second time', async () => {
@@ -100,12 +100,12 @@ describe('WebSocket permessage-deflate', () => {
     assert.ok(r < 0.75, `the repeated frame reuses the window: ${frames[0].bytes} B then ${frames[1].bytes} B (ratio ${r.toFixed(2)})`);
   });
 
-  test('a client that requires server_no_context_takeover gets no saving (the assertion above is not a tautology)', async () => {
+  test('a client that requires server_no_context_takeover falls back to plain frames', async () => {
     const kept = await exchange(srv, [BIG, BIG]);
     const reset = await exchange(srv, [BIG, BIG],
       { extensions: 'permessage-deflate; client_max_window_bits; server_no_context_takeover' });
-    assert.match(reset.response, /server_no_context_takeover/);
-    assert.equal(reset.frames[0].rsv1, true, 'large frames are still compressed, each on its own');
+    assert.doesNotMatch(reset.response, /sec-websocket-extensions: permessage/i);
+    assert.equal(reset.frames[0].rsv1, false, 'a no-context client keeps the existing uncompressed fallback');
     const rReset = repeatRatio(reset.frames);
     assert.ok(rReset > 0.9, `no window to reuse: ${reset.frames[0].bytes} B then ${reset.frames[1].bytes} B (ratio ${rReset.toFixed(2)})`);
     assert.ok(repeatRatio(kept.frames) < rReset - 0.15, 'keeping the window is what the saving comes from');
@@ -143,12 +143,46 @@ describe('WebSocket permessage-deflate', () => {
     assert.equal(frames[0].rsv1, false);
     assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=9'), true);
     assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=12; client_max_window_bits'), true);
-    assert.equal(narrowDeflateOffer(`permessage-deflate; server_max_window_bits=${WS_DEFLATE.serverMaxWindowBits}`), false);
-    assert.equal(narrowDeflateOffer(`permessage-deflate; server_max_window_bits=${WS_DEFLATE.serverMaxWindowBits + 1}`), false);
+    assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=14; client_max_window_bits'), true);
+    assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=15; client_max_window_bits'), false);
     assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=9, permessage-deflate'), false, 'another offer is acceptable');
     assert.equal(narrowDeflateOffer('permessage-deflate; client_max_window_bits'), false);
     assert.equal(narrowDeflateOffer(undefined), false);
   });
+
+  test('windows above upstream 11 but below capacity 15 also connect without compression', async () => {
+    for (const serverMaxWindowBits of [12, 14]) {
+      const r = await exchange(srv, [BIG, SMALL], { extensions: `permessage-deflate; server_max_window_bits=${serverMaxWindowBits}` });
+      assert.doesNotMatch(r.response, /sec-websocket-extensions: permessage/i);
+      assert.deepEqual(r.frames.map((f) => f.text), [BIG, SMALL]);
+    }
+  });
+
+  test('a client requiring no retained server context gets an uncompressed connection', async () => {
+    const r = await exchange(srv, [BIG, SMALL], { extensions: 'permessage-deflate; server_no_context_takeover' });
+    assert.doesNotMatch(r.response, /sec-websocket-extensions: permessage/i);
+    assert.deepEqual(r.frames.map((f) => f.text), [BIG, SMALL]);
+    assert.equal(narrowDeflateOffer('permessage-deflate; server_no_context_takeover'), true);
+    assert.equal(narrowDeflateOffer('permessage-deflate; server_no_context_takeover, permessage-deflate'), false);
+    assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=12', { serverMaxWindowBits: 11 }), false);
+    assert.equal(narrowDeflateOffer('permessage-deflate; server_max_window_bits=9', false), false);
+  });
+});
+
+test('SP_WS_DEFLATE rollback keeps a normal uncompressed handshake', async () => {
+  const saved = process.env.SP_WS_DEFLATE;
+  process.env.SP_WS_DEFLATE = '0';
+  let srv;
+  try {
+    srv = await fakeServer();
+    const r = await exchange(srv, [BIG, SMALL]);
+    assert.doesNotMatch(r.response, /sec-websocket-extensions: permessage/i);
+    assert.deepEqual(r.frames.map((f) => f.text), [BIG, SMALL]);
+  } finally {
+    await srv?.close();
+    if (saved === undefined) delete process.env.SP_WS_DEFLATE;
+    else process.env.SP_WS_DEFLATE = saved;
+  }
 });
 
 test('the real server negotiates compression at /ws and keeps the 64 KB inflated frame limit', async () => {

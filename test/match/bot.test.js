@@ -13,6 +13,25 @@ import { makeBattle } from '../helpers/battleHarness.js';
 
 const soloBot = (o = {}) => makeMatch({ mode: 'solo', difficulty: 'NORMAL', seats: [{ seat: 0, playerId: 'ai_0', name: 'AI', isBot: true, connected: true }], ...o });
 
+test('AI previews suppress unused render events and produce the same battle result', () => {
+  const h = soloBot({ seed: 4 }).start().toPrep();
+  const m = h.m;
+  try {
+    const opts = m._normalOpts(m.order[0]);
+    const normal = m.newBattle(opts);
+    const preview = m.newBattle(opts, { preview: true });
+    for (let i = 0; i < 20000 && (!normal.finished || !preview.finished); i++) {
+      if (!normal.finished) normal.step();
+      if (!preview.finished) preview.step();
+    }
+    assert.ok(normal.finished && preview.finished);
+    assert.ok(normal.drainEvents().length > 0);
+    assert.deepEqual(preview.drainEvents(), []);
+    assert.deepEqual(preview.result(), normal.result());
+    h.invariants();
+  } finally { m.dispose(); }
+});
+
 test('user: Given two medics with different ranges, When planning a boss formation, Then provide healing coverage to both ranged damage dealers', () => {
   const { m } = makeMatch({ mode: 'coop', humans: 3, difficulty: 'HARD', seed: 204 }).start().toPrep();
   const ps = m.order[0];

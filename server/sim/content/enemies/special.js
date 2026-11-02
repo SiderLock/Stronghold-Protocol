@@ -6,7 +6,7 @@ import { canTargetAlly, areaSelectable } from '../../targeting.js';
 import { periodicDamage } from '../../attack.js';
 import {
   BOOM_RADIUS, nthOf, stOf, T, elem, hurt, targetsNear, allTargets, areaAllies, areaAlliesInTiles, byPriority,
-  stayRoute, spawnChildren, expose, auraBuff, watchDeaths, onTerrain, castSlot, grantHitShield, attackSkillOf,
+  stayRoute, spawnChildren, expose, auraBuff, watchDeaths, onTerrain, castSlot, grantHitShield, attackSkillOf, setForm,
 } from './helpers.js';
 import {
   unblockable, runWhenHit, blockWeight, taunt, maxTargets, ep, nthAttackPower, lowHpBuff, deathBoom, setFloat, float,
@@ -486,7 +486,11 @@ export const SPECIAL_KITS = Object.freeze({
   enemy_10116_ymgtop: (ab) => {                                     // 水遁忍者 · spinning phase (SILENCE): phys AoE every s; 失衡 stops it
     const spin = {
       sil: true, cd: ab.sk.SwitchModeTrigger ? ab.sk.SwitchModeTrigger.cd : 60, icd: ab.sk.SwitchModeTrigger ? ab.sk.SwitchModeTrigger.icd : 10,
-      fire(b, e, a) { a.until = b.time + (T(ab, 'EndRotate.rotate_duration') ?? 0); b.fx('telegraph', { x: e.x, y: e.y, r: 1, kind: 'spin', id: e.id }); },
+      fire(b, e, a) {
+        const dur = T(ab, 'EndRotate.rotate_duration') ?? 0;
+        a.until = b.time + dur;
+        setForm(b, e, 'spin', 'telegraph', { r: 1, kind: 'spin', dur });
+      },
       iv: T(ab, 'RotateDamage.interval') ?? 1,
       // "每秒对半径1.0范围内的所有我方单位造成…（无视迷彩，不可对空），自身受阻止攻击类异常效果影响期间无法造成此伤害": an area
       // selection, skipped while 晕眩 / 冻结 / 浮空 (flag stun), 沉睡 or 缴械 hold it (PRTS 异常效果 §阻止攻击; until 0.1.3 it spun on);
@@ -497,8 +501,11 @@ export const SPECIAL_KITS = Object.freeze({
       },
     };
     // 漩涡形态 "不进行普通攻击" (PRTS 天赋): no blocked attack while it spins (until 0.1.3 its blocker took both)
-    const noAtk = { tick(b, e) { e.profile.noAttack = spin.until > b.time; } };
-    return [spin, noAtk, unbalanced((b, e) => { if (spin.until > b.time) { spin.until = 0; b.fx('phase', { x: e.x, y: e.y, id: e.id, kind: 'spinStop' }); } })];
+    const noAtk = { tick(b, e) {
+      e.profile.noAttack = spin.until > b.time;
+      if (e.form === 'spin' && !e.profile.noAttack) setForm(b, e, 'spinStop');
+    } };
+    return [spin, noAtk, unbalanced((b, e) => { if (spin.until > b.time) { spin.until = 0; setForm(b, e, 'spinStop'); } })];
   },
   enemy_10118_ymgprc: (ab) => {                                      // 澪 · double hits; 寒晖: every 4th attack (spCost 3) is a ×1.5 double hit
     const scale = (ab.sk.PowerAttack && ab.sk.PowerAttack.bb.atk_scale) || 1;

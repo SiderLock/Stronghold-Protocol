@@ -14,8 +14,12 @@ import { data } from '../data.js';
 import { audio } from '../audio.js';
 import { store } from '../store.js';
 import { settingsStore } from './settings.js';
+import { t } from '../../../shared/i18n.js';
 
-const LOAD_TIMEOUT_MS = 12000;
+// 20s: the engine module graph grew with 0.3.0's official effects, and a cold cache on a slow link
+// (or one shared with an asset download) used to exceed 12s and pin the match to the simplified view.
+const LOAD_TIMEOUT_MS = 20000;
+let fallbackNoticed = false;   // the simplified view's notice is shown once per page
 // [ASSUMED] Two automatic retries; keep the existing two event retries available for a later network/tab recovery.
 const RECOVERY_DELAYS_MS = [2000, 8000];
 const EVENT_RETRY_LIMIT = 2;
@@ -59,7 +63,7 @@ export function hudPadding(kind, size) {
  */
 export const HUD_REM = Object.freeze({
   bondStripTop: 1.36, bondStripBottom: 2.16, bondArrowPx: 44,
-  shopBarTop: 2.64, shopBarBorderPx: 3, shopTabTop: 0.8, shopTabBorderPx: 3, cornerTop: 0.8,
+  shopCardHeight: 2.24, shopBarTop: 2.64, shopBarBorderPx: 3, shopTabTop: 0.8, shopTabBorderPx: 3, cornerTop: 0.8,
 });
 
 /**
@@ -67,9 +71,10 @@ export const HUD_REM = Object.freeze({
  * board ('prep') or the Final Assault half ('bossPrep'); null for every other camera. The prep camera keeps the bench /
  * temp rows and the field's back row clear of them (render/projection.js clearHud; user playtest #5 item 9: the rem
  * floor of 40 px makes the HUD relatively taller on phones in landscape and the shop bar covered the bench).
- * The bottom band is the shop bar's — also for an eliminated player's own board (no shop bar: the band only costs size
+ * The bottom band is at least the shop bar's — also for an eliminated player's own board (no shop bar: the band only costs size
  * there, while a camera following the bar's presence would have to re-frame whenever it appears, e.g. when the private
- * state arrives after the prep camera was set) — unless `opts.shop === false`: the player folded the shop (收起) and the
+ * state arrives after the prep camera was set); a taller chat corner is also kept clear. With `opts.shop === false` the
+ * player folded the shop (收起) and the
  * own prep board moved to the official shop-collapsed camera (public issue #5: the board did not grow; screens/game.js
  * asks for it only while a folded bar is shown). Its band is the higher of the folded tab (bottom right) and the corner
  * buttons' hit areas (交流 / ⚙ / 📖 / ⛶, bottom left, measured by `cornerBand`: on a narrow phone two rows of 34 px buttons
@@ -79,10 +84,14 @@ export const HUD_REM = Object.freeze({
  * teammate's board uses the 'normal' camera: no band. An armed shop card (two-tap buy, css/screens/game-shop.css
  * .scard.is-armed) rises 4 px above the bar's top on a phone and covers the bench pads' near corners by ≈ 3 px while it
  * stays armed — less than under the unchanged official camera at 1920×1080 (13 px above the bar, ≈ 11 px over the pads).
+ * The game screen's --prep-bond-top and --prep-shop-card-height keep the camera's fallback dimensions aligned with the
+ * responsive CSS, even before those controls mount or when the shop is absent.
  * @param {string} kind
  * @param {{ width: number, height: number }} size
  * @param {{ shop?: boolean|'partial' }} [opts] `shop: false` = the folded shop's band
- * @returns {{ top: number, bottom: number }|null}
+ * On 4:3 and similarly tall landscape screens the long team panel can also cover the first bench tile. Reserve its
+ * maximum width for every match, so the camera does not jump when player names or the number of visible rows change.
+ * @returns {{ top: number, bottom: number, left?: number }|null}
  */
 export function hudBands(kind, size, opts) {
   if (kind !== 'prep' && kind !== 'bossPrep') return null;
@@ -94,21 +103,41 @@ export function hudBands(kind, size, opts) {
   let safeBottom = 0;
   let corner = 0;
   let bondsBottom = 0;
+  let teamLeft = 0;
+  let bondTop = HUD_REM.bondStripTop;
+  let shopCardHeight = HUD_REM.shopCardHeight;
   try {
     rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 100;
+    const game = document.querySelector('.gm');
+    const gameStyle = game ? getComputedStyle(game) : null;
+    const readSize = (name, fallback) => {
+      const n = parseFloat(gameStyle?.getPropertyValue?.(name));
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+    bondTop = readSize('--prep-bond-top', bondTop);
+    shopCardHeight = readSize('--prep-shop-card-height', shopCardHeight);
     // 异形屏适配 (ui/screenFit.js): the board's host may not start at the viewport's top — the HUD rects are measured from it
-    const oy = document.querySelector('.gm__field')?.getBoundingClientRect()?.top || 0;
+    const field = document.querySelector('.gm__field')?.getBoundingClientRect();
+    const oy = field?.top || 0;
     // the HUD layer starts below the top safe-area inset and ends above the bottom one (css/devices.css .gm__hud)
     const hud = document.querySelector('.gm__hud')?.getBoundingClientRect();
     safeTop = Math.max(0, (hud?.top || 0) - oy);
+    const aspect = size?.width / h;
+    if (hud?.width > 0 && aspect >= 4 / 3 - 1e-6 && aspect <= 1.5) {
+      const ui = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sp-ui')) || 1;
+      // css/screens/game.css: team left .22rem, maximum width max(3.1rem, 130px × UI scale).
+      teamLeft = Math.max(0, hud.left - (field?.left || 0)) + rem * 0.22 + Math.max(rem * 3.1, 130 * ui);
+    }
     // #678 adds 44 px arrows; a native scrollbar can make the strip taller still.
     // Keep the same minimum band before mount and while collapsed, so toggling cannot shrink it.
     const bonds = document.querySelector('.gm__bonds')?.getBoundingClientRect();
     if (bonds?.height > 0) bondsBottom = Math.max(0, bonds.bottom - oy);
     if (folded || partial) {
       if (hud && hud.bottom - oy > 0) safeBottom = Math.max(0, h - (hud.bottom - oy));
-      corner = cornerBand(h, oy);
     }
+    // Always measure the corner (交流 / ⚙ / 📖 / ⛶ / chat): with the shop open a taller chat corner can still
+    // clear the bench pads (issue5 fold-camera test).
+    corner = cornerBand(h, oy);
   } catch { /* ignore */ }
   const bottom = folded
     ? Math.max(safeBottom + rem * HUD_REM.shopTabTop + HUD_REM.shopTabBorderPx, corner || safeBottom + rem * HUD_REM.cornerTop)
@@ -116,11 +145,12 @@ export function hudBands(kind, size, opts) {
       // [ASSUMED] #692: CSS scales the whole bar to 70% around its bottom-right anchor (.2rem above the bottom).
       ? Math.max(safeBottom + rem * 0.2 + (rem * (HUD_REM.shopBarTop - 0.2) + HUD_REM.shopBarBorderPx) * 0.7,
         corner || safeBottom + rem * HUD_REM.cornerTop)
-      : rem * HUD_REM.shopBarTop + HUD_REM.shopBarBorderPx;
+      : Math.max(rem * (HUD_REM.shopBarTop - HUD_REM.shopCardHeight + shopCardHeight) + HUD_REM.shopBarBorderPx, corner);
   return {
-    top: Math.min(h * 0.4, Math.max(bondsBottom, safeTop + Math.max(rem * HUD_REM.bondStripBottom,
-      rem * HUD_REM.bondStripTop + HUD_REM.bondArrowPx))),
+    top: Math.min(h * 0.4, Math.max(bondsBottom, safeTop + Math.max(rem * (bondTop + HUD_REM.bondStripBottom - HUD_REM.bondStripTop),
+      rem * bondTop + HUD_REM.bondArrowPx))),
     bottom: Math.min(h * 0.4, bottom),
+    ...(teamLeft ? { left: teamLeft } : {}),
   };
 }
 
@@ -133,7 +163,7 @@ export function hudBands(kind, size, opts) {
  * @param {number} [oy] the board host's top in client px (异形屏适配 moves it down)
  */
 function cornerBand(h, oy = 0) {
-  const btns = document.querySelectorAll('.gm__corner .gm__gear, .gm__corner .ewheel__btn');
+  const btns = document.querySelectorAll('.gm__corner .gm__gear, .gm__corner .ewheel__btn, .gm__corner .mchat-toggle');
   if (!btns || !btns.length) return 0;
   const root = document.documentElement;
   const tap = root?.classList?.contains('sp-coarse') ? parseFloat(getComputedStyle(root).getPropertyValue('--tap-min')) || 0 : 0;
@@ -316,6 +346,14 @@ export function useFieldView(hostRef) {
       if (dead) { view.destroy(); return; }
       viewRef.current = view;
       if (view.kind === 'engine') { retries.current = 0; automaticRetries.current = 0; }
+      // the engine failed (WebGL refused / lost): the simplified view is correct but the player deserves to know why,
+        // once per page — 星愿 / Twinkstar's documented GPU conflict shows up exactly like this
+        else if (!fallbackNoticed) {
+          fallbackNoticed = true;
+          import('./toasts.js').then(({ toast }) => {
+            try { toast(t('战斗画面渲染失败，已切换到简化视图。若反复出现，请在浏览器设置里关闭「硬件加速」后重启浏览器。'), 'warn', { ttl: 20000 }); } catch { /* ignore */ }
+          }).catch(() => {});
+        }
       // Preserve the upstream skin/identity initialization before the first board arrives.
       view.setMe?.(store.get().me?.playerId || null);
       view.setSkins?.(store.get().match?.public?.players);

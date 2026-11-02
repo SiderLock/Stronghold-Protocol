@@ -19,6 +19,7 @@
 
 // The simulation modules are loaded the way the page loads them (`/sim/` is served from server/sim/, so it is no
 // public/ path a static import could resolve — public/js/battle/runner.js imports them dynamically too).
+await import('../ui/compat.js');
 const { createBattleFromSpec } = await import('/sim/spec.js');
 const { DataSource, setSimData } = await import('/sim/simdata.js');
 const { RehearsalRun } = await import('/sim/rehearsal.js');

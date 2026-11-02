@@ -536,6 +536,15 @@ async function main() {
     };
     files(body);
   }
+  // --local-spines explicitly refreshes derived metadata, including an existing alpha-mode flag.
+  // --add-only protects the downloaded bytes and old entries; it must not keep a stale spineLocal boolean.
+  if (opts.localSpines) {
+    for (const [kind, group, metadata] of [['enemies', 'enemy', localEnemySpines], ['tokens', 'token', localTokenSpines]]) {
+      for (const [id, meta] of Object.entries(metadata)) {
+        if (body[kind]?.[id]?.spineLocal) body[kind][id].spineLocal = { group: `spine/${group}/${id}`, ...meta };
+      }
+    }
+  }
   const bytes = totalBytes(ASSETS, resolved.files);
   const manifest = {
     version: MANIFEST_VERSION,

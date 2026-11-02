@@ -129,3 +129,28 @@ test('信标: a receiver eliminated before the round start is replaced by the li
   assert.equal(gifts(p0).length, 0);
   h.invariants();
 });
+
+for (const [humans, receiverId] of [[6, 'p_3'], [8, 'p_4'], [9, 'p_4'], [13, 'p_5']]) {
+  test(`${humans} players: 信标 consumes only the receiver group's copy, including three/five-player groups`, () => {
+    const { h, m, equip } = setup({ humans, seed: 41 });
+    const p0 = h.ps('p_0'), receiver = h.ps(receiverId);
+    const cid = plain((c) => c.tier === 3 && receiver.pool.has(c.chessId) && receiver.pool.left(c.chessId) > 1
+      && c.bonds.some((bond) => plain((mate) => mate.chessId !== c.chessId && mate.bonds.includes(bond)).length))[0];
+    assert.ok(cid, 'test needs an available tier-three carrier');
+    const bond = DATA.chess[cid].bonds.find((b) => plain((mate) => mate.chessId !== cid && mate.bonds.includes(b)).length);
+    const mate = plain((c) => c.chessId !== cid && c.bonds.includes(bond))[0];
+    deploy(m, receiver, mate);
+    assert.notEqual(p0.pool, receiver.pool);
+    const carrier = give(m, p0, cid, 'hand');
+    assert.deepEqual(equip(giveItem(m, p0, BEACON), carrier), OK);
+    assert.equal(gifts(p0)[0].params.toPlayerId, receiverId);
+    const sourceLeft = p0.pool.left(cid);
+    const receiverLeft = receiver.pool.left(cid);
+    h.toPrep(2);
+    assert.deepEqual(ofBase(m, receiver, cid).map((p) => p.id), [cid]);
+    assert.equal(p0.pool.left(cid), sourceLeft);
+    assert.equal(receiver.pool.left(cid), receiverLeft - 1);
+    h.invariants();
+    m.dispose();
+  });
+}

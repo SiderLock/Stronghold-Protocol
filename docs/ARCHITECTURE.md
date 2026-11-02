@@ -30,7 +30,12 @@ the five hooks, `botStrategies.js` registers legacy/external/ioleta/adaptive/iol
 
 - **The server** is one Node process: plain `node:http` plus `ws`, no framework (`server/index.js` wires
   `server/http/`). It serves the static client, the generated data and the sim's source files, and runs every room and
-  match in memory — rounds, shop, economy, bots, validation. Plugin authoring writes folders and locks to disk; the studio key persists too. Gameplay content sets use separate match children (§3).
+  match in memory — rounds, shop, economy, bots, validation. This fork additionally reads private announcement files
+  and explicit owner-notification commands from disk ([ANNOUNCEMENTS.md](ANNOUNCEMENTS.md)); game state stays in memory.
+  Plugin authoring writes folders and locks to disk; the studio key persists too. Gameplay content sets use separate match children (§3).
+- Vanilla matches can send detached AI preview inputs and oversized-result replays to `server/match/rehearsalPool.js`
+  and `rehearsalWorker.js`. Only the result/index comes back; economy, deadlines, networking and settlement stay in
+  the parent. Failures retain the existing sliced path. Configuration: [SERVER_SETTINGS.md](SERVER_SETTINGS.md#计算进程).
 - **The browser** loads native ES modules with no bundler and no build step; the libraries are vendored into
   `public/vendor/` by `tools/vendor.mjs` on `npm install`.
 - **The battle simulation** (`server/sim/`) is pure ESM without any Node API, served read-only at `/sim/`. Both sides
@@ -53,21 +58,23 @@ the five hooks, `botStrategies.js` registers legacy/external/ioleta/adaptive/iol
 ## 2. The WebSocket protocol
 
 `shared/protocol.js` is normative: `C2S` holds one validator per client message and `S2C` lists the server messages.
-Every frame is JSON text, `{ t, rid?, …fields }`.
+Business objects remain `{ t, rid?, …fields }`. At the WebSocket boundary, each connection negotiates the reversible position-array protocol independently, retaining original JSON for older peers; standard permessage-deflate compresses either format. Ordinary public updates coalesce at 125 ms (8 Hz); explicit forced syncs remain immediate. The normative layout, enums and restoration CLI are in [WIRE_PROTOCOL.md](WIRE_PROTOCOL.md).
 
 | direction | messages | handled in |
 |---|---|---|
 | client → server | `hello` (name, reconnect token) → `welcome`; `ping` → `pong` | `server/net.js` |
+| | `lobby.watch` (summary / paged directory), `lobby.quickMatch` (capacity preference) | `server/lobbyDiscovery.js` |
 | | `room.*`: create, join, ready, difficulty, AI seats, kick, start, the 干员调配 loadout, 干员持有 ownership, 自选编队 picks, spectating | `server/lobby.js` |
 | | `g.*`: match intents — buy, refresh, freeze, level up, sell, move, equip, Arts, rewards, 机变 choices, ready, emotes, watching, pause … | `server/match/match/intents.js` → `server/match/player/` |
 | | `b.progress`, `b.result`: the battle reports of the authoritative browser | `server/match/match/reports.js` |
 | | `b.rehearsalResult`: the host's choice of AI layout (only with `SP_BOT_REHEARSAL=host`) | `server/match/match/rehearsal.js` |
 | server → client | `room.state`, `room.closed` | `server/lobby.js` |
+| | `lobby.state` (lobby-only counts, at most 50 public room summaries) | `server/lobbyDiscovery.js` |
 | | `m.public` (what every player sees), `m.private` (one player's shop, hand, funds …), `m.field`, `m.toast`, `m.ticker`, `m.emote`, `m.unitStats`, `m.result` | `server/match/match/views.js`, `server/match/player/views.js` |
 | | `b.start` (a BattleSpec), `b.pool` (the shared leader HP), `b.end`; `b.snap` / `b.ev` only in the server-run mode | `server/match/match/clientCombat.js` |
 | | `b.rehearsal`, `b.rehearsalCancel`: ask the host to test AI layouts or stop that task | `server/match/match/rehearsal.js` |
 
-- A request that carries `rid` is answered with `ok` or `error` echoing it. `server/net.js` rate-limits each socket,
+- A request that carries `rid` is answered with `ok`, a requested view (`lobby.state`), or `error` echoing it. `server/net.js` rate-limits each socket,
   validates every message against `C2S` and refuses anything unknown; the handlers never trust the client.
 - Messages meant for people (`m.toast`, `m.ticker`) carry a message id and its parameters, so each client shows them in
   its own language (`shared/i18n.js` `wireMessage`).
@@ -141,9 +148,14 @@ so old imports keep working: `public/js/ui/gameLogic.js` (`public/js/ui/gameLogi
 | path | what |
 |---|---|
 | `server/index.js` | the process entry (`npm start`); `startServer()` wires `server/http/` |
-| `server/http/` | `csp.js` (site importmap hashes and independent simulation-Worker CSP), `config.js` (environment), `websocket.js` (sessions, `/ws`, permessage-deflate), `static.js` (the mounts, the `~<hash>` asset routes), `media.js`, `files.js` (MIME, brotli / gzip, ETag, ranges), `buildTag.js`, `routes.js` (`/healthz`), `traffic.js` (bytes sent by category and on the WebSocket, `/healthz?traffic=1`), `assetIndex.js` (the content hashes of `public/assets/` and `public/fonts/`, cached in `.cache/asset-hashes.json`), `assetViews.js` (the served `/data/assets.json` and `/data/local-assets.json`: every art URL with its hash segment; ASSETS.md), `common.js`, `boot.js` (a pending update package first, banner, shutdown) |
+| `server/announcements.js`, `server/announcementNotices.js` | this fork's private Markdown announcement store, read-only HTTP content/images and explicit urgent-notification monitor; `tools/announcements.mjs` is the owner CLI |
+| `server/http/` | `csp.js` (site importmap hashes and independent simulation-Worker CSP), `config.js` (environment), `websocket.js` (sessions, `/ws`, permessage-deflate), `static.js` (mounts and `~<hash>` asset routes), `runtimeCache.js` (content-versioned module/data graph), `media.js`, `files.js` (MIME, brotli / gzip, ETag, ranges), `buildTag.js`, `routes.js` (`/healthz`), `traffic.js` (HTTP / WebSocket byte counters), `assetIndex.js` (asset hashes cached in `.cache/asset-hashes.json`), `assetViews.js` (content-hashed served manifests), `common.js`, `boot.js` (pending update, banner, shutdown); see [HTTP_CACHE.md](HTTP_CACHE.md) and [ASSETS.md](ASSETS.md) |
+| `server/assetCacheCatalog.js`, `server/http/assetCache.js`, `shared/assetCache.js` | immutable full-SHA content index, tiny online summary and explicit opt-in filling; validated hashed URL aliases reuse locally imported content. Local ZIP / JSON import, manual catalog updates and per-page SW pins are described in [ASSET_CACHE.md](ASSET_CACHE.md) |
 | `server/net.js` | sessions and reconnect tokens, rate limits, message validation |
+| `server/bandwidthEmergency.js`, `server/match/freezeScheduler.js` | Linux egress/demand congestion detection and conditional 120-second retry; reversible HTTP/download admission protection and match-local timer freezing. See [ASSET_CACHE.md](ASSET_CACHE.md#带宽紧急保护) |
 | `server/lobby.js` | rooms, seats, AI seats, spectators; starts a `Match` |
+| `server/lobbySeats.js` | waiting-room seat exchanges, identity-bound human consent, expiration and stale-request cleanup; host authority stays independent of seat position |
+| `server/lobbyDiscovery.js`, `shared/lobbyDiscovery.js` | lobby subscriptions, changed-only paged room summaries, atomic fastest matching; shared page size and update interval |
 | `server/data.js` | loads `data/*.json` once (frozen); `getVersionData` reads an official version's build under `data/versions/<slug>/` |
 | `server/versions.js` | the official versions a server enables (DESIGN §35.23; nothing set enables all four, `SP_VERSIONS` narrows, §35.23.11): each version's `cs` hashed at boot, its data, official-bounds snapshot and `/cs/` manifest loaded on first use, the offered difficulties, the welcome list, and the contents interface of the version match hosts (`server/match/host/` kind `'version'`, forked on the first match, never at boot) |
 | `server/plugins/` | the plugin system (PLUGINS.md, DESIGN §32): `registry.js` finds the language packs of `public/i18n/`, the pack folders of `packs/` and the plugins of `plugins/`, validates them (a cosmetic plugin's asset overlay too, its files hashed), answers `/packs/index.json`, `/plugins/index.json` and which files may be served, re-reads the folders when they change; `identity.js` computes the vanilla content hash `cs` from the served sim, shared code and data at start (`/cs/<cs16>/index.json`, `/healthz`, `welcome`, `room.state`); `visualSet.js` the visual sets of cosmetic plugins — a room's or a player's, named by `vs` — served at `/vs/<vs16>/overlay.json` (the composition and each plugin's writes: the browser composes the art itself, `public/js/assets.js`), their files at `/p/<id>/<hash8>/<path>`; `contentSet.js` builds a content set of data plugins (C1, DESIGN §32.5); `roomSets.js` turns a room's plugin list into its visual set and its content set, `contentSets.js` keeps the content sets rooms hold (by `cs`, the concurrent limit, `/cs/<cs16>/…`), `policy.js` reads the server owner's `plugins/config.json` (P1c, DESIGN §32.6) |
@@ -177,6 +189,7 @@ so old imports keep working: `public/js/ui/gameLogic.js` (`public/js/ui/gameLogi
 |---|---|
 | `public/index.html`, `public/js/main.js` | the page and its entry: boot, the router (title → lobby → room → game) |
 | `public/js/net.js`, `public/js/store.js`, `public/js/data.js` | the socket client, the observable store, the data loader (`/data/*.json`, with the English overlay) |
+| `public/js/lobbyDiscovery.js`, `public/js/ui/lobbyDiscovery.js` | lobby-only subscription lifecycle, stale-reply protection, online counts, room browser and matching controls |
 | `public/js/screens/sweep.js` | the lobby's S.W.E.E.P. report: bonds, strategies, leaders and the enemy codex; waits for both its files and the selected version's checked content set, with retry after a version check fails (§35.112); `css/screens/sweep.css` keeps content and Modal veils visible independently of animation playback (§35.113) |
 | `public/js/content.js` | the room's cosmetic plugins and the player's own (PLUGINS.md §9): fetched, checked against `room.state.content.vs` and laid over the art manifest (`public/js/cosmetics.js` cosmetic layers — small; `shared/plugins/visual.js` loads with the first set —, data.js's view of `assets`); the plugin catalogue; the room's 插件 tag is `public/js/ui/pluginTag.js`, its panel `public/js/ui/pluginPanel.js` (loaded when it opens) |
 | `public/js/battle/` | `runner.js` (the local battle clock and reports), `simHost.js` (C4: vanilla InPageSimHost, every gameplay set WorkerSimHost), `simWorker.js` / `simWorkerRuntime.js` (pure Worker engine, no JSON fetch), `simLoader.js` (shared data loader), `rehearsal.js` / `rehearsalWorker.js` (same-origin module Worker: test AI layouts when `SP_BOT_REHEARSAL=host`), `observe.js` (who may watch which field) |
@@ -238,6 +251,7 @@ public/assets/ ─────────▶ public/js/render/, public/js/audio
   per run, heapUsed after GC): the loader's own allocation drops from 34.3 MiB to 26.0 MiB — the ten adopted files are
   5.19 MB of JSON and are not parsed again. In a browser the absolute numbers differ; the saving is the same second copy
   that no longer exists.
+  Automatic warming starts after briefing/draft/boot, leaving visible opening images priority; battle and rehearsal requests still load on demand.
 - **Languages.** Chinese is the source language; every other language is a pack — `public/i18n/<code>.json` (UI
   strings) and optionally `data/i18n/<code>.json` (game texts), listed by the server at `/packs/index.json`
   (`server/packs.js`; PACKS.md). The English game texts come from the official EN client (`tools/build-i18n.mjs` →

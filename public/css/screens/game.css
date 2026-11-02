@@ -6,7 +6,16 @@
    ========================================================================================== */
 
 /* ---- screen shell ---------------------------------------------------------------------------- */
-.gm { background: transparent; }
+.gm {
+  background: transparent;
+  /* The prep camera reads these same dimensions in fieldHost.js. */
+  --prep-bond-top: 1.36;
+  --prep-shop-card-height: 2.24;
+}
+/* [ASSUMED] Compact the short landscape HUD while keeping its controls and the field separately usable. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .gm { --prep-bond-top: 1.16; --prep-shop-card-height: 1.85; }
+}
 /* Host test dock (public/js/ui/testDock.js DOCK_REM). Unitless rem, shared by the HUD and the dock.
    team-right = .team left .22 + avatar .8 + gap .1 + name 1.5 + info padding .18.
    bond-bottom = fieldHost.js HUD_REM.bondStripBottom. shop-top = HUD_REM.shopBarTop.
@@ -206,6 +215,8 @@
 .gtop__right { display: flex; flex-direction: column; align-items: flex-end; gap: .1rem; justify-self: end; }
 .gtop__right .countdown { --cd-h: .7rem; filter: drop-shadow(0 0 .12rem rgba(0, 0, 0, .8)); }
 .gtop__clock { display: flex; align-items: flex-start; gap: .14rem; }
+.unite-vote { display: flex; flex-direction: column; align-items: flex-end; gap: .03rem; padding: .05rem; background: rgba(8, 13, 11, .9); border: 1px solid var(--mint-800); }
+.unite-vote__count { font-size: max(calc(.11 * var(--t)), 10px); color: var(--text-md); }
 
 /* solo pause / resume (ui/hud.js PauseButton, official battle pause: two bars on a dark square) */
 .pausebtn {
@@ -468,7 +479,7 @@
 .readybtn.is-busy { opacity: .7; }
 
 /* ---- bond strip ---------------------------------------------------------------------------------------- */
-.gm__bonds { position: absolute; left: 1.56rem; top: 1.36rem; right: 5.2rem; pointer-events: none;
+.gm__bonds { position: absolute; left: 1.56rem; top: calc(var(--prep-bond-top) * 1rem); right: 5.2rem; pointer-events: none;
   display: flex; align-items: flex-start; gap: max(.1rem, calc(8px * var(--sp-ui, 1))); }
 /* Only the bond discs (and the +N chip) take the pointer: the strip's box spans the width under the top bar, where the
    top board row's units stand (row 12 at 16:9 / 21:9 / 720p / phones, the boss field's row 5 in a boss prep) — it used
@@ -526,23 +537,60 @@
 
 /* ---- team panel ------------------------------------------------------------------------------------------- */
 .team { position: absolute; left: .22rem; top: 2.36rem; display: flex; flex-direction: column; gap: .14rem; pointer-events: none; }
+.team__list { display: flex; flex-direction: column; gap: .14rem; }
+.team__section { display: flex; flex-direction: column; gap: .14rem; flex: none; }
+.team--grouped .team__list { gap: .2rem; }
+/* Fixed card-pool groups are independent of the green boss-pair frames. The light group frame stays behind
+   the existing row content, without adding a heading or changing the width of the emote area. */
+.team__pool-group { position: relative; isolation: isolate; }
+.team__pool-group::before {
+  content: ''; position: absolute; inset: -.06rem; z-index: -1; pointer-events: none;
+  border: 1px solid var(--pool-group-color); border: 1px solid color-mix(in srgb, var(--pool-group-color) 38%, transparent);
+  background: transparent; background: color-mix(in srgb, var(--pool-group-color) 7%, transparent);
+}
+.team--many { bottom: 1.12rem; width: max-content; max-width: max(3.1rem, calc(130px * var(--sp-ui, 1))); }
+/* Leave the boss pair frame's .07rem outset inside the scroll viewport. */
+.team--many .team__list { min-height: 0; gap: .05rem; overflow-y: auto; overflow-x: hidden; padding: .08rem; pointer-events: auto; scrollbar-width: thin; }
+.team--many.team--grouped .team__list { gap: .16rem; }
+.team--many .team__section { gap: .05rem; }
+.team--many .team__row { flex: none; min-height: .56rem; }
+.team--many .team__btn .pavatar { --pa: max(.53rem, 32px); }
+.team--many .team__name { max-width: max(1.25rem, calc(64px * var(--sp-ui, 1))); font-size: max(calc(.13 * var(--t)), 10px); }
+.team--many .team__info { padding: .01rem .06rem; }
+.team--many .team__line { gap: .04rem; }
+.team--many .team__bubble { display: none; }
+.team__emote-feed { position: absolute; left: calc(100% + .1rem); top: 0; z-index: 4; display: flex; flex-direction: column; gap: .03rem; width: 2.55rem; max-height: min(2.72rem, calc(100% - .08rem)); overflow-y: auto; padding: .03rem; border: 1px solid var(--mint-800); background: rgba(8, 13, 11, .88); pointer-events: auto; scrollbar-width: thin; }
+.team:not(.team--many) .team__emote-feed { display: none; }
+.team__feed-row { display: flex; align-items: center; gap: .04rem; flex: none; height: .57rem; padding: .02rem .05rem; border-bottom: 1px solid var(--line); }
+.team__feed-row .pavatar { --pa: .35rem; }
+.team__feed-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-md); font-size: max(calc(.12 * var(--t)), 10px); }
+.team__feed-bubble { position: relative; display: block; flex: none; width: .68rem; height: .55rem; }
+.team__feed-bubble .ebubble { position: absolute; left: 0; top: -.04rem; transform: scale(.58); transform-origin: top left; }
 .team__row { position: relative; display: flex; align-items: center; gap: .1rem; pointer-events: auto; }
 .team__btn {
   position: relative; padding: 0; background: none; border: 0;
   transition: transform var(--t-fast);
 }
 .team__btn:hover { transform: translateX(.03rem); }
+.team__btn .pavatar { --pa: max(.8rem, 32px); }
 .team__seat {
-  position: absolute; left: -.02rem; top: -.04rem; font-size: .11rem; padding: 0 .04rem; line-height: 1.3;
+  position: absolute; left: -.02rem; top: -.04rem; font-size: max(.11rem, 8px); padding: 0 .04rem; line-height: 1.3;
   background: rgba(8, 11, 10, .9); color: var(--text-lo); border: 1px solid var(--line-2);
 }
-.team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: .11rem; font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
+.team__group-badge {
+  position: absolute; left: .02rem; bottom: .02rem; z-index: 2; display: grid; place-items: center;
+  min-width: max(.18rem, 14px); height: max(.18rem, 14px); padding: 0 .025rem;
+  font-family: var(--font-num); font-size: max(.12rem, 10px); font-weight: 700; line-height: 1;
+  color: #0b1520; background: var(--pool-group-color); border: 1px solid rgba(8, 11, 10, .65);
+}
+.team__ai { position: absolute; right: -.04rem; bottom: -.04rem; font-family: var(--font-num); font-size: max(.11rem, 8px); font-weight: 700; padding: 0 .04rem; background: #a9c3d8; color: #0b1520; }
 .team__you { position: absolute; right: -.08rem; top: -.08rem; width: .22rem; height: .22rem; display: grid; place-items: center; background: var(--mint-500); color: var(--text-on-mint); clip-path: polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0 50%); }
 .team__you .icon { width: .14rem; height: .14rem; }
 .team__info { display: flex; flex-direction: column; gap: .02rem; min-width: 0; padding: .04rem .12rem .04rem .06rem; background: linear-gradient(90deg, rgba(8, 11, 10, .82), rgba(8, 11, 10, 0)); }
-.team__name { font-size: .15rem; font-weight: 500; color: var(--text-md); max-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
+.team__name { font-size: max(calc(.15 * var(--t)), 10px); font-weight: 500; color: var(--text-md); max-width: max(1.5rem, calc(64px * var(--sp-ui, 1))); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-shadow: 0 1px 2px #000; }
 .team__line { display: flex; align-items: center; gap: .1rem; }
-.team__status { width: .26rem; height: .26rem; display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
+.team__line .lp--sm { font-size: max(.19rem, 10px); }
+.team__status { width: max(.26rem, 14px); height: max(.26rem, 14px); display: grid; place-items: center; border: 1px solid currentColor; background: rgba(0, 0, 0, .5); }
 /* the shared 机变 draft's pick order on the portrait (ui/choiceOverlay.js spMarks): ✓ picked, ••• deciding */
 .team__spmark { position: absolute; right: -.07rem; bottom: -.05rem; z-index: 2; display: grid; place-items: center; width: .24rem; height: .24rem; border-radius: 50%;
   background: var(--mint-500); color: #05261e; box-shadow: 0 0 0 2px rgba(6, 9, 8, .9), 0 0 .08rem rgba(23, 249, 183, .5); }
@@ -553,10 +601,10 @@
 .team__spmark.is-turn i:nth-child(3) { animation-delay: .32s; }
 @keyframes spmark-dot { 0%, 100% { opacity: .35; } 40% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .team__spmark.is-turn i { animation: none; } }
-.team__status .icon { width: .18rem; height: .18rem; }
+.team__status .icon { width: max(.18rem, 12px); height: max(.18rem, 12px); }
 .team__status .lsprite { width: .2rem; height: .2rem; object-fit: contain; }
 .team__status.has-sprite { border-color: transparent; background: none; animation: none; }
-.team__status.has-sprite .lsprite { width: .26rem; height: .26rem; }
+.team__status.has-sprite .lsprite { width: max(.26rem, 12px); height: max(.26rem, 12px); }
 .team__status.is-lo { color: var(--text-lo); }
 .team__status.is-mint { color: var(--mint-400); }
 .team__status.is-gold { color: var(--gold); animation: blink 1.2s steps(2) infinite; }
@@ -583,6 +631,39 @@
 .team__ob, .team__back { align-self: flex-start; margin-top: .04rem; min-width: 1.1rem; animation: pop-in var(--t-fast) var(--ease-out); }
 .team__ob .btn__label, .team__back .btn__label { letter-spacing: .12em; }
 .team__back { border-color: rgba(255, 255, 255, .7); color: #fff; }
+
+/* [ASSUMED] Keep adjacent 44 px avatar hit areas separate on any touch device, including tablets. */
+.sp-coarse .team__row { min-height: 40px; gap: max(.1rem, 6px); }
+.sp-coarse .team--many .team__row { min-height: 44px; }
+.sp-coarse .team--many .team__list { padding: max(.08rem, 6px); }
+
+/* [ASSUMED] Short landscape screens need readable identities and separate touch targets; long lists still scroll. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .team--scrollable:not(.team--many) { bottom: 1.12rem; width: max-content; max-width: max(3.1rem, calc(130px * var(--sp-ui, 1))); }
+  .team--scrollable:not(.team--many) .team__list { min-height: 0; overflow-y: auto; overflow-x: hidden; padding: .08rem; pointer-events: auto; scrollbar-width: thin; }
+  .sp-coarse .team--scrollable:not(.team--many) .team__list { padding: max(.08rem, 6px); }
+  .team--scrollable:not(.team--many) .team__bubble { display: none; }
+  .team--scrollable:not(.team--many) .team__emote-feed { display: flex; }
+  .team__row { min-height: 40px; }
+  .team--many .team__row { min-height: 44px; }
+  .team__btn .pavatar, .team--many .team__btn .pavatar { --pa: max(.8rem, 32px); }
+  .team__name, .team--many .team__name { max-width: 88px; font-size: max(10px, min(calc(.16 * var(--t)), 14px)); }
+  .team__status .icon, .team__status.has-sprite .lsprite { width: max(.26rem, 12px); height: max(.26rem, 12px); }
+  .team__emote-feed { width: max(2.55rem, 32px, calc(130px * var(--sp-ui, 1))); }
+  .team__feed-row { height: max(.57rem, 32px); }
+  .team__feed-row .pavatar { --pa: max(.35rem, 24px); }
+  .team__feed-name { font-size: max(.12rem, 10px); }
+}
+/* At reduced UI size the touch-sized corner can be taller than 1.12rem. */
+@media (max-height: 600px) and (pointer: coarse), (max-height: 600px) and (any-pointer: coarse) {
+  .sp-coarse .team--many { bottom: max(1.12rem, calc(.34rem + max(.56rem, 32px, calc(34px * var(--sp-ui, 1)))), calc(.34rem + max(1.51rem, 32px, calc(96px * var(--sp-ui, 1))) * 55 / 151)); }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .sp-coarse .team--scrollable:not(.team--many) { bottom: max(1.12rem, calc(.34rem + max(.56rem, 32px, calc(34px * var(--sp-ui, 1)))), calc(.34rem + max(1.51rem, 32px, calc(96px * var(--sp-ui, 1))) * 55 / 151)); }
+}
+@media (max-width: 767px) and (max-height: 520px) and (orientation: landscape) {
+  .gm:not(.is-collapsed) .team--scrollable { bottom: calc(.34rem + 2 * max(.56rem, 32px, calc(34px * var(--sp-ui, 1))) + 6px); }
+}
 
 /* player avatar (band icon / glyph) */
 .pavatar {
@@ -1183,3 +1264,10 @@
 
 .ai-vote { display:flex; flex-wrap:wrap; gap:.12rem; align-items:center; margin:.15rem 0; padding:.1rem; border:1px solid #426055; }
 .ai-participation-entry { flex:none; }
+.ai-participation { position: relative; flex: none; }
+.ai-participation-entry.has-pending { border-color: #f5c664; color: #ffe7a1; box-shadow: 0 0 .15rem rgba(245, 198, 100, .55); }
+.ai-notice { position: absolute; left: 0; bottom: calc(100% + .12rem); z-index: 13; width: min(3.5rem, 70vw); pointer-events: auto; }
+.ai-notice__button { display: flex; flex-direction: column; gap: .06rem; width: 100%; padding: .15rem .2rem; text-align: left; color: #fff4d1; background: #252117; border: 1px solid #f5c664; border-left: .06rem solid #f5c664; box-shadow: 0 .06rem .22rem #000b; cursor: pointer; }
+.ai-notice__button strong { font-size: .17rem; }
+.ai-notice__button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .14rem; }
+.ai-notice__button:focus-visible { outline: 2px solid white; outline-offset: 2px; }

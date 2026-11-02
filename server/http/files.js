@@ -1,12 +1,11 @@
-// server/http/files.js — one file on disk (serveFile) or one body in memory (serveBuffer, the served manifests of
-// assetViews.js) → an HTTP response (static.js and media.js decide which file):
+// server/http/files.js — disk files and verified in-memory bodies → HTTP responses (static.js and media.js).
+// Runtime pins, dynamic manifest views and ordinary assets share encoding, cache and range semantics.
 //     MIME types incl. .mjs/.js text/javascript, .skel application/octet-stream, .atlas text/plain;
-//     brotli (quality 5) for text-like types, .skel and uncompressed fonts when the client accepts it, else gzip
-//     (level 6) — browsers offer brotli on HTTPS pages and localhost only (small files are compressed once per
-//     encoding and cached in memory); strong ETag + Last-Modified with 304s — the ETag is the content hash
-//     when the caller has one (assetIndex.js), else size + mtime; Cache-Control (html & code/data: no-cache +
-//     revalidate; public/assets|fonts|vendor: 1 day; a URL whose content-hash segment matches the file (static.js,
-//     media.js): immutable for a year; any `?v=` URL: immutable); single byte-range requests (206/416, used by <audio>).
+//     Brotli/gzip for text-like types, .skel and uncompressed fonts when the client accepts it (small files are
+//     compressed once and cached in memory); content ETag when supplied, else size + mtime; Last-Modified and 304s;
+//     (html & code/data: no-cache + revalidate; public/assets|fonts|vendor: 1 day; asset/font `?v=`: immutable).
+//     Verified runtime `?rv=sha256` and asset content-hash paths get immutable policies from their callers.
+//     single byte-range requests (206/416, used by <audio>).
 
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -39,6 +38,7 @@ export const MIME = Object.freeze({
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
   '.svg': 'image/svg+xml; charset=utf-8',
   '.ico': 'image/x-icon',
   '.mp3': 'audio/mpeg',
@@ -56,57 +56,57 @@ export const MIME = Object.freeze({
   '.ttf': 'font/ttf',
 });
 
-/** Extensions worth compressing (text-like, .skel, uncompressed fonts). */
+/** Extensions worth gzipping (text-like, .skel, uncompressed fonts). */
 export const COMPRESSIBLE = new Set([
   '.html', '.htm', '.js', '.mjs', '.css', '.json', '.map', '.webmanifest', '.txt', '.md', '.csv', '.xml',
   '.atlas', '.skel', '.bin', '.wasm', '.svg', '.ico', '.otf', '.ttf', '.wav',
 ]);
 
-/** Types brotli compresses in its text mode (the rest of COMPRESSIBLE: generic mode). */
 const TEXT_LIKE = new Set(['.html', '.htm', '.js', '.mjs', '.css', '.json', '.map', '.webmanifest', '.txt', '.md', '.csv', '.xml', '.atlas', '.svg']);
-
 const GZIP_MIN_BYTES = 512;
-const GZIP_CACHE_MAX_FILE = 8 << 20;      // larger files are compressed as a stream on the fly
-const GZIP_CACHE_MAX_TOTAL = 96 << 20;    // both encodings together
-/**
- * Brotli quality of the on-the-fly compression: faster than gzip-6 and smaller — measured on this repository against
- * gzip-6: .skel −27 %, data/*.json −26 %, vendor −14 %, public/js and server/sim −5 %, .atlas −7 %. Quality 11 would gain
- * another ~10 % at ~100× the time, so it is not done per request.
- */
-export const BROTLI_QUALITY = 5;
-// A plain asset URL (no content-hash segment) names a file tools/fetch-assets.mjs / tools/vendor.mjs can rewrite in
-// place (atlas + png + skel must stay consistent), so "long" is one day; revalidation after that is a cheap 304. A
-// content-hashed URL whose hash names the file is immutable (static.js, media.js).
+const GZIP_CACHE_MAX_FILE = 8 << 20;      // larger files are compressed as streams
+const GZIP_CACHE_MAX_TOTAL = 96 << 20;
+// Plain files can change in place, so "long" is one day. Verified content-hash URLs receive
+// IMMUTABLE_CACHE through opts after assetIndex checks the current bytes.
 export const LONG_CACHE = 'public, max-age=86400';          // 1 day
 export const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
 const LONG_CACHE_DIRS = ['assets', 'fonts', 'vendor']; // first path segment under public/
 
 const gzipAsync = promisify(zlib.gzip);
 const brotliAsync = promisify(zlib.brotliCompress);
+export const BROTLI_QUALITY = 5;
+export const BROTLI_OPTIONS = Object.freeze({ params: Object.freeze({
+  [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
+}) });
 
-/** zlib options of an encoding for a body of `size` bytes of type `ext`. */
 function brotliParams(ext, size) {
-  return {
-    params: {
-      [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
-      [zlib.constants.BROTLI_PARAM_MODE]: TEXT_LIKE.has(ext) ? zlib.constants.BROTLI_MODE_TEXT : zlib.constants.BROTLI_MODE_GENERIC,
-      ...(size > 0 ? { [zlib.constants.BROTLI_PARAM_SIZE_HINT]: size } : {}),
-    },
-  };
+  return { params: { ...BROTLI_OPTIONS.params,
+    [zlib.constants.BROTLI_PARAM_MODE]: TEXT_LIKE.has(ext) ? zlib.constants.BROTLI_MODE_TEXT : zlib.constants.BROTLI_MODE_GENERIC,
+    ...(size > 0 ? { [zlib.constants.BROTLI_PARAM_SIZE_HINT]: size } : {}),
+  } };
 }
 
-/** `raw` compressed with `encoding` ('br' | 'gzip'). */
-function compress(raw, encoding, ext) {
-  return encoding === 'br' ? brotliAsync(raw, brotliParams(ext, raw.length)) : gzipAsync(raw, { level: 6 });
-}
-
-/** A streaming compressor for a file too large for the cache. */
 function compressStream(encoding, ext, size) {
-  return encoding === 'br' ? zlib.createBrotliCompress(brotliParams(ext, size)) : zlib.createGzip();
+  return encoding === 'br' ? zlib.createBrotliCompress(brotliParams(ext, size)) : zlib.createGzip({ level: 6 });
+}
+
+// Bound HTTP compression independently of ws. Identical concurrent requests also share a cache promise.
+let compressionActive = 0;
+const compressionWaiters = [];
+export async function compressBytes(body, encoding, ext = '') {
+  if (compressionActive >= 2) await new Promise((resolve) => compressionWaiters.push(resolve));
+  else compressionActive++;
+  try {
+    return encoding === 'br' ? await brotliAsync(body, brotliParams(ext, body.length)) : await gzipAsync(body, { level: 6 });
+  } finally {
+    const next = compressionWaiters.shift();
+    if (next) next();
+    else compressionActive--;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
-// compression cache (LRU by bytes; one entry per file and encoding)
+// Compression cache (LRU by bytes). The historical class name remains compatible with media.js.
 // ---------------------------------------------------------------------------------------------------
 
 export class CompressCache {
@@ -126,27 +126,34 @@ export class CompressCache {
     return this.compressed(`${absPath}\0${stat.size}\0${stat.mtimeMs}\0${stat.ino}\0${stat.ctimeMs}`, () => fsp.readFile(absPath), encoding, path.extname(absPath).toLowerCase());
   }
 
-  /**
-   * @returns {Promise<Buffer>} the body `read()` returns compressed with `encoding`, cached under `key` + encoding (one
-   *   compression per entry at a time)
-   */
+  /** id must identify the exact uncompressed bytes (content SHA-256 for runtime files and rendered HTML). */
+  getBuffer(id, body, encoding, ext = '') {
+    return this.compressed(`buffer\0${id}`, async () => body, encoding, ext);
+  }
+
+  /** Disk and in-memory variants share the same inflight and bounded LRU cache. */
   compressed(key, read, encoding = 'gzip', ext = '') {
-    const k = `${encoding}\0${key}`;
-    const hit = this.map.get(k);
-    if (hit) { this.map.delete(k); this.map.set(k, hit); return Promise.resolve(hit); }
-    const pending = this.inflight.get(k);
+    return this.obtain(`${encoding}\0${key}`, async () => compressBytes(await read(), encoding, ext));
+  }
+
+  obtain(key, make) {
+    const hit = this.map.get(key);
+    if (hit) { this.map.delete(key); this.map.set(key, hit); return Promise.resolve(hit); }
+    const pending = this.inflight.get(key);
     if (pending) return pending;
     const p = (async () => {
-      const out = await compress(await read(), encoding, ext);
-      this.store(k, out);
-      return out;
-    })().finally(() => this.inflight.delete(k));
-    this.inflight.set(k, p);
+      const encoded = await make();
+      this.store(key, encoded);
+      return encoded;
+    })().finally(() => this.inflight.delete(key));
+    this.inflight.set(key, p);
     return p;
   }
 
   store(key, buf) {
     if (buf.length > this.maxTotal) return;
+    const old = this.map.get(key);
+    if (old) { this.map.delete(key); this.total -= old.length; }
     this.map.set(key, buf);
     this.total += buf.length;
     for (const [k, v] of this.map) {
@@ -157,64 +164,54 @@ export class CompressCache {
   }
 }
 
-/** The cache's former name (it held gzip only). */
-export const GzipCache = CompressCache;
-
 // ---------------------------------------------------------------------------------------------------
 // HTTP helpers
 // ---------------------------------------------------------------------------------------------------
 
-/** Accept-Encoding → { token: q } (lower-case tokens; a malformed q counts as 0). */
-function acceptedEncodings(header) {
-  const out = {};
-  if (!header || typeof header !== 'string') return out;
+/** Preserve the historical public class name for announcements and existing callers. */
+export const GzipCache = CompressCache;
+
+/** Parse explicit preferences, including exclusions. Missing header never opts into compression. */
+function encodingPreferences(header) {
+  const preferences = new Map();
+  if (!header || typeof header !== 'string') return preferences;
   for (const part of header.split(',')) {
     const [token, ...params] = part.trim().toLowerCase().split(';');
-    if (!token) continue;
     let q = 1;
     for (const p of params) {
-      const m = /^\s*q=([0-9.]+)\s*$/.exec(p);
-      if (m) q = Number(m[1]);
+      const m = /^\s*q\s*=\s*(.*?)\s*$/.exec(p);
+      if (m) q = m[1] === '' ? 0 : Number(m[1]);
     }
-    out[token.trim()] = Number.isFinite(q) ? q : 0;
+    if (!Number.isFinite(q) || q < 0 || q > 1) q = 0;
+    if (token) preferences.set(token === 'x-gzip' ? 'gzip' : token, q);
   }
-  return out;
-}
-
-/**
- * The content coding to answer with: 'br' when the client names brotli (q > 0) at least as high as gzip, else 'gzip'
- * when it accepts gzip (or `*`), else null (identity). `*` alone never picks brotli. Browsers name `br` on HTTPS pages
- * and localhost only, so a LAN `http://` address gets gzip.
- * @param {string | undefined} header
- * @returns {'br' | 'gzip' | null}
- */
-export function pickEncoding(header) {
-  const acc = acceptedEncodings(header);
-  const brQ = acc.br ?? 0;
-  const gzQ = acc.gzip ?? acc['x-gzip'] ?? acc['*'] ?? 0;
-  if (brQ > 0 && brQ >= gzQ) return 'br';
-  if (gzQ > 0) return 'gzip';
-  return null;
+  return preferences;
 }
 
 /** Does the Accept-Encoding header allow gzip (q > 0)? @param {string | undefined} header */
 export function acceptsGzip(header) {
-  if (!header || typeof header !== 'string') return false;
-  let gzipQ = null;
-  let starQ = null;
-  for (const part of header.split(',')) {
-    const [token, ...params] = part.trim().toLowerCase().split(';');
-    let q = 1;
-    for (const p of params) {
-      const m = /^\s*q=([0-9.]+)\s*$/.exec(p);
-      if (m) q = Number(m[1]);
-    }
-    if (!Number.isFinite(q)) q = 0;
-    if (token === 'gzip' || token === 'x-gzip') gzipQ = q;
-    else if (token === '*') starQ = q;
-  }
-  if (gzipQ != null) return gzipQ > 0;
-  return starQ != null && starQ > 0;
+  const prefs = encodingPreferences(header);
+  return (prefs.get('gzip') ?? prefs.get('*') ?? 0) > 0;
+}
+
+/** Highest permitted supported coding; Brotli wins ties, identity remains the backwards-compatible fallback. */
+function selectEncoding(header, brotli, wildcardBrotli) {
+  const prefs = encodingPreferences(header);
+  const br = brotli ? prefs.get('br') ?? (wildcardBrotli ? prefs.get('*') : 0) ?? 0 : 0;
+  const gz = prefs.get('gzip') ?? prefs.get('*') ?? 0;
+  const q = Math.max(br, gz);
+  if (q <= 0 || (prefs.has('identity') && prefs.get('identity') > q)) return null;
+  return br >= gz ? 'br' : 'gzip';
+}
+
+/** Existing response policy and the SP_HTTP_BROTLI rollback retain wildcard support. */
+export function preferredEncoding(header, brotli = process.env.SP_HTTP_BROTLI !== '0') {
+  return selectEncoding(header, brotli, true);
+}
+
+/** Upstream's public helper names Brotli explicitly; `*` alone chooses gzip. */
+export function pickEncoding(header) {
+  return selectEncoding(header, process.env.SP_HTTP_BROTLI !== '0', false);
 }
 
 /**
@@ -249,7 +246,7 @@ export function isNotModified(req, etag, mtime) {
     return inm.split(',').some((t) => stripWeak(t) === etag);
   }
   const ims = req.headers['if-modified-since'];
-  if (typeof ims === 'string') {
+  if (typeof ims === 'string' && mtime) {
     const t = Date.parse(ims);
     if (Number.isFinite(t)) return Math.floor(mtime.getTime() / 1000) * 1000 <= t;
   }
@@ -267,7 +264,13 @@ function ifRangeMatches(req, etag, lastModified) {
 
 function cacheControlFor(ext, mountName, segments, query) {
   if (ext === '.html' || ext === '.htm') return 'no-cache';
-  if (/(^|&)v=/.test(query)) return IMMUTABLE_CACHE;
+  // `?v=<content hash>` is a content-addressed cache-buster (assets/fonts manifests and the content set's
+  // plain /data/…?v= URLs): a new hash is a new URL, so the body can be immutable for a year. Only a
+  // hex digest counts — `?v=unverified` is not a pin (runtime-http.test.js).
+  if (/(^|&)v=[a-f0-9]{16,64}(&|$)/.test(query)
+    && ((mountName === 'public' && ['assets', 'fonts'].includes(segments[0])) || mountName === 'data')) {
+    return IMMUTABLE_CACHE;
+  }
   if (mountName === 'public' && segments.length > 1 && LONG_CACHE_DIRS.includes(segments[0])) return LONG_CACHE;
   return 'no-cache';
 }
@@ -285,9 +288,9 @@ export async function serveFile(req, res, absPath, stat, mountName, segments, qu
   const compressible = COMPRESSIBLE.has(ext);
   // RFC 9110 §14.2: Range is defined only for GET; other methods ignore it, including for encoding selection.
   const rangeHeader = req.method === 'GET' ? req.headers.range : undefined;
-  const encoding = compressible && stat.size >= GZIP_MIN_BYTES && !rangeHeader ? pickEncoding(req.headers['accept-encoding']) : null;
+  const encoding = compressible && stat.size >= GZIP_MIN_BYTES && !rangeHeader ? preferredEncoding(req.headers['accept-encoding']) : null;
   const baseTag = opts.contentHash || `${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}`;
-  const etag = `"${baseTag}${encoding === 'br' ? '-br' : encoding === 'gzip' ? '-gz' : ''}"`;
+  const etag = `"${baseTag}${encoding === 'br' ? '-br' : encoding ? '-gz' : ''}"`;
   const lastModified = stat.mtime.toUTCString();
   const isHead = req.method === 'HEAD';
 
@@ -298,6 +301,7 @@ export async function serveFile(req, res, absPath, stat, mountName, segments, qu
     'Last-Modified': lastModified,
   };
   if (compressible) headers.Vary = 'Accept-Encoding';
+  if (encoding) headers['Content-Encoding'] = encoding;
   if (opts.headers) for (const [k, v] of Object.entries(opts.headers)) if (v != null && v !== '') headers[k] = v;
 
   if (isNotModified(req, etag, stat.mtime)) {
@@ -307,12 +311,11 @@ export async function serveFile(req, res, absPath, stat, mountName, segments, qu
   }
 
   if (encoding) {
-    headers['Content-Encoding'] = encoding;
     if (stat.size <= GZIP_CACHE_MAX_FILE) {
-      const body = await gzipCache.get(absPath, stat, encoding);
-      headers['Content-Length'] = body.length;
+      const compressed = await gzipCache.get(absPath, stat, encoding);
+      headers['Content-Length'] = compressed.length;
       res.writeHead(200, headers);
-      res.end(isHead ? undefined : body);
+      res.end(isHead ? undefined : compressed);
       return;
     }
     res.writeHead(200, headers);
@@ -344,29 +347,48 @@ export async function serveFile(req, res, absPath, stat, mountName, segments, qu
   await streamTo(fs.createReadStream(absPath, { start, end }), res, log);
 }
 
+/** Serve exact, verified runtime bytes / generated HTML with variant validators and the same range semantics. */
 /**
- * One body in memory → the response (the served manifests): its ETag from `hash`, brotli or gzip when accepted (cached
- * under `key` + `hash`), 304 on a matching If-None-Match, no ranges.
- * @param {{ body: Buffer, hash: string, type: string, cacheControl: string, key: string, cache: CompressCache }} o
+ * Serve exact bytes from memory.
+ * Accepts both call shapes used across the fork and upstream 0.3.0:
+ *   fork:     serveBuffer(req, res, body, { type, tag, cacheControl, mtime, cache, minBytes })
+ *   upstream: serveBuffer(req, res, { body, hash, type, cacheControl, key, cache })
+ * `hash` is the upstream alias of `tag`; `key` only namespaces the compression cache entry.
  */
-export async function serveBuffer(req, res, { body, hash, type, cacheControl, key, cache }) {
-  const encoding = body.length >= GZIP_MIN_BYTES ? pickEncoding(req.headers['accept-encoding']) : null;
-  const etag = `"${hash}${encoding === 'br' ? '-br' : encoding === 'gzip' ? '-gz' : ''}"`;
+export async function serveBuffer(req, res, bodyOrOpts, maybeOpts = {}) {
+  let body, type, tag, cacheControl = 'no-cache', mtime = null, cache, minBytes = GZIP_MIN_BYTES;
+  if (bodyOrOpts && typeof bodyOrOpts === 'object' && !Buffer.isBuffer(bodyOrOpts)
+      && !(bodyOrOpts instanceof Uint8Array) && 'body' in bodyOrOpts) {
+    ({ body, hash: tag, type, cacheControl = 'no-cache', cache } = bodyOrOpts);
+  } else {
+    body = bodyOrOpts;
+    ({ type, tag, cacheControl = 'no-cache', mtime = null, cache, minBytes = GZIP_MIN_BYTES } = maybeOpts);
+  }
+  const encoding = body.length >= minBytes && !req.headers.range ? preferredEncoding(req.headers['accept-encoding']) : null;
+  const etag = `"${tag}${encoding === 'br' ? '-br' : encoding ? '-gz' : ''}"`;
   const headers = { 'Content-Type': type, 'Cache-Control': cacheControl, ETag: etag, Vary: 'Accept-Encoding' };
-  const inm = req.headers['if-none-match'];
-  if (typeof inm === 'string' && (inm.trim() === '*' || inm.split(',').some((t) => stripWeak(t) === etag))) {
-    res.writeHead(304, headers);
-    res.end();
-    return;
+  if (mtime) headers['Last-Modified'] = mtime.toUTCString();
+  if (encoding) headers['Content-Encoding'] = encoding;
+  if (isNotModified(req, etag, mtime)) { res.writeHead(304, headers); res.end(); return; }
+  let status = 200;
+  let output = body;
+  if (encoding) output = await cache.getBuffer(tag, body, encoding, type.startsWith('text/') || type.includes('json') ? '.txt' : '');
+  else {
+    headers['Accept-Ranges'] = 'bytes';
+    if (req.headers.range && ifRangeMatches(req, etag, headers['Last-Modified'])) {
+      const range = parseRange(req.headers.range, body.length);
+      if (range === 'unsatisfiable') {
+        res.writeHead(416, { 'Content-Range': `bytes */${body.length}`, 'Content-Length': 0 }); res.end(); return;
+      }
+      if (range) {
+        status = 206; output = body.subarray(range.start, range.end + 1);
+        headers['Content-Range'] = `bytes ${range.start}-${range.end}/${body.length}`;
+      }
+    }
   }
-  let out = body;
-  if (encoding) {
-    out = await cache.compressed(`${key}\0${hash}`, async () => body, encoding, path.extname(key).toLowerCase());
-    headers['Content-Encoding'] = encoding;
-  }
-  headers['Content-Length'] = out.length;
-  res.writeHead(200, headers);
-  res.end(req.method === 'HEAD' ? undefined : out);
+  if (res.destroyed) return;
+  headers['Content-Length'] = output.length;
+  res.writeHead(status, headers); res.end(req.method === 'HEAD' ? undefined : output);
 }
 
 async function streamTo(src, res, log, transform) {

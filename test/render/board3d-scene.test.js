@@ -388,7 +388,48 @@ describe('scene chunks (load.js)', () => {
       assert.equal(await loadScenePack(store, 'act2autochess_m02'), null, 'unknown version → the procedural board');
       json = doc;
       assert.ok(await loadScenePack(store, 'act2autochess_m02'), 'a failed load is not cached');
-      assert.equal(await loadScenePack(null, 'act2autochess_m02').catch(() => 'threw'), await loadScenePack(store, 'act2autochess_m02'), 'cached per stage');
+      assert.equal(await loadScenePack(null, 'act2autochess_m02'), null, 'another store cannot reuse a cached stage');
+      const otherStore = { ...store, localUrl: () => null };
+      assert.equal(await loadScenePack(otherStore, 'act2autochess_m02'), null, 'cache is scoped to the asset store');
+      resetBoardPack();
+      let ranges = 0;
+      globalThis.fetch = async (u, opts) => {
+        if (u === '/s/scene.json') return { ok: true, json: async () => doc };
+        if (u !== '/s/scene.bin') return { ok: false };
+        if (!opts.headers?.Range) return { ok: true, arrayBuffer: async () => new ArrayBuffer(0) };
+        ranges++;
+        assert.equal(opts.headers.Range, `bytes=0-${doc.binBytes - 1}`);
+        return { ok: true, status: 206, headers: { get: () => `bytes 0-${doc.binBytes - 1}/${doc.binBytes}` }, arrayBuffer: async () => bin };
+      };
+      assert.ok(await loadScenePack(store, 'act2autochess_m02'), 'empty successful response has a complete-range retry');
+      assert.equal(ranges, 1, 'retry is bounded');
+      resetBoardPack();
+      globalThis.fetch = async (u, opts) => u === '/s/scene.json' ? { ok: true, json: async () => doc } : {
+        ok: true, status: opts.headers?.Range ? 206 : 200,
+        headers: { get: () => `bytes 0-3/${doc.binBytes}` }, arrayBuffer: async () => opts.headers?.Range ? bin : new ArrayBuffer(0),
+      };
+      assert.equal(await loadScenePack(store, 'act2autochess_m02'), null, 'partial or mismatched range is never a full scene');
+      resetBoardPack();
+      let binaryReads = 0;
+      globalThis.fetch = async (u) => u === '/s/scene.json' ? { ok: true, json: async () => doc } : u === '/s/scene.bin' ? {
+        ok: true, arrayBuffer: async () => { binaryReads++; return bin.slice(0); },
+      } : { ok: false };
+      const oldWorker = globalThis.Worker;
+      globalThis.Worker = class {
+        postMessage(message, transfer) {
+          structuredClone(message, { transfer });
+          queueMicrotask(() => this.onerror({ message: 'worker crashed after transfer' }));
+        }
+        terminate() {}
+      };
+      try {
+        const recovered = await loadScenePack(store, 'act2autochess_m02', { areas: AREAS.normal });
+        assert.equal(recovered.chunks.length, PARTS.length, 'transferred buffer is reacquired after a worker crash');
+        assert.equal(binaryReads, 2, 'one recovery fetch');
+      } finally {
+        resetBoardPack();
+        if (oldWorker === undefined) delete globalThis.Worker; else globalThis.Worker = oldWorker;
+      }
     } finally { globalThis.fetch = original; resetBoardPack(); }
   });
 });
@@ -688,8 +729,13 @@ describe('shared board / scene water (#549, port of #555 onto #571)', () => {
     assert.deepEqual(vec(boardWater, 'uDeep'), [0.1, 0.2, 0.3, 0.4]);
     assert.equal(boardWater.uniforms.uEnv.value, null);
     assert.ok(!boardWater.defines.WATER_ENV, 'no cube in the second pack');
-    board.setStage(stage);
-    assert.equal(boardWater.uniforms.uEnv.value, env, 'cached stage restores its cube');
+    assert.equal(disposed, 1, 'switching stages releases the old GPU cube');
+    globalThis.document = { createElement: () => ({ getContext: () => ({ drawImage() {} }) }) };
+    try { board.setStage(stage); } finally {
+      if (original === undefined) delete globalThis.document; else globalThis.document = original;
+    }
+    assert.ok(boardWater.uniforms.uEnv.value?.isCubeTexture, 'revisited stage restores its cube from the CPU pack');
+    assert.notEqual(boardWater.uniforms.uEnv.value, env, 'released GPU objects are rebuilt');
     const replacement = fakeScenePack(); replacement.key = 'replacement';
     board.setScenePack(stage.id, replacement);
     assert.equal(disposed, 1);
@@ -727,6 +773,27 @@ describe('shared board / scene water (#549, port of #555 onto #571)', () => {
 
 describe('BoardScene with an official scene (stub renderer)', () => {
   const stage = stages.act2autochess_m02;
+
+  test('visiting stages releases inactive GPU resources and bounds retained CPU packs', () => {
+    const board = new BoardScene(THREE, fakePack(), { renderer: stubRenderer() });
+    let disposed = 0;
+    for (let i = 0; i < 6; i++) {
+      const st = { ...stage, id: `stage-${i}` }, pack = fakeScenePack();
+      pack.key = st.id;
+      board.setScenePack(st.id, pack);
+      board.setStage(st);
+      const res = board.sceneRes.get(pack.key);
+      for (const tex of Object.values(res.tex)) tex.addEventListener('dispose', () => disposed++);
+      assert.equal(board.sceneRes.size, 1, 'only the active stage stays on the GPU');
+      assert.ok(board.scenePacks.size <= 2);
+      assert.equal(disposed, i, 'one colour texture released per previous stage');
+    }
+    board.setStage(null);
+    assert.equal(board.sceneRes.size, 0);
+    assert.equal(disposed, 6);
+    board.destroy();
+    assert.equal(disposed, 6, 'no double disposal');
+  });
 
   test('the scene replaces the procedural tiles and background; devices, gates, edges and terrain stay', () => {
     const board = new BoardScene(THREE, fakePack(), { renderer: stubRenderer() });

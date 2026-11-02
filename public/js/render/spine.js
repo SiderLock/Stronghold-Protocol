@@ -50,6 +50,8 @@
 // skill with its own idle clip (those attacks go straight back to that idle). The skill's end clip closes the skill,
 // not each attack while it runs.
 
+import { optimizeSpineTransforms } from './spineTransforms.js';
+
 const clampN = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
 /** Longest wind-up compression (× the rhythm speed) when the look-ahead is shorter than the natural wind-up. */
@@ -307,7 +309,7 @@ function scratchSkeleton(rec) {
 function boundsRecord(data, Skeleton) {
   let rec = boundsOf.get(data);
   if (rec) return rec;
-  rec = { data, Skeleton, skel: null, rects: new Map(), todo: [], job: null, users: 0, failed: false, buf: { v: new Float32Array(256) } };
+  rec = { data, Skeleton, skel: null, rects: new Map(), poses: new Map(), todo: [], job: null, users: 0, failed: false, buf: { v: new Float32Array(256) } };
   try {
     const skel = scratchSkeleton(rec);
     skel.setToSetupPose();
@@ -318,6 +320,29 @@ function boundsRecord(data, Skeleton) {
   }
   boundsOf.set(data, rec);
   return rec;
+}
+
+/** A clip's start/end draws attachments, or null when this runtime cannot measure it. Cached with clip bounds. */
+export function clipPoseVisible(data, Skeleton, name, end = false) {
+  if (!data || typeof data !== 'object') return null;
+  const rec = boundsRecord(data, Skeleton), key = `${name}:${end ? 'end' : 'start'}`;
+  if (rec.poses.has(key)) return rec.poses.get(key);
+  if (rec.failed) return null;
+  try {
+    const anim = data.findAnimation?.(name);
+    if (!anim || typeof anim.apply !== 'function') return null;
+    // A separate short-lived skeleton leaves the incremental bounds sampler's in-progress pose untouched.
+    const skel = new Skeleton(data);
+    skel.setToSetupPose();
+    const t = end ? anim.duration : 0;
+    anim.apply(skel, t, t, false, null, 1, 0, 0);
+    skel.updateWorldTransform();
+    const r = poseRect(skel, emptyRect(), { v: new Float32Array(256) });
+    const visible = r[2] > r[0] && r[3] > r[1];
+    rec.poses.set(key, visible);
+    return visible;
+  } catch { return null; }
+  finally { if (!rec.users && !rec.todo.length && !rec.job) rec.skel = null; }
 }
 
 /**
@@ -422,6 +447,7 @@ export class SpineActor {
     this.durations = entry.animations || {};
     this.spine = new P.spine.Spine(spineData);
     this.spine.autoUpdate = false;
+    optimizeSpineTransforms(this.spine);
     this.names = new Set((spineData.animations || []).map((a) => a.name));
     /**
      * Clipping attachments render as stencil masks (≈1.5 ms of GPU each per frame on tiled GPUs): such skeletons
@@ -455,6 +481,7 @@ export class SpineActor {
     this.current = '';
     this.frozen = false;
     this.dead = false;
+    this._downHeld = false;
     this.interval = 1;
     /**
      * Enemies (render/units.js, GitHub #58): each attack plays the attack clip once — at its own speed, faster only when
@@ -983,6 +1010,29 @@ export class SpineActor {
   }
 
   /**
+   * Knock-downs persist until redeploy, unlike a final death. Some Die clips (魔王 / 追悼) dissolve every attachment.
+   * [ASSUMED] For those only, hold this model's Stun pose, then Idle, instead of an invisible end or another body.
+   * A visible Die end and every ordinary enemy/final-death animation retain their existing playback.
+   */
+  holdDeathPose() {
+    if (!this.dead || this._downHeld) return false;
+    this._downHeld = true;
+    const data = this.spine.spineData, Skeleton = this.spine.skeleton?.constructor;
+    const die = this.dieClip();
+    if (!die || clipPoseVisible(data, Skeleton, die, true) !== false) return false;
+    // A transformed body (e.g. a doll) must not borrow the base body's Stun when its form supplies none.
+    const stun = this.formRoles && !this.formRoles.stun ? null : this.roles.stun?.loop;
+    const pose = [stun, this.roles.idle, 'Idle'].find(name => this.has(name)
+      && clipPoseVisible(data, Skeleton, name) === true);
+    if (!pose) return false;
+    this.spine.skeleton.setToSetupPose();
+    this.frozen = false;
+    this._play(pose, false, { mix: 0, timeScale: 0 });
+    this.update(0);
+    return true;
+  }
+
+  /**
    * True while an update would draw the same pixels: a frozen model, or a dead one whose only clip — track 0, not
    * looping, not mixing — has played out (the held end of a death clip; a skeleton without one holds its idle at
    * timeScale 0). Only once an update has posed the current clip and put the current tint on the slots (pixi-spine applies
@@ -1003,6 +1053,7 @@ export class SpineActor {
   /** Revive (redeploy after death). */
   revive() {
     this.dead = false;
+    this._downHeld = false;
     this.frozen = false;
     this.mode = 'base';
     this.skillOn = false;

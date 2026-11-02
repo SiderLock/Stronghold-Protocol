@@ -5,6 +5,10 @@ the **UI owner** consuming `m.public` / `m.private` / `m.result`, and anyone dri
 Normative contracts stay in DESIGN.md §6 and §8 ([design/match.md](design/match.md),
 [design/network.md](design/network.md)); this file documents the implementation and every assumption it makes.
 
+本 fork 的外观扩展 [D045](development/DECISIONS.md#d045)：Lobby 开局生成一张 AI 共用时装表，并为开启每局随机的
+真人生成各自的时装表；都通过既有 `seats[].skins` 进入 PlayerState 和 match host。固定选择可随时更新，每局随机的
+候选只影响下一局，重连及重刷不重抽；玩法 RNG 不变。协议与界面合同见 [SKINS.md](SKINS.md)。
+
 ```
 server/match/
   Match.js         state machine, timers, round loop, co-op orchestration, views (the lobby⇄match interface is at the top)
@@ -40,7 +44,15 @@ server/match/
 
 ---
 
+Waiting-room portrait choices include visible operators and enemies with an icon in the current art manifest. Enemy keys use the existing `room.card` field and are checked against the room version’s enemies; missing art falls back to the usual avatar. The preference and room broadcast remain cosmetic. Expanded mobile rooms use a scrollable responsive card grid, and the AI name pool contains 20 distinct character names.
+
 ## 1. Match flow
+
+Capacity-fork waiting rooms allow seat exchanges before starting: empty / AI seats exchange immediately,
+human seats require that person's consent. Host authority follows identity; handover and returning from a match
+do not reorder seats. Readiness and personal settings travel with the complete seat object; the next match uses
+the final seat order for fixed groups. Live match seats and groups stay fixed. See
+[D040](development/DECISIONS.md#d040) and the [network contract](design/network.md).
 
 ```
 LOBBY → INFO_CHECK (co-op 25 s; solo and single-human matches untimed; all humans confirmed ⇒ next) → BAND_DRAFT → BATTLE_CHECK (3 s)
@@ -176,6 +188,10 @@ otherwise every "之后 / 后续的每场作战" card — e.g. 教鞭's 法术�
 A `choice:<effectId>` registry handler overrides the default application (§2.4).
 
 ### 1.3 Disconnects, AI takeover
+* Capacity-fork owner precache admission applies to new create/join/quick-match/spectate requests only, before
+  membership changes. Existing player/spectator token resume and same-role room resync retain their former rules.
+  The optional readiness report and tiny server summary are specified in [ASSET_CACHE.md](ASSET_CACHE.md) and
+  [SERVER_SETTINGS.md](SERVER_SETTINGS.md); compact-v1 uses its existing extension slot.
 * Local multi-window recovery (#431, DESIGN §28.27) sends optional `hello.noReplace` for a tentative shared token,
   and `hello.claimAt` for a previously welcomed token. Before binding a different socket, the server rejects a
   connected seat when no replacement was allowed or the request has a later stamp than the attached holder
@@ -184,11 +200,10 @@ A `choice:<effectId>` registry handler overrides the default application (§2.4)
 * Disconnected human: the seat keeps playing its last lineup; drafts auto-resolve at their deadlines, prep auto-readies at
   the deadline (an open 教鞭 choice is picked at random first, §2.5; then the temp pieces due at that prep are sold/destroyed). Nothing is bought for them. A battle the human was authority of goes to the server
   (normal / 联防: re-simulated from t = 0) or, on a boss field, to the partner's replica (DESIGN §14). The session stays
-  resumable for 10 min (net.js `reconnectWindowMs`); a **solo** run's for the official `constants.singleReconnectTime`
-  (86 400 s = 24 h, lobby.js `soloResumeWindowMs`) when the data has it, else that same 24 h fallback. 第一期's constData
-  has no `singleReconnectTime`, so its window is the fallback: a carried-over convenience [ASSUMED], not official 第一期
-  data, and not because the run is untimed (a 第一期 solo is timed unless the room's 「不限时」 is on, DESIGN §35.23.10).
-  `onReconnect`
+  resumable for 10 min (net.js `reconnectWindowMs`); a **solo** run's for 2 h by default
+  (lobby.js `LOBBY_DEFAULTS.soloReconnectWindowMs` / `soloResumeWindowMs`, [D033](development/DECISIONS.md#d033)).
+  The official `constants.singleReconnectTime` remains 86 400 s = 24 h in generated data; an explicit null option
+  retains that fallback. Second-period solo preparation and drafts are untimed. First-period solo uses 300 s preparation / 150 s draft unless the room enables 「不限时」; explicit null uses the version constant or the carried-over 24 h fallback [ASSUMED]. `onReconnect`
   resends `m.public`, `m.private` and the `b.start` of the field the player is on / watching.
 * `g.autoplay { on }` ("AI 托管"): the bot plays the seat (drafts, buying, placement, an open 教鞭 choice, ready) until turned off.
 * `onLeave` (quit / reconnect window expired): 中途退出 counts as elimination (research 00-INDEX §3, 01 §9, 06 §7 /
@@ -208,7 +223,19 @@ always. While paused (`m.public.paused`) the field clocks, the authority deadlin
 fields' `startAt` / `lastProgressAt` and the boss start by the paused time and re-arms the timers. A disconnect or
 `onLeave` resumes; the battle phase ending clears it (`pausedMs` totals the paused time).
 
+### 1.3b Bandwidth emergency protection (fork)
+
+`Match.setEmergencyFreeze` is separate from solo `g.pause`: `FreezeScheduler` holds all phase timers and AI intervals, and `m.public.emergencyFrozen` marks a held match. Clients stop local battles and countdowns; advancing intents and battle reports temporarily return `SERVER_EMERGENCY`. Recovery preserves remaining delays and shifts deadlines / field clocks without replaying missed ticks. Disconnect and leave update seat connectivity immediately but defer gameplay consequences; original members can reconnect during protection. The last human explicitly abandoning a match still ends it. Automatic retry defaults to 120 seconds and waits longer while known gameplay connections remain congested or a match has no connected humans. Detection, admission, notification limits and configuration are documented in [ASSET_CACHE.md](ASSET_CACHE.md#带宽紧急保护).
+
 ### 1.4 Watching fields
+The multiplayer fork's lobby directory offers observation by an opaque room identity (`lobby.spectate`), in both
+waiting and running co-op rooms, reusing the same two reserved spectator seats and `Match.addSpectator` path below.
+Disabling public matchmaking hides the directory invitation code and prevents public player admission; it does not
+disable observation or known-code invitations. `lobby.state.playingCount` counts connected non-left human player
+seats in current matches, including eliminated/autoplay humans and solo runs, but excluding AI and spectators.
+Room-host control, latest-state admission and compact-wire compatibility are specified in
+[DESIGN §8.1](design/network.md#81-session--lobby) and [D032](development/DECISIONS.md#d032).
+
 Client-side combat (the default, DESIGN §14 Spectating; `Match._watchClient`): `g.watch` answers with the field's
 `b.start` (a display replica fast-forwarded to the field clock); an alive player may not watch another normal field
 while its own normal battle runs (`WRONG_PHASE 'own battle running'`) nor the other pair's boss field (`BAD_TARGET 'other
@@ -239,6 +266,12 @@ The rest of this section is the legacy server-run mode
 
 ### 1.5 AI player (bot.js)
 
+Capacity fork performance maintenance: real vanilla matches may execute detached layout rehearsals in the bounded
+`rehearsalPool` child processes (see [server settings](SERVER_SETTINGS.md#计算进程)). The existing heuristic, seeds,
+candidate comparison and preparation continuation are preserved; the parent applies an answer only while that seat's
+same prep job is still valid. Ending prep/disposal cancels queued/running work. Worker failure resumes the original
+sliced job. Previews omit unused render events, and early-stop comparisons read live leak counters rather than
+building provisional full reports. Virtual/test/plugin matches retain the original path.
 The synchronous prep orchestrator lives in `server/match/botPrep.js`. `bot.js` binds its existing actions through
 `createBotPrepSteps(actions)`; trusted strategies can override an operation while keeping reward, economy,
 placement and cleanup sequencing. Overrides are synchronous functions or synchronous iterators according to the
@@ -1152,6 +1185,12 @@ the first reroll. Each seat may start one vote per 30 s (`ERR.RATE`): a complete
 opening is a new window), a cancelled vote does not, and leaving the seat drops it.
 `m.public` includes `setupRevision` and `rerollVote` (null or `{id, proposerId, voters, agreed}`). Old vote/revision
 requests cannot affect a new opening. See DESIGN §28.21 for cancellation and timer behavior.
+
+Legacy compatibility only: `room.requestReroll {setupRevision}` / `Match.askSetupReroll` still record an ask without
+starting a vote or changing the setup/timer (GitHub #854). The fork retains `m.public.rerollRequests`, the 30 s ask
+cooldown and clearing on vote start/cancel/completion for older clients. Since this fork's v0.3.3 sync, the briefing UI
+uses the upstream direct start/cancel controls for every seated human; spectators see a read-only vote card. The old
+ask endpoint is no longer a prerequisite or the current UI flow (D018 / D041 in `development/DECISIONS.md`).
 
 `botEmotes.js` is isolated from bot decisions and RNG. It sends the existing `m.emote` only in mixed matches, under
 normal cooldown/whitelist rules; `SP_BOT_EMOTES=0` disables it. The cooperation score in `bot.js` and these cosmetic

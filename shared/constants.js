@@ -18,7 +18,13 @@ export const DEV_BUILD = /-dev$/.test(APP_VERSION);
  */
 export const PLUGIN_API = Object.freeze({ current: 2, min: 1 });
 
-export const MAX_SEATS = 4;
+/** Four players remain the baseline for card-pool groups and hidden-core layers. Capacity includes humans and AI. */
+export const BASE_SEATS = 4;
+export const MAX_SEATS = 20;
+export const DEFAULT_SEATS = 8;
+export const ROOM_CAPACITIES = Object.freeze([4, 8, 10, 16, 20]);
+/** One independent 机变 page per fixed group; card indexes are local to its six positions. */
+export const MAX_DRAFT_CARDS = 6;
 /**
  * Spectator seats of a co-op room (community report #26, owner's decision 2026-10-04) — a remake feature: the official
  * room has 1–4 players and no spectator seat (there only eliminated players and 联防 bystanders watch, research 09 §3.1).
@@ -176,6 +182,9 @@ export const ERR = Object.freeze({
   NOT_IN_ROOM: 'NOT_IN_ROOM',
   ROOM_NOT_FOUND: 'ROOM_NOT_FOUND',
   ROOM_FULL: 'ROOM_FULL',
+  AI_LIMIT: 'AI_LIMIT',
+  ASSET_CACHE_REQUIRED: 'ASSET_CACHE_REQUIRED',
+  SERVER_EMERGENCY: 'SERVER_EMERGENCY',
   SERVER_FULL: 'SERVER_FULL',     // the online cap (SP_MAX_ONLINE) has no seat for a new player
   ROOM_STARTED: 'ROOM_STARTED',
   // a fixed alliance key (--room-code): one room at a time can hold it
@@ -236,6 +245,9 @@ export const ERR_TEXT = {
   SESSION_IN_USE: N_('此对局仍在其他窗口中，或当前浏览器无法安全恢复。请关闭原窗口后重试。'),
   BAD_MSG: N_('无效的请求'), RATE: N_('操作过于频繁'), NOT_IN_ROOM: N_('你不在房间中'), ROOM_NOT_FOUND: N_('未找到该同盟密钥对应的房间'),
   ROOM_FULL: N_('房间已满'), SERVER_FULL: N_('服务器已满'), ROOM_STARTED: N_('模拟已开始'), NOT_HOST: N_('只有房主可以操作'), NOT_READY: N_('仍有玩家未就绪'),
+  AI_LIMIT: N_('已达到服务器允许的 AI 队友上限'),
+  ASSET_CACHE_REQUIRED: N_('服主要求完整预缓存，请先在「预缓存」中导入当前素材目录并补齐全部文件，再创建、加入、最快匹配或观战。'),
+  SERVER_EMERGENCY: N_('服务器带宽紧急保护已开启，请等待恢复'),
   ROOM_CODE_TAKEN: N_('固定同盟密钥已被另一个房间占用，请先关闭那个房间'),
   WRONG_PHASE: N_('当前阶段无法进行该操作'), NO_FUNDS: N_('资金不足'), HAND_FULL: N_('整备区已满'), BOARD_FULL: N_('已达到部署上限'),
   BAD_TILE: N_('无法部署在该位置'), BAD_TARGET: N_('无效的目标'), SOLD_OUT: N_('已售出'), MAX_LEVEL: N_('调度中心已达最高等级'),

@@ -16,7 +16,7 @@ import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } fro
 import htm from '../../vendor/htm.module.js';
 import { DIFFICULTY_NAMES, DIFFICULTY_COLORS } from '../../../shared/constants.js';
 import { t } from '../../../shared/i18n.js';
-import { serverNow } from '../store.js';
+import { matchClockNow, emergencyClockAt, useStore } from '../store.js';
 import { data, useData, localAsset } from '../data.js';
 import { uiUrl } from './assetUrls.js';
 
@@ -48,6 +48,9 @@ export const ICONS = {
   crown: { d: 'M3 7l4.6 4.2L12 4l4.4 7.2L21 7l-1.8 10H4.8zM5 19h14v2H5z' },
   robot: { d: 'M11 2h2v3h4a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V8a3 3 0 0 1 3-3h4zM8.5 9.5a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5zm7 0a1.75 1.75 0 1 0 0 3.5 1.75 1.75 0 0 0 0-3.5zM9 15v1.6h6V15zM1 10h2v5H1zm20 0h2v5h-2z', eo: true },
   copy: { d: 'M8 3h11v13h-2V5H8zM5 7h10v14H5zm2 2v10h6V9z', eo: true },
+  chat: { d: 'M3 3h18v14H8l-5 4zm2 2v11.8L7.3 15H19V5zm3 3h8v2H8zm0 4h6v2H8z', eo: true },
+  download: { d: 'M11 3h2v9.2l3.6-3.6L18 10l-6 6-6-6 1.4-1.4 3.6 3.6zM4 17h2v3h12v-3h2v5H4z' },
+  folder: { d: 'M2 5h8l2 2h10v14H2zm2 4v10h16V9h-9l-2-2H4z', eo: true },
   link: { d: 'M9 7H6.5a5 5 0 0 0 0 10H9v-2H6.5a3 3 0 0 1 0-6H9zm6 0h2.5a5 5 0 0 1 0 10H15v-2h2.5a3 3 0 0 0 0-6H15zM8 11h8v2H8z' },
   plus: { d: 'M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7z' },
   minus: { d: 'M4 11h16v2H4z' },
@@ -348,7 +351,7 @@ export const hasDeadline = (deadline) => Number.isFinite(deadline) && deadline >
  */
 export function secondsLeft(deadline) {
   if (!hasDeadline(deadline)) return null;
-  return Math.max(0, Math.ceil((deadline - serverNow()) / 1000));
+  return Math.max(0, Math.ceil((deadline - matchClockNow()) / 1000));
 }
 
 /**
@@ -361,8 +364,9 @@ export function secondsLeft(deadline) {
  *   deadline: server epoch ms (live); seconds: static value (overrides deadline); total: seconds for the gauge.
  */
 export function Countdown({ deadline, seconds, total, warnAt = 10, label = 'COUNTDOWN', size = 'md', gauge = true, onExpire, class: cls }) {
+  const emergencyAt = useStore(emergencyClockAt);
   const live = seconds == null && hasDeadline(deadline);
-  useTicker(live ? 200 : 0);
+  useTicker(live && emergencyAt == null ? 200 : 0);
   const remain = seconds != null && Number.isFinite(Number(seconds)) ? Math.max(0, Math.floor(Number(seconds))) : live ? secondsLeft(deadline) : null;
   const warn = remain != null && remain <= warnAt;
   const text = remain == null ? '--' : String(Math.min(999, remain)).padStart(2, '0');
@@ -371,7 +375,7 @@ export function Countdown({ deadline, seconds, total, warnAt = 10, label = 'COUN
 
   const expiredFor = useRef(null);
   useEffect(() => {
-    if (!onExpire || !live) return;
+    if (!onExpire || !live || emergencyAt != null) return;
     if (remain === 0 && expiredFor.current !== deadline) {
       expiredFor.current = deadline;
       onExpire();

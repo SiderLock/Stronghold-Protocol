@@ -1,6 +1,6 @@
 // test/lobby-skins.test.js — room.skins end to end over WebSocket (docs/SKINS.md): the structural check (a skinId
 // that is NOT an isId, ≤ SKIN_LIMITS.entries charId keys), storage on the session and the seat, the seat handed to
-// the Match when it starts, bots refused, and — unlike room.loadout / room.diy / room.ownership — a change while a
+// the Match when it starts, bots sharing an opening roll, and — unlike room.loadout / room.diy / room.ownership — a change while a
 // match runs going straight to it rather than being stored for the next one. The room's members see each seat's map as
 // room.state seats[].skins (the waiting room's 名片干员 seat cards wear the outfit; the maintainer's decision 4 of 2026-10-21).
 //
@@ -171,17 +171,19 @@ describe('room.skins (lobby, stub match)', () => {
     assert.deepEqual(seatOf(after, guest.id).skins, { [OTHER]: SKIN }, 'the room.state at the match\'s end');
   });
 
-  test('a bot holds no skins', async () => {
+  test('bots receive one shared opening skin map while the human keeps their fixed choices', async () => {
     const host = await pool.player('Host');
     await ok(host, { t: 'room.skins', skins: { [OPERATOR]: SKIN } });
     await createRoom(host);
+    await ok(host, { t: 'room.addBot' });
     await ok(host, { t: 'room.addBot' });
     await host.waitFor('room.state', (s) => s.seats.some((x) => x && x.isBot));
     await ok(host, { t: 'room.start' });
     await host.waitFor('m.public', (p) => p.phase === 'INFO_CHECK');
     const started = RecordingStub.instances.at(-1);
     const bot = started.opts.seats.find((s) => s.isBot);
-    assert.equal(bot.skins, null, 'a bot fields every operator on its default model');
+    assert.ok(bot.skins && typeof bot.skins === 'object', 'the installation catalogue supplies the opening map');
+    for (const other of started.opts.seats.filter(s => s.isBot)) assert.deepEqual(other.skins, bot.skins);
     const human = started.opts.seats.find((s) => !s.isBot);
     assert.deepEqual(human.skins, { [OPERATOR]: SKIN });
     assert.deepEqual(cap.errors, []);

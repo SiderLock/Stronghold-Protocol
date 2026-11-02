@@ -10,7 +10,8 @@
 //     (`snap` = b.snap frame from battle.snapshot(), `ev` = b.ev frame from battle.drainEvents()) and publishes the
 //     field meta (m.field shape) into store.match.field so the game screen enters the battle,
 //   * when authoritative: reports b.progress (~1 Hz; boss fields 4 Hz with the shared-pool damage and the LP meter)
-//     and b.result (compactResult) at the end; applies b.pool (LocalBossPool.sync) and b.end (forceEnd / takeover),
+//     and b.result (compactResult) at the end, or b.yield for an oversized result; applies b.pool (LocalBossPool.sync)
+//     and b.end (forceEnd / takeover),
 //   * keeps an authoritative battle running while the tab is hidden (a 250 ms interval pump; browsers throttle it to
 //     ~1 Hz, the bounded fast-forward absorbs that); the server deadline + takeover cover anything worse.
 // A frame that fast-forwards (catch-up) passes on only the state-bearing events (keepsState: spawns, deaths, deploys,
@@ -84,17 +85,33 @@
 // (test/match/runner.test.js and test/match/runner-pending.test.js drive it under Node).
 
 import { net as appNet } from '../net.js';
-import { store as appStore } from '../store.js';
+import { store as appStore, emergencyActive } from '../store.js';
+import { fxForm, RESULT_LIMITS } from '../../../shared/protocol.js';
+import { MAX_SEATS } from '../../../shared/constants.js';
 import { contentFor as appContentFor, simContent as appSimContent, contentSet as appContentSet } from '../content.js';
-import { fxForm } from '../../../shared/protocol.js';
 import { spectateEffects } from './observe.js';
 import { recordError, setBattleSource } from '../diag.js';
-import { loadBrowserSim } from './simLoader.js';
+import { runtimeURL, runtimeCacheMode } from '../runtime.js';
+import { loadBrowserSim as loadSimModules } from './simLoader.js';
 import { data as gameData } from '../data.js';
 import { InPageSimHost, WorkerSimHost } from './simHost.js';
 import { trackCombat, combineCombat } from './metrics.js';
 import { t } from '../../../shared/i18n.js';
-export { loadBrowserSim, SIM_DATA_FILES } from './simLoader.js';
+export { SIM_DATA_FILES } from './simLoader.js';
+
+/**
+ * The shared engine loader (simLoader.js) with the fork's runtime URL cache-busting (public/js/runtime.js, D022) on
+ * every data fetch so hashed import-map entries stay on the native HTTP cache. Content-set options (`data` / `cs` /
+ * `bounds` / `scripts`) are the upstream 0.3.0 loader's.
+ */
+export async function loadBrowserSim(opts = {}) {
+  const userFetch = opts.fetchFn;
+  const fetchFn = (url, o = {}) => {
+    const u = runtimeURL(String(url));
+    return (userFetch || ((...a) => globalThis.fetch(...a)))(u, { ...o, cache: runtimeCacheMode(u) });
+  };
+  return loadSimModules({ ...opts, fetchFn });
+}
 
 const TICK = 1 / 30;
 /** Fast-forward budget per frame (ticks) when far behind. */
@@ -134,7 +151,7 @@ export function compactHeld(list) {
   return list.filter((x, i) => (x[0] === 'status' ? last.get(`s:${x[1]}:${x[2]}`) === i : x[0] === 'skill' ? last.get(`k:${x[1]}`) === i : true));
 }
 /** Request failures after which a b.result counts as never delivered (re-sent on resume / b.start). */
-export const LOST_RESULT_CODES = Object.freeze(['DISCONNECTED', 'OFFLINE', 'TIMEOUT']);
+export const LOST_RESULT_CODES = Object.freeze(['DISCONNECTED', 'OFFLINE', 'TIMEOUT', 'SERVER_EMERGENCY']);
 
 /** Ticks per frame at a speed (same cap as the server pacing: server/match/fields.js maxTicksPerInterval). */
 export const ticksPerFrameCap = (speed) => Math.max(8, Math.ceil((Number(speed) || 2) * 4));
@@ -269,6 +286,7 @@ export function createBattleRunner(deps) {
   let lastPool = null;
   /** solo pause: the runner clock's instant when m.public.paused turned true (null while running) */
   let pausedAt = null;
+  let emergencyFrozen = false;
   /** a normal field's leak count (or a battle's bond layers) changed since the last publishState() */
   let leaksDirty = false;
   const stats = { ticks: 0, stepMs: 0, maxFrameMs: 0, catchups: 0, errors: 0, battles: 0, frames: 0 };
@@ -351,7 +369,7 @@ export function createBattleRunner(deps) {
     if (!e) return loading ? { loading: true, battleId: loading.battleId, fieldId: loading.fieldId, kind: loading.kind, leaks: leakMap(), uniteLeft: uniteLeftMap(), bondLayers: layerMap() } : null;
     return {
       battleId: e.battleId, fieldId: e.fieldId, kind: e.kind, authoritative: e.authoritative, watch: e.watch,
-      done: e.done, own: e.own, members: e.members.slice(), loading: !!loading, speed: e.speed, paused: pausedAt != null,
+      done: e.done, own: e.own, members: e.members.slice(), loading: !!loading, speed: e.speed, paused: pausedAt != null, emergencyFrozen,
       leaks: leakMap(), uniteLeft: uniteLeftMap(), bondLayers: layerMap(),
     };
   }
@@ -547,8 +565,8 @@ export function createBattleRunner(deps) {
       }
     } else {
       msg.leaks = Math.min(1e6, p.leaks);
-      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 4 players)
-      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, 4));
+      // 联防: the leakers' enemies still standing (shared/protocol.js b.progress `left`, ≤ 20 players)
+      if (p.left) msg.left = Object.fromEntries(Object.entries(p.left).slice(0, MAX_SEATS));
     }
     try { net.send('b.progress', msg); } catch { /* offline */ }
   }
@@ -561,48 +579,68 @@ export function createBattleRunner(deps) {
       progress(e, true);
       e.resultSent = true;
       let result = null;
+      let wire = null;
       try {
-        result = e.host.compactResult({ bossLike: bossLike(e), battleId: e.battleId });
+        // Fork RESULT_LIMITS + b.yield: an oversized compact frame never goes on the wire — fitResult would
+        // silently undercharge a leaker, or close the socket at the 64 KB inbound limit. The server takes the
+        // field over and settles completely (docs/PLAYER_CAPACITY.md).
+        // Upstream 0.3.0: the host owns compactResult (Worker packet or in-page compact + fit).
+        if (!e.host.remote && e.battle && typeof e.battle.result === 'function') {
+          const raw = e.battle.result();
+          const tooManyEntries = Object.keys(raw.perPlayer || {}).length > RESULT_LIMITS.players
+            || Object.values(raw.perPlayer || {}).some((p) => (p?.leaked?.length || 0) > RESULT_LIMITS.leaked)
+            || (raw.unspawned?.length || 0) > RESULT_LIMITS.unspawned;
+          result = e.sim.spec.compactResult(raw);
+          wire = tooManyEntries ? null : e.sim.spec.fitResult(result, { bossLike: bossLike(e), battleId: e.battleId });
+        } else {
+          result = e.host.compactResult({ bossLike: bossLike(e), battleId: e.battleId });
+          wire = result;
+        }
       } catch (err) { console.warn('[runner] result failed', err); recordError('runner', err, 'result failed'); }
-      if (result) {
-        e.result = result;
+      e.result = wire || result;
+      e.deliveryType = wire ? 'b.result' : 'b.yield';
+      if (e.result) {
         // the view answers with the settlement voice of this battle (screens/game.js → audio.voice result*): the
         // compact result carries the leaks and the kill count the slot is picked from
-        emit('result', { fieldId: e.fieldId, battleId: e.battleId, own: !!e.own, result });
-        deliver(e);
+        emit('result', { fieldId: e.fieldId, battleId: e.battleId, own: !!e.own, result: e.result });
       }
+      deliver(e);
     }
     if (e === cur) publishState();
     else flushLeaks();
   }
 
   /**
-   * Send an entry's b.result (retried once on a timeout). `e.delivery`: 'pending' while a request is out, 'delivered'
+   * Send an entry's b.result or b.yield (retried once on a timeout). `e.delivery`: 'pending' while a request is out, 'delivered'
    * once the server answered (ok, or a refusal — final), 'undelivered' when it never got there (LOST_RESULT_CODES): kept
    * for redeliver() (session back online) and for an authoritative b.start of the finished battle.
    */
   function deliver(e) {
-    if (!net || !e.result || e.delivery === 'pending') return;
+    if (!net || (!e.result && e.deliveryType !== 'b.yield') || e.delivery === 'pending') return;
+    if (emergencyFrozen) { e.delivery = 'undelivered'; return; }
     e.delivery = 'pending';
+    const type = e.deliveryType || 'b.result';
     // a room's content set names itself in the result (DESIGN §32.6: the server refuses one without it) — the set the
-    // battle was actually simulated on (its simulation's `cs`: loadBrowserSim's), never only what the spec claims; the
-    // original content's result is what it always was
+    // battle was actually simulated on (its simulation's `cs`), never only what the spec claims; the original content's
+    // result is what it always was. Fork: an oversized frame is b.yield (battleId only) so the server settles it.
     const cs = e.sim && typeof e.sim.cs === 'string' && e.sim.cs ? e.sim.cs : null;
-    const msg = cs ? { battleId: e.battleId, result: e.result, cs } : { battleId: e.battleId, result: e.result };
+    const msg = type === 'b.yield'
+      ? { battleId: e.battleId }
+      : (cs ? { battleId: e.battleId, result: e.result, cs } : { battleId: e.battleId, result: e.result });
     const send = (tries) => {
       let req;
-      try { req = net.request('b.result', msg, { timeout: 15000 }); } catch (err) { req = Promise.reject(err); }
+      try { req = net.request(type, msg, { timeout: 15000 }); } catch (err) { req = Promise.reject(err); }
       return Promise.resolve(req).then(() => { e.delivery = 'delivered'; dropRetained(e); }, (err) => {
         const code = err && err.code;
         if (code === 'TIMEOUT' && tries > 0) return send(tries - 1);
         if (LOST_RESULT_CODES.includes(code)) {
           e.delivery = 'undelivered';
-          console.warn(`[runner] b.result not delivered (${code}) — sent again when the session resumes`);
+          console.warn(`[runner] ${type} not delivered (${code}) — sent again when the session resumes`);
         } else {
           e.delivery = 'delivered';
           dropRetained(e);
-          console.warn('[runner] b.result refused', code);
-          recordError('runner', code, 'b.result refused');
+          console.warn(`[runner] ${type} refused`, code);
+          recordError('runner', code, `${type} refused`);
         }
         return null;
       });
@@ -691,6 +729,7 @@ export function createBattleRunner(deps) {
 
   function frame() {
     rafH = null;
+    if (pausedAt != null) return;
     stats.frames++;
     const t = clock();
     for (const e of [...entries.values()]) if (running(e)) advance(e, t, e === cur);
@@ -700,7 +739,7 @@ export function createBattleRunner(deps) {
 
   function pump() {
     // hidden tab: no animation frames — keep authoritative battles on their clock (no rendering)
-    if (!hidden()) return;
+    if (!hidden() || pausedAt != null) return;
     for (const e of [...entries.values()]) if (e.authoritative && running(e)) advance(e, clock(), false);
     flushLeaks();
   }
@@ -867,7 +906,14 @@ export function createBattleRunner(deps) {
       // run there. An in-page Battle gets the meter only when 作战统计 is on (default off; a test may pin it).
       if (metricsEnabled() && !e.host.remote) e.combatMetrics = trackCombat(battle);
       e.t0 = clock() - (e.elapsed / e.speed) * 1000;
-      if (lastPool) await e.host.syncPool(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);
+      // Fork LocalBossPool.sync also carries the pool max (bossHpScale.perPlayer); a Worker host syncs over RPC.
+      if (lastPool) {
+        if (battle.sharedBoss && typeof battle.sharedBoss.sync === 'function') {
+          battle.sharedBoss.sync(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined, lastPool.max);
+        } else if (e.host?.syncPool) {
+          await e.host.syncPool(lastPool.hp, lastPool.acked ? lastPool.acked[e.fieldId] : undefined);
+        }
+      }
       if (e.endReason) await endBattle(e);
       // silent catch-up to the field's clock before it is shown (a reconnect / observing a running field) — for the view
       // asked for; a superseded authority catches up in the background (advance)
@@ -904,7 +950,14 @@ export function createBattleRunner(deps) {
     lastPool = msg;
     // a pending battle not built yet takes lastPool when it is built
     for (const e of [...entries.values(), ...pending.values()]) {
-      if (e.battle && !e.failed) e.host.syncPool(msg.hp, msg.acked ? msg.acked[e.fieldId] : undefined);
+      if (e.battle && !e.failed) {
+        // Fork LocalBossPool.sync also carries the pool max; a Worker host syncs over RPC.
+        if (e.battle.sharedBoss && typeof e.battle.sharedBoss.sync === 'function') {
+          e.battle.sharedBoss.sync(msg.hp, msg.acked ? msg.acked[e.fieldId] : undefined, msg.max);
+        } else if (e.host?.syncPool) {
+          e.host.syncPool(msg.hp, msg.acked ? msg.acked[e.fieldId] : undefined);
+        }
+      }
     }
     emit('pool', msg);
   }
@@ -999,26 +1052,30 @@ export function createBattleRunner(deps) {
   if (store && typeof store.subscribe === 'function') {
     offs.push(store.subscribe((s) => {
       const pub = s && s.match && s.match.public ? s.match.public : null;
+      // Fork: tiny global emergency frames freeze immediately; m.public preserves this across resyncs.
+      const wasEmergency = emergencyFrozen;
+      emergencyFrozen = emergencyActive(s);
       const round = Number(pub?.round) || 0;
-      // a fresh match (m.public gone), a rewound round or a return to a lobby-like phase resets the combat totals
+      // Upstream: a fresh match (m.public gone), a rewound round or a return to a lobby-like phase resets the combat totals
       const resetMetrics = (!pub && lastPhase != null) || round < lastRound
         || (pub?.phase !== lastPhase && ['LOBBY', 'INFO_CHECK', 'BAND_DRAFT', 'BATTLE_CHECK'].includes(pub?.phase));
       if (resetMetrics) forgetCombat();
       lastRound = round;
-      // solo pause (DESIGN §14): the local battle clocks follow m.public.paused
-      setPaused(!!(pub && pub.paused));
+      // solo pause (DESIGN §14) + the fork's emergency freeze: the local battle clocks follow both
+      setPaused(!!(pub && pub.paused) || emergencyFrozen);
+      if (wasEmergency && !emergencyFrozen) redeliver();
       const phase = pub ? pub.phase : null;
       if (phase === lastPhase && !resetMetrics) return;
       lastPhase = phase;
       if (!phase || ['PREP', 'ROUND_START', 'SP_DRAFT', 'RESULT', 'LOBBY', 'INFO_CHECK', 'BAND_DRAFT', 'BATTLE_CHECK'].includes(phase)) {
         if (entries.size || pending.size) clear({ keepMetrics: !resetMetrics });
       }
-      // Leaving the room drops the parked Worker even when RESULT already cleared the entries.
       if (!pub || phase === 'LOBBY') releaseParked();
-      // warm the simulation up as soon as a match runs (the first b.start then starts at once) — on the room's content set
-      // when it plays one (DESIGN §32.6), or its official version's (§35.23)
+      // Warm during preparation, leaving briefing/draft images the bandwidth first. An actual b.start or rehearsal
+      // still calls ensureSim directly, including reconnects and the room's plugin content set (DESIGN §32.6).
       const roomCs = s && s.room && s.room.content && (s.room.content.vanilla === false || typeof s.room.version === 'string') ? s.room.content.cs : null;
-      if (phase && phase !== 'LOBBY' && (!simP || simCs !== (roomCs || null))) ensureSim(roomCs).catch(() => {});
+      if (phase && !['LOBBY', 'INFO_CHECK', 'BAND_DRAFT', 'BATTLE_CHECK', 'RESULT'].includes(phase)
+        && (!simP || simCs !== (roomCs || null))) ensureSim(roomCs).catch(() => {});
     }));
   }
   if (doc && typeof doc.addEventListener === 'function') {

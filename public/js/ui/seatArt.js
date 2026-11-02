@@ -11,6 +11,7 @@
 
 import { createStore, loadPref, savePref } from '../store.js';
 import { ownerSkin } from './skins.js';
+import { enemyIconUrl, chessPortraitUrl } from './assetUrls.js';
 
 /** 名片干员: the player's own pick (a localStorage pref, sent as room.card). */
 export const CARD_PREF = 'room.card';
@@ -72,16 +73,46 @@ export function cardOperators(chessList, backups = null) {
 }
 
 /**
- * What the seat cards draw from: the pickable operators by charId and the default pool (5★/6★, by charId so every
- * client orders it the same).
- * @param {any[]} list cardOperators()
+ * The enemies a seat card can show (20-player fork): an enemy record with an icon in the current manifest, keyed by its
+ * `enemy_…` id like a chess charId so cardContext can mix both lists.
+ * @param {any[]} list enemies.json records
+ * @param {any} manifest assets manifest
+ * @returns {any[]}
  */
-export function cardContext(list, { pending = false } = {}) {
+export function cardEnemies(list, manifest) {
+  return (Array.isArray(list) ? list : []).filter(e => e && /^enemy_[A-Za-z0-9_]+$/.test(e.key || '') && enemyIconUrl(manifest, e.iconId || e.key))
+    .map(e => ({ ...e, charId: e.key, enemyKey: e.iconId || e.key }))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
+}
+
+/**
+ * The picture a seat card draws: an enemy icon for a cardEnemies() record, else the operator portrait (its outfit's
+ * picture when one is asked for, falling back to the default portrait in chessPortraitUrl).
+ * @param {any} manifest assets manifest
+ * @param {any} card cardOperators() / cardEnemies() record
+ * @param {string | null} [skin]
+ * @returns {string | null}
+ */
+export function cardPortraitUrl(manifest, card, skin = null) {
+  return card?.enemyKey ? enemyIconUrl(manifest, card.enemyKey) : chessPortraitUrl(manifest, card, { skin });
+}
+
+/**
+ * What the seat cards draw from: the pickable operators by charId and the default pool (5★/6★, by charId so every
+ * client orders it the same), plus the enemies a seat card may show (20-player fork).
+ * @param {any[]} list cardOperators()
+ * @param {any[]} [enemies] cardEnemies()
+ * @param {{ pending?: boolean }} [opts] pending: the room's 自选 pool is still loading
+ */
+export function cardContext(list, enemies = [], opts = {}) {
+  // The upstream call form passes the options second; keep it working while the 20-player picker passes its enemy
+  // list first.
+  if (enemies && !Array.isArray(enemies)) { opts = enemies; enemies = []; }
   return {
     // PR #894 follow-up: true while the room version's 自选 pool (backups) is still loading — a pick that is not in the
     // list yet waits for it instead of drawing a default pool operator for a moment
-    pending,
-    byChar: new Map(list.map((c) => [c.charId, c])),
+    pending: !!opts?.pending,
+    byChar: new Map([...list, ...enemies].map((c) => [c.charId, c])),
     pool: list.filter((c) => (c.rarity ?? 0) >= 5).sort((a, b) => (a.charId < b.charId ? -1 : a.charId > b.charId ? 1 : 0)),
   };
 }

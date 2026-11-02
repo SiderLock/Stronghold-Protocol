@@ -19,7 +19,7 @@ const CHESS = [
 // 自选编队 pool (#877): an operator outside chess.json, named and rated by backups.diy.operators
 const BACKUPS = { diy: { ownedPool: ['char_9_pool'], operators: { char_9_pool: { name: 'P', rarity: 6 } } } };
 
-function harness({ card = '', chess = CHESS, backups = BACKUPS } = {}) {
+function harness({ card = '', chess = CHESS, enemies = [], backups = BACKUPS } = {}) {
   const listeners = new Map(), pending = new Map();
   let time = 0, timerId = 0;
   const timers = {
@@ -49,10 +49,25 @@ function harness({ card = '', chess = CHESS, backups = BACKUPS } = {}) {
   const sync = installCardSync({
     net, timers, target, content,
     getChessReady: async () => list, listChess: () => list,
+    getEnemiesReady: async () => enemies, listEnemies: () => enemies,
     getBackupsReady: async () => bk, listBackups: () => bk,
   });
   return { net, timers, target, content, setList: (l) => { list = l; }, setBackups: (b) => { bk = b; }, ...sync };
 }
+
+test('card sync preserves a known enemy and resends it after reconnect', async t => {
+  const h = harness({ enemies: [{ key: 'enemy_1001_bigbo' }] });
+  t.after(h.dispose);
+  h.target.set({ [CARD_KEY]: 'enemy_1001_bigbo' });
+  await h.timers.advance(SYNC_DEBOUNCE_MS);
+  assert.deepEqual(h.net.sent.at(-1), { t: 'room.card', charId: 'enemy_1001_bigbo' });
+  h.net.emit('welcome');
+  await h.timers.advance(50);
+  assert.deepEqual(h.net.sent.at(-1), { t: 'room.card', charId: 'enemy_1001_bigbo' });
+  h.target.set({ [CARD_KEY]: 'enemy_9999_missing' });
+  await h.timers.advance(SYNC_DEBOUNCE_MS);
+  assert.equal(h.net.sent.at(-1).charId, '');
+});
 
 test('card sync: a pick goes out after the debounce; a welcome sends it again', async (t) => {
   const h = harness();

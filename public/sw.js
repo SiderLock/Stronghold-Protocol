@@ -1,5 +1,6 @@
 // Classic service worker for art a player imported on this origin.
-// Keep these three lines in sync with public/js/assetCache.js (that module documents why this file is not a module).
+// Legacy fallback only: the merged module worker (public/asset-cache-sw.js) is what main.js uses. Keep these constants
+// in sync with shared/assetCache.js; this classic file cannot import that module.
 const IMPORTED_ASSET_CACHE = 'sp-imported-assets-v1';
 const IMPORTED_ASSET_CACHE_PREFIX = 'sp-imported-assets-';
 const IMPORTED_ASSET_PATH = /^\/(?:assets|fonts|media)\/~[0-9a-f]{16}\//;

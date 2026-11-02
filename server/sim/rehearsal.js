@@ -30,9 +30,14 @@ const bossField = (battle) => !!battle && (battle.kind === 'boss' || battle.kind
 
 /** Counted leaks of `playerId` in a battle (running or finished): the settle rule's count. */
 export function rehearsalLeaks(battle, playerId) {
-  const r = battle && typeof battle.result === 'function' ? battle.result() : null;
-  const pp = r && r.perPlayer && r.perPlayer[playerId];
-  return pp ? (pp.leaked || []).filter((l) => l && l.counted !== false).length : 0;
+  // Like spec.js battleProgress, read live counters without building a provisional full result
+  // (unitStats / unitsEnd for every operator and summon) at each early-stop check.
+  const live = !battle?.finished && battle?._perPlayer?.[playerId];
+  const r = !live && typeof battle?.result === 'function' ? battle.result() : null;
+  const pp = live || r?.perPlayer?.[playerId];
+  let count = 0;
+  for (const leak of pp?.leaked || []) if (leak && leak.counted !== false) count++;
+  return count;
 }
 
 /**

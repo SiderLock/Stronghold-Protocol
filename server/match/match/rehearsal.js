@@ -192,6 +192,8 @@ export class MatchRehearsal {
   }
 
   _cancelRehearsal() {
+    for (const task of this._workerRehearsals) task.cancel();
+    this._workerRehearsals.clear();
     for (const task of [...this._rehearsalTasks.values()]) {
       // A pool task is cancelled locally even in a disposed match: no frame is involved (the host is not told
       // anything there), and its thread must stop stepping once no match is waiting for the pick.

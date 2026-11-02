@@ -53,7 +53,7 @@
 // Pure logic, no Preact / DOM: Node-testable (test/ui/stats.test.js); localStorage is touched only by loadStats /
 // saveStats / their helpers.
 
-import { PHASE } from '../../../shared/constants.js';
+import { MAX_SEATS, PHASE } from '../../../shared/constants.js';
 import { sanitizeName } from './playerName.js';
 import { DEFAULT_VERSION, versionById } from '../../../shared/versions.js';
 
@@ -137,7 +137,6 @@ const bool = (v, d = false) => (typeof v === 'boolean' ? v : d);
 const str = (v, max = 64) => (typeof v === 'string' && v.length ? v.slice(0, max) : null);
 
 // per-record bounds (an imported file is foreign data: nothing a row holds may grow without limit)
-const MAX_PLAYERS = 6; // the game seats 4
 const MAX_LINEUP = 12;
 const MAX_ITEMS = 4;
 const MAX_BONDS = 24;
@@ -258,7 +257,8 @@ export function normalizeRecord(raw) {
   // a record IS a played match — no usable players array, no record
   if (!Array.isArray(r.players)) return null;
   const quit = r.end === 'quit';
-  const players = r.players.filter(isObj).slice(0, MAX_PLAYERS).map((p) => normalizePlayerRow(p, quit));
+  // The room capacity covers players only; spectator seats must not displace a player's result row.
+  const players = r.players.filter((p) => isObj(p) && p.spectator !== true).slice(0, MAX_SEATS).map((p) => normalizePlayerRow(p, quit));
   if (!players.length) return null;
   const rec = {
     id: str(r.id),
@@ -508,7 +508,7 @@ export function buildRecord(res, ctx = {}) {
   const r = isObj(res) ? res : {};
   if (r.test === true || !Array.isArray(r.players) || !r.players.length) return null;
   const myId = str(ctx.myId);
-  const selfRow = r.players.find((p) => isObj(p) && p.playerId === myId);
+  const selfRow = r.players.find((p) => isObj(p) && p.spectator !== true && p.playerId === myId);
   if (!selfRow) return null; // spectator / observer: not my match
   return normalizeRecord({
     v: STATS_VERSION,

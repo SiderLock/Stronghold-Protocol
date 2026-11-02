@@ -510,7 +510,7 @@ test('fitResult: an oversized b.result is trimmed under the frame budget without
   const big = {
     reason: 'timeout', time: 60, killed: 10, total: 400, errors: 0,
     perPlayer: { p: perPlayer({ killed: 10, total: 400, perfect: false, coins: 3, layerGains: { yanShip: 4 },
-      leaked: Array.from({ length: 150 }, () => ({ enemyKey: plainKey, mods, lpr: 1, sourcePlayerId: 'p', tag: null, counted: true, spawned: true })),
+      leaked: Array.from({ length: 60 }, () => ({ enemyKey: plainKey, mods, lpr: 1, sourcePlayerId: 'p', tag: null, counted: true, spawned: true })),
       unitStats: Array.from({ length: 160 }, (_, i) => ({ uid: i + 1, defId: 'char_x', kind: 'op', dmg: 123456, kills: 3, heal: 0, taken: 999, attacks: 77 })) }) },
   };
   const size = (r) => JSON.stringify({ t: 'b.result', battleId: 'b', result: r, rid: 2147483647 }).length;
@@ -519,14 +519,24 @@ test('fitResult: an oversized b.result is trimmed under the frame budget without
   assert.ok(size(fit) <= RESULT_FRAME_BUDGET, `trimmed (${size(fit)})`);
   assert.ok(isBattleResult(fit));
   const p = fit.perPlayer.p;
-  assert.equal(p.leaked.length, 150, 'every leak kept (LP)');
+  assert.equal(p.leaked.length, 60, 'every leak kept (LP)');
+  assert.deepEqual(p.leaked[0].mods, mods, 'a repeated enemy keeps the exact mods needed by the next wave');
   assert.deepEqual([p.coins, p.layerGains, p.perfect, p.killed, p.total], [3, { yanShip: 4 }, false, 10, 400]);
   assert.equal(big.perPlayer.p.unitStats.length, 160, 'the input is not mutated');
+  const tooManyMods = { ...big, perPlayer: { p: { ...big.perPlayer.p,
+    leaked: Array.from({ length: 150 }, () => big.perPlayer.p.leaked[0]) } } };
+  assert.equal(fitResult(tooManyMods, { battleId: 'b' }), null,
+    'normal combat yields rather than dropping mods and changing duplicate enemy identity');
   const small = { ...big, perPlayer: { p: perPlayer() } };
   assert.equal(fitResult(small), small, 'a normal-size result passes unchanged');
   const longLeak = { ...big.perPlayer.p.leaked[0], sourcePlayerId: 'q'.repeat(60), tag: 'x'.repeat(16) };
   const boss = fitResult({ ...big, perPlayer: { p: { ...big.perPlayer.p, leaked: Array.from({ length: 400 }, () => longLeak) } } }, { bossLike: true });
   assert.ok(size(boss) <= RESULT_FRAME_BUDGET && boss.perPlayer.p.leaked.length === 0, 'boss leaks go (they cost LP through b.progress)');
+  const massiveUnite = { ...big, perPlayer: {
+    p: { ...big.perPlayer.p, leaked: Array.from({ length: 400 }, () => longLeak) },
+    q: { ...big.perPlayer.p, leaked: Array.from({ length: 400 }, () => longLeak) },
+  }, unspawned: Array.from({ length: 400 }, () => ({ enemyKey: plainKey, sourcePlayerId: 'q', tag: 'escaped_multi', time: 60 })) };
+  assert.equal(fitResult(massiveUnite, { battleId: 'u' }), null, 'a huge 联防 result yields to the server instead of truncating survivors or closing the socket');
 });
 
 // ---- browser loader (runs last: it injects the data into this process' sim like a page does) ------------------------

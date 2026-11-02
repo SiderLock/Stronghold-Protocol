@@ -20,7 +20,7 @@ import { ROOT } from './config.js';
  * this fingerprint for the process lifetime: files changing on disk do not advertise a new build before restart.
  * The rest of `server/` and downloaded media are not included.
  */
-export const BUILD_INPUTS = Object.freeze(['public/index.html', 'public/js', 'public/css', 'server/sim', 'shared', 'data']);
+export const BUILD_INPUTS = Object.freeze(['public/index.html', 'public/asset-cache-sw.js', 'public/js', 'public/css', 'public/vendor', 'server/sim', 'shared', 'data']);
 
 /** Names the static server never serves: dot files (`.DS_Store`, `.main.js.swp`) and editor backups (`main.js~`). */
 const isIgnoredBuildName = (name) => name.startsWith('.') || name.endsWith('~');

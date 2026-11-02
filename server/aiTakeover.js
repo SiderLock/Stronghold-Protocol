@@ -2,6 +2,7 @@
 import { ERR, PROTOCOL_VERSION } from '../shared/constants.js';
 import { DEFAULT_VERSION } from '../shared/versions.js';
 import { resetStateDelta, stateDeltaVersion } from './stateTransport.js';
+import { wireVersionOf } from './net.js';
 const fail = detail => ({ error: ERR.BAD_TARGET, detail });
 const pending = new WeakMap();
 export function resetAiTakeover(room) {
@@ -36,7 +37,7 @@ export function transferAiSeat(lobby, room, applicantId, botId) {
   ps.aiTakeoverRound = m.round;
   session.aiTakeoverFrom = applicantId; m.markPublic(); ps.dirty();
   resetStateDelta(conn.ws);
-  lobby.network.onHelloMsg(conn, { t: 'hello', version: PROTOCOL_VERSION, delta: stateDeltaVersion(conn.ws), name: session.name, token: session.token }, lobby.now());
+  lobby.network.onHelloMsg(conn, { t: 'hello', version: PROTOCOL_VERSION, wire: wireVersionOf(conn.ws), delta: stateDeltaVersion(conn.ws), name: session.name, token: session.token }, lobby.now());
   lobby.broadcastState(room); return { ok: true };
 }
 // [ASSUMED] Any electorate change cancels rather than lowering the approval threshold.

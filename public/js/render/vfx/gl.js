@@ -17,6 +17,8 @@ import { QUAD_STRIDE, MESH_STRIDE, STRIP_STRIDE } from './geom.js';
 import { BLEND, UNIFORM_DEFAULTS } from './materials.js';
 
 const DEFAULT_TEX = { white: [255, 255, 255, 255], black: [0, 0, 0, 255], gray: [128, 128, 128, 255], grey: [128, 128, 128, 255], bump: [128, 128, 255, 255], clear: [0, 0, 0, 0] };
+export const FX_TEXTURE_BYTES = 96 * 1024 * 1024;
+export const FX_TEXTURE_GRACE_MS = 15000;
 
 export class FxGL {
   /**
@@ -29,6 +31,8 @@ export class FxGL {
     this.programs = new Map();     // `${kind}|${mat.key}` → program record
     this.textures = new Map();     // `${key}|${half}` → { tex, bytes }
     this.meshes = new Map();       // mesh key → { vao, vbo, ibo, sub: [{ first, count }], type }
+    this.frameTime = performance.now();
+    this.pruneAt = 0;
     this.defaults = {};
     this.stats = { draws: 0, programs: 0, textures: 0, texBytes: 0, quads: 0, meshes: 0, tris: 0 };
     this.hasDepth = !!(gl.getContextAttributes && gl.getContextAttributes()?.depth);
@@ -157,11 +161,12 @@ export class FxGL {
   texture(key, half) {
     const id = `${key}|${half ? 1 : 0}`;
     const t = this.textures.get(id);
-    if (t) return t.tex;
+    if (t) { t.used = this.frameTime; return t.tex; }
     const src = this.lib.texture(key, half);
     if (!src || !src.image) return null;
     const gl = this.gl, img = src.image, info = src.info || {};
     const tex = gl.createTexture();
+    this.textureEpoch = (this.textureEpoch || 0) + 1;
     gl.bindTexture(gl.TEXTURE_2D, tex);
     // Unity samples v = 0 at the image's bottom row (an ImageBitmap arrives flipped already: WebGL ignores FLIP_Y for
     // bitmaps); textures are straight alpha (no premultiplication on upload)
@@ -180,12 +185,32 @@ export class FxGL {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, point ? gl.NEAREST : mips ? (info.filter === 'trilinear' ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR_MIPMAP_NEAREST) : gl.LINEAR);
     gl.bindTexture(gl.TEXTURE_2D, null);
     const bytes = (img.width || 1) * (img.height || 1) * 4 * (mips ? 1.34 : 1);
-    this.textures.set(id, { tex, bytes });
+    this.textures.set(id, { tex, bytes, used: this.frameTime });
     // the decoded image is on the GPU now: the library lets it go (it is decoded again only after a context loss)
     this.lib.release?.(key, half);
     this.stats.textures++;
     this.stats.texBytes += bytes;
     return tex;
+  }
+
+  /** Reclaim old, unused textures under pressure; recently drawn / prewarmed effects stay resident. */
+  beginFrame(now) {
+    // A background tab's clock jump is not visible idle time: do not evict the whole current battle on return.
+    const gap = now - this.frameTime;
+    if (this.frameTime > 0 && gap > 1000) for (const t of this.textures.values()) t.used += gap;
+    this.frameTime = now;
+    if (now < this.pruneAt) return;
+    this.pruneAt = now + 1000;
+    if (this.stats.texBytes <= FX_TEXTURE_BYTES) return;
+    const idle = [...this.textures].filter(([, t]) => now - t.used > FX_TEXTURE_GRACE_MS).sort((a, b) => a[1].used - b[1].used);
+    for (const [id, t] of idle) {
+      if (this.stats.texBytes <= FX_TEXTURE_BYTES) break;
+      this.gl.deleteTexture(t.tex);
+      this.textures.delete(id);
+      this.lib.forgetTexture?.(id);
+      this.stats.texBytes -= t.bytes;
+      this.stats.textures--;
+    }
   }
 
   /** GPU copy of a mesh (null while it loads). */
@@ -295,6 +320,15 @@ export class FxGL {
     const time = frame.time;
     const tv = [time / 20, time, time * 2, time * 3];
     let lastMat = null, lastOv = null;
+    // Local to this pass: Pixi owns the same context between passes. A lazy upload also invalidates the bindings.
+    const boundTextures = [];
+    let textureEpoch = this.textureEpoch || 0, activeUnit = -1;
+    const bind = (e) => {
+      if (boundTextures[e.unit] === e.glTex) return;
+      if (activeUnit !== e.unit) { gl.activeTexture(gl.TEXTURE0 + e.unit); activeUnit = e.unit; }
+      gl.bindTexture(gl.TEXTURE_2D, e.glTex);
+      boundTextures[e.unit] = e.glTex;
+    };
     for (const it of items) {
       const mat = it.mat;
       const kind = it.kind;
@@ -306,6 +340,9 @@ export class FxGL {
       for (const e of plan.tex) {
         e.glTex = e.key ? this.texture(e.key, frame.half) : e.fallback;
         if (!e.glTex) { ready = false; break; }
+      }
+      if (textureEpoch !== (this.textureEpoch || 0)) {
+        boundTextures.length = 0; activeUnit = -1; textureEpoch = this.textureEpoch || 0;
       }
       if (!ready) continue;
       let mesh = null;
@@ -326,7 +363,7 @@ export class FxGL {
       // another frame's upload may have rebound a unit)
       const ov = it.ov;
       if (mat !== lastMat) {
-        for (const e of plan.tex) { gl.activeTexture(gl.TEXTURE0 + e.unit); gl.bindTexture(gl.TEXTURE_2D, e.glTex); gl.uniform1i(e.loc, e.unit); }
+        for (const e of plan.tex) { bind(e); gl.uniform1i(e.loc, e.unit); }
         for (const e of plan.f) {
           const o = ov ? ov[e.name] : undefined;
           gl.uniform1f(e.loc, typeof o === 'number' ? o : e.value);
@@ -338,7 +375,7 @@ export class FxGL {
         }
         lastMat = mat; lastOv = ov;
       } else {
-        for (const e of plan.tex) { gl.activeTexture(gl.TEXTURE0 + e.unit); gl.bindTexture(gl.TEXTURE_2D, e.glTex); }
+        for (const e of plan.tex) bind(e);
         if (ov !== lastOv) {
           for (const e of plan.f) {
             if (!(ov && e.name in ov) && !(lastOv && e.name in lastOv)) continue;

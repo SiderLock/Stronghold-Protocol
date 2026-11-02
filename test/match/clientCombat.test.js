@@ -123,6 +123,28 @@ test('COMBAT: humans get their own spec (authoritative), bots are simulated by t
   m.dispose();
 });
 
+test('an oversized client result can yield its field for accurate server settlement without a rejected report', () => {
+  const h = makeMatch({ mode: 'coop', humans: 8, seed: 9420, fake: true, clientCombat: true, instant: false,
+    script: () => ({ duration: 3 }) }).start().autoHumans();
+  const m = h.m;
+  assert.ok(h.drive(() => m.phase === PHASE.COMBAT && m.round === 1));
+  const field = fields(h).find((f) => f.fieldId === 'n:p_0');
+  assert.equal(field.mode, 'client');
+  const report = { t: 'b.yield', battleId: field.battleId };
+  assert.equal(validateC2S(report), null);
+  assert.deepEqual(m.handle('p_1', report), { ok: true }, 'another player cannot hand over this field');
+  assert.equal(field.mode, 'client');
+  assert.deepEqual(m.handle('p_0', report), { ok: true });
+  assert.equal(field.mode, 'server');
+  assert.equal(field.resultSource, 'server');
+  assert.equal(m.verifyStats.rejected, 0, 'a voluntary handoff is not treated as a forged result');
+  assert.equal(h.lastTo('p_0', 'b.end').reason, 'takeover');
+  assert.deepEqual(m.handle('p_0', report), { ok: true }, 'duplicate reports are harmless');
+  assert.ok(h.run(() => m.phase === PHASE.SETTLE || h.ended != null));
+  checkInvariants(m);
+  m.dispose();
+});
+
 test('validation: implausible client results are rejected and replaced by the server\'s simulation', () => {
   const cases = [
     ['coins beyond the bounties', (r) => { for (const p of Object.values(r.perPlayer)) p.coins = 999; return r; }],
@@ -404,6 +426,26 @@ test('LocalBossPool (client) and CreditPool (server takeover) keep the shared po
   assert.equal(cp.damage('a', 150), 50);
   assert.equal(pool.hp, 650);
   assert.equal(cp.hp, 650);
+});
+
+test('leaving during a client-run boss fight updates the browser replica maximum', () => {
+  const h = makeMatch({ mode: 'coop', humans: 8, seed: 9422, fake: true, clientCombat: true, instant: false,
+    script: (b) => b.kind === 'boss' ? { bossDps: 0 } : { duration: 2 },
+  }).start().autoHumans();
+  const m = h.m;
+  assert.ok(h.drive(() => m.phase === PHASE.FINAL_ASSAULT));
+  h.sched.advance(0); // deliver b.start to the simulated browsers
+  const field = fields(h)[0];
+  const client = h.clients.get(field.authority);
+  const replica = client.battles.get(field.battleId).battle.sharedBoss;
+  const before = m.bossPool.maxHp;
+  assert.equal(replica.maxHp, before);
+  m.onLeave('p_7');
+  h.sched.advance(250); // b.pool is throttled to 4 Hz
+  assert.equal(m.bossPool.maxHp, Math.round(before * 7 / 8));
+  assert.equal(replica.maxHp, m.bossPool.maxHp);
+  assert.ok(Math.abs(replica.hp - m.bossPool.hp) < 1e-6);
+  m.dispose();
 });
 
 test('full co-op match with client-side combat and the real sim reaches RESULT with zero errors (humans on AI 托管)', () => {

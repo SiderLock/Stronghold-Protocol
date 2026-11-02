@@ -159,7 +159,7 @@ K.preparation_start_gain_chess_from_round = (ps) => ({
     for (const p of ps) {
       const id = p.chess ?? p.chess_id;
       if (ctx.round !== int(p.round, -1) || !id) continue;
-      for (let k = 0; k < timesOf(p.count, 1); k++) grant(ctx, id, { requirePool: false, source: 'band' });
+      for (let k = 0; k < timesOf(p.count, 1); k++) grant(ctx, id, { requirePool: false, source: 'band', noPool: ctx.gd.isTraitFixedItem(id) });
     }
   },
 });

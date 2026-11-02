@@ -204,6 +204,12 @@ const LAYER_TRAIT_RE = /BOND|LAYER/;
 const ECON_TRAIT_RE = /GOLD|REFRESH|COIN/;
 const DEFAULT_MELEE_RANGE = [[0, 0], [0, 1]];
 
+/** Copy competition belongs to one fixed opening pool; departed/eliminated seats never reserve a bond. */
+function poolMates(m, ps) {
+  const pool = typeof m.poolFor === 'function' ? m.poolFor(ps) : null;
+  return m.alivePlayers().filter(p => p !== ps && !p.left && (pool == null || m.poolFor(p) === pool));
+}
+
 /**
  * Band pick among the strategies the mode offers (gd.bandIds): weighted by starting LP (sturdier strategies are
  * preferred) — (LP − 18)², cubed on 终极 (§37.34 [ASSUMED]: most 终极 solo bots that fell did so in rounds 11–13 with
@@ -213,7 +219,7 @@ const DEFAULT_MELEE_RANGE = [[0, 0], [0, 1]];
  * the cube puts one in 94 % of games instead of 69 %. Alone, a band that withholds the first rounds' funds (老鲤 "资金暂存": no operator in R1–R2, every enemy
  * leaks) is avoided — only 联防 teammates cover that. A band whose mechanic rides on a bond the mode switches off
  * (gd.bandBondIds ∩ gd.modeInactiveBonds — 标准: 潘格尼尼 <拉特兰>, 克莱门莎 <阿戈尔>, 玛恩纳 <卡西米尔>) weighs 0, never taken
- * (DESIGN §21.26). [ASSUMED] A living teammate's opening strategy soft-reserves those bonds before anyone is deployed:
+ * (DESIGN §21.26). [ASSUMED] A living pool-group teammate's opening strategy soft-reserves those bonds before deployment:
  * the weight stays positive, at a quarter of the unreserved weight, so the strategy can still be drawn, and the
  * reservation ends when that teammate is eliminated (alivePlayers). #121 [ASSUMED]: a band whose mechanic also changes
  * the teammates' enemies (鸭爵 「神秘顾客」: from R5 some enemies of the player AND the teammates become 鸭爵 / 高普尼克 /
@@ -312,7 +318,7 @@ export function botPickBand(m, ps) {
   if (!ids.length) return gd.defaultBandId;
   const lateFunds = (id) => /暂存/.test(String(gd.band(id)?.desc || ''));
   const burdensMates = (id) => /队友遭遇/.test(String(gd.band(id)?.desc || ''));
-  const mates = ps && typeof m.alivePlayers === 'function' ? m.alivePlayers().filter((p) => p !== ps) : [];
+  const mates = ps && typeof m.alivePlayers === 'function' ? poolMates(m, ps) : [];
   const reserved = new Set(mates.flatMap((p) => gd.bandBondIds(p.bandId)));
   const inactive = (id) => gd.bandBondIds(id).some((b) => gd.modeInactiveBonds.has(b));
   const medic = teamMedicBoost(m, ps, ids);
@@ -501,7 +507,7 @@ function bondPoolStats(m, ps, owned) {
   const reach = new Map();
   const supply = new Map();
   const maxTier = Math.min(6, ps.shop.level + 1);
-  for (const [id, e] of m.pool.entries) {
+  for (const [id, e] of ps.pool.entries) {
     if (!(e.left > 0)) continue;
     const c = m.gd.chess(id);
     if (!c || !Array.isArray(c.bonds)) continue;
@@ -530,17 +536,16 @@ function mainCoreBond(m, p) {
 }
 
 /**
- * #121: the bonds the living teammates need, as every player sees them — each one's opening strategy bonds and its main
- * core bond (mainCoreBond, its public bond strip) — minus the bonds the own opening strategy needs and the bonds the
- * mode switches off. Humans and bots alike; an eliminated teammate needs nothing; empty alone.
+ * #121: the bonds the living same-pool teammates need, as every player sees them — each one's opening strategy bonds and
+ * its main core bond (mainCoreBond, its public bond strip) — minus the bonds the own opening strategy needs and the bonds
+ * the mode switches off. Humans and bots alike; an eliminated or departed teammate needs nothing; empty alone.
  */
 function teammateBonds(m, ps) {
   const out = new Set();
   if (!ps || typeof m.alivePlayers !== 'function') return out;
   const gd = ps.gd || m.gd;
   const own = new Set(gd.bandBondIds(ps.bandId));
-  for (const p of m.alivePlayers()) {
-    if (p === ps) continue;
+  for (const p of poolMates(m, ps)) {
     for (const id of [...gd.bandBondIds(p.bandId), mainCoreBond(m, p)]) {
       if (id && !own.has(id) && !gd.modeInactiveBonds.has(id)) out.add(id);
     }
@@ -562,8 +567,8 @@ function bandMain(m, ps) {
 /**
  * The bonds the bot builds around (cached per round, owned set and public teammate claims): `focus` = the core bond with the best
  * owned members × 10 + reachable members (bondPoolStats, ≤ 4) + layers already banked (≤ 6) + commitment (16 with
- * ≥ 3 members, else 6). [ASSUMED] Subtract 30 for a living teammate's public main or opening strategy bond, except
- * bonds required by the own opening strategy (teammateBonds). Claims end on elimination and invalidate the cache
+ * ≥ 3 members, else 6). [ASSUMED] Subtract 30 for a living same-pool teammate's public main or opening strategy bond,
+ * except bonds required by the own opening strategy (teammateBonds). Claims end on elimination and invalidate the cache
  * when they change within a prep. `second` = the other live
  * bond (core or add-on) with the most owned members whose next threshold is within reach (≥ 1 owned member).
  * `ps._botFocusId` keeps the focus across rounds. §35.62: an accepted advisor plan's primary core bond (its highest
@@ -1099,11 +1104,11 @@ function buyScore(m, ps, id, ctx) {
   // the player's own 自选 piece (a slotted slot: its composed record carries diyFor) — AI 托管 of a human with picks
   if (c.diyFor) s += DIY_PIECE_BONUS;
   // [ASSUMED] A soft cooperation weight, not an official rule or a reserved card: leave shared chess to the living
-  // teammates whose opening strategy or main core bond needs its faction (teammateBonds) — 18 for tiers 5–6 (PR #407),
-  // 12 for tiers 1–4 (#121: a 歌利亚 bot hoarded a 潘格尼尼 player's low-tier <拉特兰>) — unless the own opening strategy
-  // needs that bond too. Humans and bots count equally; one penalty however many teammates; an own merge (MERGE_HIT)
-  // or a missing blocker / healer still outweighs it.
-  if (!c.isGolden && !c.diyFor && m.pool.has(base) && c.bonds.some((b) => ctx.mateBonds?.has(b))) s -= c.tier >= 5 ? 18 : 12;
+  // same-pool teammates whose opening strategy or main core bond needs its faction (teammateBonds) — 18 for tiers 5–6
+  // (PR #407), 12 for tiers 1–4 (#121: a 歌利亚 bot hoarded a 潘格尼尼 player's low-tier <拉特兰>) — unless the own
+  // opening strategy needs that bond too. Humans and bots count equally; one penalty however many teammates; an own
+  // merge (MERGE_HIT) or a missing blocker / healer still outweighs it.
+  if (!c.isGolden && !c.diyFor && ps.pool.has(base) && c.bonds.some((b) => ctx.mateBonds?.has(b))) s -= c.tier >= 5 ? 18 : 12;
   return s + (ctx.policy?.buyBonus(m, ps, id, ctx) || 0);
 }
 
@@ -1905,7 +1910,7 @@ export function* createRehearsalSteps(m, ps, chosen, plans, { delegate = false, 
   // A rehearsal that may leave this thread — the host's browser (delegate) or the server's own pool (pooled) — builds
   // nothing here: those paths simulate the inputs and the takeover builds them later. Only a run that stays inline
   // builds each candidate Battle in this generator step, at the point 0.3.0 built it.
-  const remote = delegate || pooled;
+  const remote = delegate || pooled || !!m.rehearsalPool;
   for (const plan of cands) {
     try {
       const opts = boss ? bossCandidateOpts(m, ps, byUid, plan) : candidateOpts(m, ps, byUid, plan);
@@ -1995,12 +2000,12 @@ function copyCounts(m, ps) {
 function refreshValue(m, ps, ctx) {
   const L = ps.shop.level;
   let total = 0;
-  for (const e of m.pool.entries.values()) if (e.left > 0 && e.tier <= L) total += e.left;
+  for (const e of ps.pool.entries.values()) if (e.left > 0 && e.tier <= L) total += e.left;
   if (!(total > 0)) return 0;
   const slots = m.gd.shopSlots(L).chess;
   let v = 0;
   for (const [b, k] of ctx.copies) {
-    const e = m.pool.entries.get(b);
+    const e = ps.pool.entries.get(b);
     if (!e || e.left <= 0 || e.tier > L) continue;
     const pShop = 1 - (1 - e.left / total) ** slots;
     // §37.37: the third copy of an engine pair doubles the engine's layers
@@ -2012,7 +2017,7 @@ function refreshValue(m, ps, ctx) {
   if (coreGap(m, ctx.focus, ctx.owned, ps)) {
     let miss = 1;
     let bondLeft = 0, missingLeft = 0;
-    for (const [id, e] of m.pool.entries) {
+    for (const [id, e] of ps.pool.entries) {
       if (!(e.left > 0) || e.tier > L) continue;
       const c = m.gd.chess(id);
       if (!c || !(c.bonds || []).includes(ctx.focus)) continue;
@@ -2104,7 +2109,7 @@ export function sellJunk(m, ps, policy = null) {
     const base = m.gd.baseIdOf(p.id);
     const copies = c.isGolden ? 0 : ctx.copies.get(base) || 0;
     // a pair whose third copy can still come (the merge's reward is worth it for any pair)
-    const pairLive = copies + 1 >= mergeNeed(m, base) && (m.pool.left(base) > 0 || !m.pool.has(base));
+    const pairLive = copies + 1 >= mergeNeed(m, base) && (ps.pool.left(base) > 0 || !ps.pool.has(base));
     const coreReady = (c.bonds || []).some((b) => m.gd.bond(b)?.isCore && (ctx.owned.counts.get(b) || 0) >= CORE_KEEP_OWNED);
     const useful = c.isGolden || pairLive || ctx.keep.has(base) || coreReady || (copies >= 2 && m.round <= 6);
     (useful ? keep : junk).push({ p, v: pieceValue(m, ps, p, ctx) + (pairLive ? 150 : useful ? 100 : 0) });
@@ -2582,7 +2587,7 @@ export function* advisorSpendSteps(m, ps) {
       && advisorFreezeTarget(m, ps, s.id));
     if (preserve) maybeFreeze(m, ps);
     // Official draws require remaining eligible stock. Use effective prices, including free/discounted operators.
-    const eligible = [...m.pool.entries].filter(([, e]) => e.left > 0 && e.tier <= ps.shop.level).map(([id]) => id);
+    const eligible = [...ps.pool.entries].filter(([, e]) => e.left > 0 && e.tier <= ps.shop.level).map(([id]) => id);
     eligible.push(...(ps.diyRollEntries() || []).map(([id]) => id));
     const minPrice = Math.min(...eligible.map(id => ps.priceOf({ kind: 'chess', id, basePrice: gd.chessPrice(id) })), Infinity);
     const refreshPrice = ps.shop.freeRefreshes > 0 ? 0 : gd.refreshPrice;
@@ -2595,7 +2600,7 @@ export function* advisorSpendSteps(m, ps) {
     // [ASSUMED] Bank only spare, non-merge singles with available shared stock; cheapest first.
     const bank = offers.filter(({ s }) => ps.priceOf(s) <= ps.funds && gd.sellPrice(s.id) > 0
       && !ps.allChess().some(p => gd.baseIdOf(p.id) === gd.baseIdOf(s.id))
-      && (!m.pool.has(s.id) || m.pool.left(s.id) > 0))
+      && (!ps.pool.has(s.id) || ps.pool.left(s.id) > 0))
       .sort((a, b) => ps.priceOf(a.s) - ps.priceOf(b.s) || a.slot - b.slot)[0];
     if (countFree(ps.hand) <= 1 || !bank) return;
     const before = new Set(ps.allChess().map(p => p.uid));
@@ -3626,7 +3631,7 @@ export function itemTarget(m, ps, item, ctx = context(m, ps), usePlan = true) {
     case 'use_equip_reward_char_chess': {
       // with 2 copies owned and none left in the pool the item gives nothing (GitHub #207): such a pair is no carrier
       const counts = copyCounts(m, ps);
-      const live = (base) => { const pool = typeof ps.poolOf === 'function' ? ps.poolOf(base) : m.pool; return pool.left(base) > 0 || !pool.has(base); };
+      const live = (base) => { const pool = typeof ps.poolOf === 'function' ? ps.poolOf(base) : ps.pool; return pool.left(base) > 0 || !pool.has(base); };
       const dead = (p) => (counts.get(gd.baseIdOf(p.id)) || 0) >= 2 && !live(gd.baseIdOf(p.id));
       const pair = owned.filter((p) => normal(p) && !dead(p) && (counts.get(gd.baseIdOf(p.id)) || 0) + 1 >= mergeNeed(m, gd.baseIdOf(p.id)))
         .sort((a, b) => (chessRec(m, b.id, ps)?.tier || 0) - (chessRec(m, a.id, ps)?.tier || 0) || a.uid - b.uid);

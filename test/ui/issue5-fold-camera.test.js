@@ -143,6 +143,17 @@ describe('hudBands: the folded shop\'s band', () => {
     // clamped like the bar's band
     withDom({ rem, corner: [{ top: 10, height: 34 }] }, () => assert.equal(hudBands('prep', { width: 640, height: 200 }, { shop: false }).bottom, 80));
   });
+
+  test('a taller text-chat corner clears the bench with the shop open, and folding can reduce that band', () => {
+    const size = { width: 756, height: 366 };
+    const open = withDom({ rem: 40, coarse: true, corner: [{ top: 235, height: 44 }] },
+      () => hudBands('prep', size, { shop: true }));
+    const folded = withDom({ rem: 40, coarse: true, corner: [{ top: 273, height: 44 }] },
+      () => hudBands('prep', size, { shop: false }));
+    assert.equal(open.bottom, 131, 'all tap targets, including chat above the shop bar, remain clear');
+    assert.equal(folded.bottom, 93, 'folded narrow corner restores one bottom row beneath chat');
+    assert.ok(folded.bottom < open.bottom, 'folding reserves less height so the board can grow');
+  });
 });
 
 // ---- the camera itself (render/projection.js presetCamera with the folded band) ---------------------------------------

@@ -234,7 +234,7 @@ test('限伤: every HP-damage kind — 元素伤害 and element bursts, DoT tick
   b.addBuff(leader, { key: 'test:dotSmall', duration: 3.01, interval: 1, onTick: () => b.dealDamage(op, leader, { amount: 1000, type: 'true', canDodge: false }) });
   h.run(3.2);
   assert.equal(p0 - hp(), 3000, 'only the small ticks landed');
-  // a loss passed on to the leader (parts' 传递, a drone's death): one hit too
+  // ordinary HP loss passed on to the leader (parts' 传递): one hit too
   p0 = hp();
   assert.equal(b.loseHp(leader, 3e5, { source: op }), 0);
   assert.equal(hp(), p0);
@@ -375,45 +375,59 @@ test('限伤 vs the real leader defences [ASSUMED order]: 阿利斯泰尔\'s 500
   assert.equal(pool10.hp, before10);
 });
 
-test('限伤 vs 【死亡集群】 (real kit): a drone killed by an operator costs the leader 2 % of the pool max — a share, no hit: it lands past the 300000 line too (DESIGN §25.13.4)', () => {
+test('【死亡集群】 bypasses the attack limit: both real kits remove and credit 2 % of expanded server/client pools', () => {
   // boss_1 / boss_8 skill 2: bb hp_ratio 0.02; the leader's max HP is the shared pool's max (Battle syncs it), so the
-  // loss is 0.02 × pool max. With the pool per player alive (the owner's decision of 2026-10-06, PR #209) boss_8 ABYSS
-  // reaches 21.6M / 28.8M at 3 / 4 players: 432000 / 576000 per drone, past the line where ceil(0.02 × max) ≥ 300000 —
-  // until 0.2.0 the link was cancelled there like a hit; it is a share of the pool and lands (Battle.loseHp noHitLimit
-  // [ASSUMED], research 11 §6).
+  // Capacity adaptation exempts this scripted loss even at the old ceil boundary and the 20-player hidden pool.
   assert.equal(gd.enemy('enemy_9013_acstmk').skills.find((s) => s.prefabKey === '2').bb.hp_ratio, 0.02);
   assert.equal(gd.enemy('enemy_9013_acstmk_2').skills.find((s) => s.prefabKey === '2').bb.hp_ratio, 0.02);
+  const abyss20Pool = new GameData(DATA, 'mode_multi_abyss').bossPoolHp('boss_8', 20);
+  assert.equal(abyss20Pool, 144000000, '20-player ABYSS hidden pool follows bloodPoint × alive');
+  assert.equal(abyss20Pool * 0.02, 2880000, 'each drone removes 2 % of that pool');
   const withOp = [{ ...PAIR[0], units: [{ uid: 1, chessId: 'chess_char_1_01_a', row: 10, col: 2 }] }, PAIR[1]];
-  const run = (poolMax) => {
-    const pool = new SharedBossPool(poolMax);
-    const { b } = realBossField('boss_1', false, pool, withOp);
+  const run = (bossId, poolMax, Pool) => {
+    const pool = new Pool(poolMax);
+    const { b } = realBossField(bossId, bossId === 'boss_8', pool, withOp);
     const L = b.enemies.find((e) => e.alive && e.isBoss);
-    const key = gd.enemy(L.defId).skills.find((s) => s.prefabKey === '2').bbStr.enemy_key; // enemy_1005_yokai
+    const skill = gd.enemy(L.defId).skills.find((s) => s.prefabKey === '2');
+    const key = skill.bbStr.enemy_key; // enemy_1005_yokai
     const caps = [];
     const fx0 = b.fx.bind(b);
     b.fx = (k, p) => { if (k === 'hitCap') caps.push([p.id, p.n]); return fx0(k, p); };
-    for (let i = 0; i < 30 * 5 && !b.enemies.some((e) => e.alive && e.defId === key); i++) b.step();
-    const drone = b.enemies.find((e) => e.alive && e.defId === key);
-    assert.ok(drone, 'the kit summoned its drones (skill 2, initCooldown 0)');
     const op = b.units.find((u) => u.alive && u.side === 'ally');
     assert.ok(op, 'an operator to kill the drone');
+    b.addBuff(op, { key: 'test:droneKiller', flags: { invulnerable: true } });
+    for (let i = 0; i < 30 * (skill.initCooldown + 5) && !b.enemies.some((e) => e.alive && e.defId === key); i++) b.step();
+    const drone = b.enemies.find((e) => e.alive && e.defId === key);
+    assert.ok(drone, 'the kit summoned its drones after the skill initial cooldown');
+    assert.ok(op.alive, 'the killer survives the hidden kit initial cooldown');
     assert.equal(L.s.maxHp, poolMax, 'the leader\'s max HP is the pool max');
     const before = pool.hp;
+    const beforeCredit = b._pp(op.ownerId).bossDamage;
+    const poolCredit = () => pool.byPlayer instanceof Map ? (pool.byPlayer.get(op.ownerId) || 0) : (pool.byPlayer[op.ownerId] || 0);
+    const beforePoolCredit = poolCredit();
+    const beforeDmg = op.stats.dmg;
+    const beforePlayerDmg = b._pp(op.ownerId).damageDealt;
+    const beforeKills = op.stats.kills;
+    const droneHp = drone.hp;
+    const links = [];
+    b.on('damaged', (c) => { if (c.dmg?.tags?.includes('boss:droneLink')) links.push(c.amount); });
     b.dealDamage(op, drone, { amount: 1e9, type: 'true', ignoreSleep: true });
     assert.equal(drone.alive, false, 'the drone died');
-    return { lost: before - pool.hp, caps, id: L.id };
+    assert.deepEqual(links, [poolMax * 0.02]);
+    assert.ok(Math.abs(b._pp(op.ownerId).bossDamage - beforeCredit - poolMax * 0.02) < 1e-6, 'credited once to the killing operator');
+    assert.ok(Math.abs(poolCredit() - beforePoolCredit - poolMax * 0.02) < 1e-6, 'the pool credits the same killer once');
+    assert.ok(Math.abs(op.stats.dmg - beforeDmg - droneHp - poolMax * 0.02) < 1e-6, 'unit damage includes the drone and its linked loss once');
+    assert.ok(Math.abs(b._pp(op.ownerId).damageDealt - beforePlayerDmg - droneHp - poolMax * 0.02) < 1e-6, 'player damage includes the drone and its linked loss once');
+    assert.equal(op.stats.kills, beforeKills + 1, 'the drone kill is credited once');
+    assert.ok(Math.abs(before - pool.hp - poolMax * 0.02) < 1e-6);
+    assert.deepEqual(caps, [], 'the scripted link is not cancelled');
+    const hp = pool.hp;
+    assert.equal(b.loseHp(L, LIMIT, { source: op }), 0, 'ordinary transferred losses still respect the limit');
+    assert.equal(b.dealDamage(op, L, { amount: LIMIT, type: 'true', ignoreSleep: true }), 0, 'ordinary attacks still respect the limit');
+    assert.equal(pool.hp, hp);
   };
-  const solo = run(7200000);
-  assert.equal(solo.lost, 144000, 'boss_8 ABYSS-sized pool (one player): the loss lands');
-  assert.deepEqual(solo.caps, []);
-  const under = run(14999950);
-  assert.equal(under.lost, 299999, 'just under the line: lands');
-  assert.deepEqual(under.caps, []);
-  for (const [m, want] of [[14999951, 299999.02], [15000000, 300000], [21600000, 432000], [28800000, 576000]]) {
-    const over = run(m);
-    assert.ok(Math.abs(over.lost - want) < 1e-6, `${m}: the share lands past the line (${over.lost})`);
-    assert.deepEqual(over.caps, [], `${m}: no cancelled hit`);
-  }
+  for (const Pool of [SharedBossPool, LocalBossPool]) for (const bossId of ['boss_1', 'boss_8'])
+    for (const max of [7200000, 14999950, 14999951, 15000000, 18000000, 21600000, 28800000, 36000000, abyss20Pool]) run(bossId, max, Pool);
 });
 
 test('限伤 keeps the sim deterministic: a boss field whose hits cross the line gives the same result digest twice', () => {

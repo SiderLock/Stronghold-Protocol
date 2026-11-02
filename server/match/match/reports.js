@@ -50,6 +50,20 @@ export class MatchReports {
   }
 
   /** b.result from a field's authority: validated against the spec; an implausible one is replaced by the server's run. */
+  _onYield(ps, msg) {
+    if (!this.clientCombat) return fail(ERR.WRONG_PHASE, 'server-run combat');
+    const f = this._fieldByBattle(msg.battleId);
+    if (!f || f.done || f.heldResult || f.mode !== 'client' || f.authority !== ps.playerId) return OK;
+    if (f.kind === 'boss' || f.kind === 'hidden') {
+      if (this._finalEnding) {
+        f.result = syntheticResult(f.players, { bossBy: f.bossBy, time: this._fieldElapsed(f) });
+        this._fieldDone(f);
+        this._checkFinalEnd();
+      } else this._bossHandover(f, 'oversized-result', { demote: true });
+    } else this._runOnServer(f, 'oversized-result');
+    return OK;
+  }
+
   _onResult(ps, msg) {
     if (!this.clientCombat) return fail(ERR.WRONG_PHASE, 'server-run combat');
     const f = this._fieldByBattle(msg.battleId);

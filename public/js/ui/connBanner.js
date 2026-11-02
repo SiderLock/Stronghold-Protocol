@@ -10,11 +10,12 @@ import { net, CLIENT_ERR_TEXT } from '../net.js';
 import { useStore, shallowEqual } from '../store.js';
 import { useDocClass } from './device.js';
 import { t } from '../../../shared/i18n.js';
+import { QUALITY_TEXT } from '../connectionQuality.js';
 
 /** Whether the banner shows for this connection state (mirrors the early returns below). */
 export function bannerVisible(conn, entered, restoring, buildStale = false) {
   if (!entered || !conn) return false;
-  if (conn.status === 'online') return !!restoring || !!buildStale;
+  if (conn.status === 'online') return !!restoring || !!buildStale || !!conn.quality?.cause;
   if (!conn.everOnline && (conn.status === 'connecting' || conn.status === 'handshaking' || conn.status === 'idle')) return false;
   return true;
 }
@@ -27,7 +28,12 @@ export function ConnectionBanner() {
   useTicker(conn.status === 'reconnecting' ? 500 : 0);
   useDocClass('sp-conn', bannerVisible(conn, entered, restoring, buildStale));
   if (!entered) return null;
-  if (conn.status === 'online' && !restoring && !buildStale) return null;
+  if (conn.status === 'online' && !restoring && !buildStale) {
+    const text = QUALITY_TEXT[conn.quality?.cause];
+    return text ? html`<div class="conn-banner conn-banner--quality" role="status">
+      <${Icon} name="signal" /><span>${t(text)}</span>
+    </div>` : null;
+  }
   if (conn.status === 'online' && restoring) {
     return html`<div class="conn-banner" role="status"><${Icon} name="refresh" /><span>${t('正在同步同盟状态…')}</span></div>`;
   }

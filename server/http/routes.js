@@ -5,6 +5,9 @@
 //   * /studio and /studio/… → the plugin studio (server/studio/index.js: for this machine and the local network only — any
 //     other client gets the 404 page; its API also takes POST / PUT / DELETE), when the server has one;
 //   * any method but GET / HEAD → 405 with `Allow: GET, HEAD`;
+//   * a bandwidth emergency → 503 for bulk art/audio and the asset-cache API; the page shell and runtime code
+//     (`isEmergencyShellPath`: `/`, `/js/`, `/css/`, `/vendor/`, `/shared/`, `/sim/`, `/data/`, `/data.js`) stay up so
+//     an open or reloading match can still load its renderer;
 //   * GET /healthz → JSON status (protocol `version`, release `app`, uptime, the served `build`, the vanilla content
 //     hash `content.vanilla`, the modded content sets in use `content.sets` and — only when there are some — how many
 //     unofficial plugins the server has, `content.plugins` (the title screen's count before any hello) — DESIGN §32 —,
@@ -19,11 +22,30 @@
 // answers 500.
 
 import { PROTOCOL_VERSION, APP_VERSION } from '../../shared/constants.js';
+import { isAnnouncementId } from '../../shared/announcements.js';
+import { ANNOUNCEMENT_ASSET_URL_PREFIX } from '../../shared/announcementAssets.js';
+import { serveAnnouncementAsset } from './announcementAssets.js';
+import { ASSET_CACHE_PREFIX } from './assetCache.js';
 import { buildTag } from './buildTag.js';
 import { setSecurityHeaders, sendError, sendJson, splitUrl } from './common.js';
 import { clientAddress, isLocalIp } from '../net.js';
 
 const MAX_URL_LENGTH = 4096;
+
+/**
+ * Paths that stay available while a bandwidth emergency is active: the page shell and the runtime code a
+ * match view needs (fieldHost's dynamic `import('../render/app.js')` and its graph, PIXI under /vendor).
+ * Bulk art/audio under /assets, /fonts, /media and the asset-cache fill API stay gated so the egress
+ * budget goes to the matches already running. `/` is included so a reload during the emergency can still
+ * get a working client instead of a 503 body.
+ */
+export function isEmergencyShellPath(rawPath) {
+  if (typeof rawPath !== 'string' || !rawPath.startsWith('/')) return false;
+  if (rawPath === '/' || rawPath === '/index.html' || rawPath === '/data.js') return true;
+  return rawPath.startsWith('/js/') || rawPath.startsWith('/css/')
+    || rawPath.startsWith('/vendor/') || rawPath.startsWith('/shared/')
+    || rawPath.startsWith('/sim/') || rawPath.startsWith('/data/');
+}
 
 /** `{ plugins: n }` when the server has n > 0 unofficial plugins (the lobby's visual sets count them), else nothing. */
 function pluginCount(lobby) {
@@ -45,6 +67,7 @@ function contentSets(lobby) {
  *           lobby: import('../lobby.js').Lobby, content?: { cs: string } | null,
  *           traffic?: ReturnType<typeof import('./traffic.js').createTrafficCounter>,
  *           assetIndex?: ReturnType<typeof import('./assetIndex.js').createAssetIndex> | null,
+ *           bandwidthEmergency?: ReturnType<typeof import('../bandwidthEmergency.js').createBandwidthEmergencyController> | null,
  *           views?: ReturnType<typeof import('./assetViews.js').createManifestViews> | null, trusted?: any,
  *           versions?: ReturnType<typeof import('../versions.js').createVersionSets> | null,
  *           versionHosts?: { stats: () => object } | null }} health
@@ -52,7 +75,7 @@ function contentSets(lobby) {
  *   and their match hosts (DESIGN §35.23)
  * @param {boolean} [withTraffic]
  */
-export function healthReport({ startedAt, network, registry, lobby, content = null, traffic, assetIndex, views, trusted, versions = null, versionHosts = null }, withTraffic = false) {
+export function healthReport({ startedAt, network, registry, lobby, content = null, traffic, assetIndex, views, bandwidthEmergency, trusted, versions = null, versionHosts = null }, withTraffic = false) {
   const report = {
     ok: true, version: PROTOCOL_VERSION, app: APP_VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000),
     // the runtime the server is serving right now (public/js/ui/buildGuard.js): a page whose own build is
@@ -63,6 +86,7 @@ export function healthReport({ startedAt, network, registry, lobby, content = nu
     // it has, when it has some (a page's title screen says so; P1a)
     ...(content ? { content: { vanilla: content.cs, sets: contentSets(lobby), ...pluginCount(lobby) } } : {}),
     sockets: network.connectionCount, sessions: registry.size, ...lobby.stats(),
+    ...(bandwidthEmergency ? { bandwidthEmergency: bandwidthEmergency.status() } : {}),
   };
   if (trusted && Object.keys(trusted).length) report.plugins = trusted;
   // the official versions (DESIGN §35.23): only when another one than 第二期下半 is enabled
@@ -71,6 +95,7 @@ export function healthReport({ startedAt, network, registry, lobby, content = nu
       hosts: versionHosts ? versionHosts.stats() : { workers: 0, matches: 0, transport: 'process' } };
   }
   if (withTraffic && traffic) report.traffic = traffic.snapshot();
+  if (withTraffic && network.diagnostics) report.network = network.diagnostics();
   // content-hashed asset URLs (assetIndex.js / assetViews.js): off, building, or ready with how many files and URLs
   if (withTraffic) report.assetHashes = assetIndex ? { ...assetIndex.stats(), views: views ? views.stats() : null } : null;
   return report;
@@ -83,14 +108,24 @@ const wantsTraffic = (query) => /(?:^|&)traffic(?:=(?:1|true|yes))?(?:&|$)/i.tes
  * The request listener for `http.createServer`.
  * @param {{ serveStatic: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse,
  *             rawPath: string, query: string) => Promise<void>,
- *           health: Parameters<typeof healthReport>[0], log: object, trustProxy?: 'auto' | boolean,
+ *           health?: Parameters<typeof healthReport>[0], log: object, trustProxy?: 'auto' | boolean,
+ *           announcements?: ReturnType<typeof import('../announcements.js').createAnnouncementStore>,
+ *           assetCache?: ReturnType<typeof import('./assetCache.js').createAssetCacheHandler>,
  *           csp?: string | null,
  *           studio?: { handles: (rawPath: string) => boolean, handle: (req: any, res: any, rawPath: string, query: string) => Promise<void> } | null }} deps
  *   trustProxy: whose forwarding headers name the client (net.js clientAddress; the server's TRUST_PROXY); studio: the
  *   plugin studio (server/studio/index.js), or none
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void}
  */
-export function createRequestHandler({ serveStatic, health, log, trustProxy = 'auto', studio = null, csp = null, trustedRuntime = null }) {
+export function createRequestHandler({ serveStatic, health, log, announcements, assetCache, emergency = () => null, trustProxy = 'auto', studio = null, csp = null, trustedRuntime = null }) {
+  // Include in-flight ordinary assets/runtime/announcements, not just explicit filling. Emergency trip
+  // releases these responses as well, so a cold visitor cannot retain its old streaming budget.
+  const publicResponses = new Set();
+  function track(res) {
+    publicResponses.add(res);
+    const done = () => { publicResponses.delete(res); res.off('finish', done); res.off('close', done); };
+    res.once('finish', done); res.once('close', done);
+  }
   async function handleRequest(req, res) {
     const url = req.url || '/';
     if (url.length > MAX_URL_LENGTH) { sendError(req, res, 414, '请求地址过长 · URI too long'); return; }
@@ -108,16 +143,53 @@ export function createRequestHandler({ serveStatic, health, log, trustProxy = 'a
       sendJson(req, res, 200, healthReport(health, withTraffic));
       return;
     }
+    const protection = emergency();
+    if (protection?.active && !isEmergencyShellPath(parts.rawPath)) {
+      const seconds = protection.retryAt ? Math.max(1, Math.ceil((protection.retryAt - Date.now()) / 1000)) : 120;
+      res.setHeader('Retry-After', String(seconds));
+      res.setHeader('Connection', 'close');
+      sendJson(req, res, 503, { error: parts.rawPath.startsWith(ASSET_CACHE_PREFIX)
+        ? 'ASSET_CACHE_EMERGENCY' : 'SERVER_EMERGENCY', emergency: true, retryAfterSec: seconds });
+      return;
+    }
+    track(res);
+    res.setHeader('X-Accel-Buffering', 'no');
+    if (parts.rawPath.startsWith(ASSET_CACHE_PREFIX)) {
+      if (!assetCache) { sendJson(req, res, 503, { error: 'ASSET_CACHE_UNAVAILABLE' }); return; }
+      await assetCache.serve(req, res, parts.rawPath, parts.query);
+      return;
+    }
+    if (parts.rawPath === '/api/announcements') {
+      sendJson(req, res, 200, announcements?.list() || { revision: '', pinnedId: null, items: [] });
+      return;
+    }
+    if (parts.rawPath.startsWith('/api/announcements/')) {
+      let id;
+      try { id = decodeURIComponent(parts.rawPath.slice('/api/announcements/'.length)); } catch { /* invalid URL */ }
+      const article = isAnnouncementId(id) ? announcements?.read(id) : null;
+      sendJson(req, res, article ? 200 : 404, article || { error: 'ANNOUNCEMENT_NOT_FOUND' });
+      return;
+    }
+    if (parts.rawPath === ANNOUNCEMENT_ASSET_URL_PREFIX.slice(0, -1) || parts.rawPath.startsWith(ANNOUNCEMENT_ASSET_URL_PREFIX)) {
+      await serveAnnouncementAsset(req, res, parts.rawPath.slice(ANNOUNCEMENT_ASSET_URL_PREFIX.length), announcements, log);
+      return;
+    }
     await serveStatic(req, res, parts.rawPath, parts.query);
   }
 
-  return (req, res) => {
+  const listener = (req, res) => {
     setSecurityHeaders(res);
     if (csp) res.setHeader('Content-Security-Policy', csp);
-    if (health.traffic) health.traffic.meter(res, splitUrl(req.url || '/')?.rawPath || '/');
+    if (health?.traffic) health.traffic.meter(res, splitUrl(req.url || '/')?.rawPath || '/');
     handleRequest(req, res).catch((e) => {
+      if (res.destroyed) return;
       log.error('[http] request failed', e);
       sendError(req, res, 500, '服务器内部错误 · Internal error');
     });
   };
+  listener.abortPublicRequests = () => {
+    for (const res of publicResponses) res.destroy();
+    publicResponses.clear();
+  };
+  return listener;
 }

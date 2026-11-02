@@ -3,7 +3,7 @@
 // Every rule the final documentation sweep corrected is checked twice: the code still behaves as the docs now say, and
 // the stale wording does not come back. Topics: combat / boss clocks in REAL seconds (overtime after 150 real s,
 // m.public.overtimeAt), 联防 helper order (unite.helperOrder, research 08 §5), boss results handed over instead of a
-// synthetic zero, reconnect windows (co-op 10 min, solo singleReconnectTime 24 h), g.equip replaceUid + equipped items
+// synthetic zero, reconnect windows (co-op 10 min, solo default 2 h; official data 24 h), g.equip replaceUid + equipped items
 // locked, battleId unique per match, solo pause (g.pause / m.public.paused), road-over-floor lanes, module icons from
 // local art, 标准 = 战场#01 only; user playtest #3 (DESIGN §17): temp overflow kept until the first prep its player can
 // act in (never wiped at the round start), the 回环射手 boomerang and 蕾缪安's shells one by one, the live LP, the detail
@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 import { GameData } from '../server/match/gamedata.js';
 import { helperOrder } from '../server/match/unite.js';
 import { NET_DEFAULTS } from '../server/net.js';
-import { SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
+import { LOBBY_DEFAULTS, SOLO_RECONNECT_FALLBACK_SEC } from '../server/lobby.js';
 import { moduleTypeIconUrl } from '../public/js/ui/assetUrls.js';
 import { validateC2S } from '../shared/protocol.js';
 import { ERR, PHASE } from '../shared/constants.js';
@@ -139,16 +139,20 @@ test('boss results: no synthetic zero for a running boss field (docs), handover 
   assert.match(META, /hands the field to the partner's replica or the server/);
 });
 
-test('reconnect windows: co-op 10 min, solo singleReconnectTime 24 h (code, data, every doc)', () => {
+test('reconnect windows: co-op 10 min, solo default 2 h, official data stays 24 h (code, data, every doc)', () => {
   assert.equal(NET_DEFAULTS.reconnectWindowMs, 10 * 60_000);
+  assert.equal(LOBBY_DEFAULTS.soloReconnectWindowMs, 2 * 60 * 60_000);
   assert.equal(SOLO_RECONNECT_FALLBACK_SEC, 86_400);
   assert.equal(DATA.config.constants.singleReconnectTime, 86_400);
   assert.match(DESIGN, /singleReconnectTime/);
-  assert.match(DESIGN, /24 h/);
+  assert.match(DESIGN, /2 h/);
   assert.match(META, /singleReconnectTime/);
+  assert.match(META, /2 h/);
   assert.match(dataRow('constants'), /singleReconnectTime/);
+  assert.match(dataRow('constants'), /2 h/);
   for (const [name, text] of [['README', README], ['DEPLOY', DEPLOY], ['PLAYING', PLAYING]]) {
-    assert.match(text, /24 小时/, `${name}: solo resume window`);
+    assert.match(text, /2 小时/, `${name}: solo resume window`);
+    assert.doesNotMatch(text, /独立模拟 24 小时内|后 \*\*24 小时内\*\*/, `${name}: no unconditional 24-hour solo resume promise`);
     assert.match(text, /10 分钟/, `${name}: co-op window`);
   }
   assert.ok(!/断线 10 分钟内可重连，掉线期间 AI 托管/.test(README), 'README: a dropped seat is not AI-played unless 暂离');
@@ -895,7 +899,8 @@ test('干员战斗语音 (DESIGN §21.30): the manifest data, the official prior
     else if (x && typeof x === 'object') Object.values(x).forEach(walk);
   };
   for (const id of charIds) {
-    for (const s of slots) assert.ok(voice[id][s], `${id}.${s}`);
+    // 第一期's 锡兰 has only BATTLE_SKILL_1..3 in official charword_table.json (CN_025..027).
+    for (const s of slots) if (!(id === 'char_348_ceylon' && s === 'skill4')) assert.ok(voice[id][s], `${id}.${s}`);
     for (const s of prepOnly) assert.equal(voice[id][s], undefined, `${id}.${s} is not planned by default`);
     walk(voice[id]);
   }

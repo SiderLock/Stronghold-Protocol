@@ -91,6 +91,38 @@ describe('emission', () => {
     assert.equal(run(half, 0.1), 5);
   });
 
+  test('saturated high-rate systems do work only for live slots, without changing birth timing or backlog', () => {
+    const ps = new PSys(compileSystem(sys({ I: { maxNumParticles: 1, startLifetime: 0.1 },
+      E: { rateOverTime: 10000000 }, top: { looping: true } })), {});
+    const spawn = ps._spawn.bind(ps); let calls = 0;
+    ps._spawn = (...args) => { calls++; return spawn(...args); };
+    ps.play(ID); ps.update(1 / 60, ID);
+    assert.equal(calls, 1, 'one free slot must not attempt another 166665 rejected births');
+    assert.ok(Math.abs(ps.age[0] - (1 - 1 / 166666) / 60) < 1e-8, 'use the requested total for its original age');
+    const seed = ps.seed[0];
+    run(ps, 3 / 60);
+    assert.equal(calls, 1, 'a full system skips all rejected calls');
+    assert.equal(ps.seed[0], seed);
+    run(ps, 4 / 60);
+    assert.equal(calls, 2, 'a later death frees exactly one slot; rejected births are not queued');
+    assert.ok(ps.acc >= 0 && ps.acc < 1, 'fractional emission continues while full');
+  });
+
+  test('burst and sub-emitter caps preserve burst shape spacing and continue future burst bookkeeping', () => {
+    const ps = new PSys(compileSystem(sys({ I: { maxNumParticles: 2 },
+      E: { m_Bursts: [{ time: 0, countCurve: 1000000, cycleCount: 2, repeatInterval: 0.1, probability: 1 }] } })), {});
+    const spawn = ps._spawn.bind(ps), args = [];
+    ps._spawn = (...a) => { args.push(a.slice(3, 5)); return spawn(...a); };
+    ps.play(ID); run(ps, 0.2);
+    assert.deepEqual(args, [[0, 1000000], [1, 1000000]], 'keep the authored total for burst placement');
+    assert.equal(ps.burstNext[0], 2, 'full systems still consume scheduled bursts');
+    ps.clear(); args.length = 0;
+    ps._emitAt(1000000, 1, 2, 3, null);
+    assert.deepEqual(args, [[0, 1000000], [1, 1000000]]);
+    ps._emitAt(1000000, 1, 2, 3, null);
+    assert.equal(args.length, 2, 'sub-emitter births also stop at capacity');
+  });
+
   test('prewarm starts a looping system as if one loop had run', () => {
     const ps = new PSys(compileSystem(sys({ top: { looping: true, prewarm: true, startDelay: 5 }, I: { startLifetime: 2 }, E: { rateOverTime: 10 } })), {});
     ps.play(ID);

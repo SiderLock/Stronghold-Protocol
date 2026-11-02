@@ -16,7 +16,8 @@ test('public throttling starts at broadcast time even when building the previous
   const sent = [];
   const timers = [];
   const match = {
-    _lastPubAt: 0,
+    // fork keeps DELAYS.PUBLIC_THROTTLE = 125 (8 Hz, D021); start open so the first frame is not itself throttled
+    _lastPubAt: -Infinity,
     sched: {
       now: () => now,
       setTimeout: (fn, delay) => { timers.push({ fn, at: now + delay }); return timers.length; },
@@ -34,7 +35,8 @@ test('public throttling starts at broadcast time even when building the previous
   assert.deepEqual(sent, [116], 'the second frame waits for the full interval after the first broadcast');
   now = timers[0].at;
   timers[0].fn();
-  assert.deepEqual(sent, [116, 216]);
+  // first broadcast at 116; the next waits 125 − (200 − 116) = 41 ms from the second call → 241
+  assert.deepEqual(sent, [116, 241]);
 });
 
 test('constructor validation mirrors the stub; start() sends the first m.public and one m.private per human', () => {
@@ -119,9 +121,10 @@ test('disconnect: the seat keeps playing; draft turns / prep auto-resolve at dea
   h.m.onDisconnect('p_1');
   assert.equal(m.publicView().players.find((p) => p.playerId === 'p_1').connected, false);
   m.handle('p_0', { t: 'g.infoReady' });
-  // p_1 never confirms: the 25 s deadline moves on; p_1 never picks: 12 s turn → 华法琳
+  // p_1 never confirms: the 25 s deadline moves on; the connected player picks first, then p_1 times out.
   h.drive(() => m.phase === PHASE.PREP && m.round === 1);
-  assert.equal(h.ps('p_1').bandId, 'band_bldsk');
+  assert.equal(h.ps('p_0').bandId, 'band_bldsk');
+  assert.equal(h.ps('p_1').bandId, 'band_amiya', 'the offline seat gets the next free strategy');
   const sentBefore = h.sent.length;
   // p_0 readies; p_1 is auto-readied at the prep deadline
   m.handle('p_0', { t: 'g.ready', ready: true });

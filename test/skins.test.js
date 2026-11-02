@@ -24,7 +24,7 @@ import { isSkinId, isCharId, isSkinSelection, checkSkinSelection, operatorCharId
 import { makeMatch, DATA } from './match/harness.js';
 import { Battle } from '../server/sim/Battle.js';
 import { makeBattle } from './helpers/battleHarness.js';
-import { avatarUrl, portraitUrl, illustUrl, spineEntry, hasBackSpine, unitPictureUrl, tokenAvatarUrl, skinsOf, skinHasModel } from '../public/js/assets.js';
+import { avatarUrl, portraitUrl, illustUrl, spineEntry, hasBackSpine, unitPictureUrl, tokenAvatarUrl, skinsOf, skinHasModel, tokenSkinSpine } from '../public/js/assets.js';
 import { createStore } from '../public/js/store.js';
 import { parseStoredSkins, SKINS_KEY, SKINS_SYNC_KEY } from '../public/js/ui/skins.js';
 import { installSkinsSync } from '../public/js/ui/loadoutSync.js';
@@ -36,6 +36,8 @@ const OPERATOR = 'char_498_inside';
 const OTHER = 'char_003_kalts';
 const SKIN = 'char_498_inside@kitchen#2';
 const SKIN_OTHER = 'char_003_kalts@boc#6';
+/** A summon this operator places, and the model the skin above gives it (docs/SKINS.md 召唤物换装). */
+const TOKEN = 'token_10031_inside_gdtrap';
 
 /** A composed manifest as the browser sees one: the installation's art with one cosmetic plugin's skins laid over it. */
 const MANIFEST = {
@@ -51,6 +53,13 @@ const MANIFEST = {
           spine: {
             front: { skel: '/s/inside_kitchen/front.skel', atlas: '/s/inside_kitchen/front.atlas', textures: ['/s/inside_kitchen/front.png'], anims: { idle: 'Idle' } },
             back: { skel: '/s/inside_kitchen/back.skel', atlas: '/s/inside_kitchen/back.atlas', textures: ['/s/inside_kitchen/back.png'], anims: { idle: 'Idle' } },
+          },
+          // 召唤物换装: the model this skin brings for the operator's summon (a token model has no Front / Back pair)
+          tokens: {
+            [TOKEN]: {
+              tokenSkinId: `${TOKEN}_kitchen_2`,
+              spine: { skel: '/s/inside_kitchen/token.skel', atlas: '/s/inside_kitchen/token.atlas', textures: ['/s/inside_kitchen/token.png'], anims: { idle: 'Idle' } },
+            },
           },
         },
         // a skin the plugin gives art to, with no model: shown nowhere, offered nowhere
@@ -79,6 +88,11 @@ const MANIFEST = {
         // a picture-only appearance: the token's own model stays
         'char_498_inside@art#9': { name: '只有画', group: '', avatar: '/a/doll_art.png' },
       },
+    },
+    // the summon's own model: what it draws whenever the skin brings none for it (local extraction or the web pipeline)
+    [TOKEN]: {
+      avatar: '/a/token_gdtrap.png',
+      spine: { skel: '/s/token/own.skel', atlas: '/s/token/own.atlas', textures: ['/s/token/own.png'], anims: { idle: 'Idle' } },
     },
   },
 };
@@ -149,10 +163,12 @@ describe('皮肤: the lobby seat and the match', () => {
     { seat: 1, playerId: 'ai_0', name: 'AI0', isBot: true, connected: true, skins: { [OPERATOR]: SKIN } },
   ];
 
-  test('the seat carries the selection into PlayerState; a bot is refused whatever its seat says', () => {
+  test('the seat carries the selection into PlayerState, including the lobby-approved bot roll', () => {
     const h = makeMatch({ mode: 'coop', seats });
     assert.deepEqual(h.ps('p_0').skins, { [OPERATOR]: SKIN });
-    assert.deepEqual(h.ps('ai_0').skins, {}, 'setSkins refuses bots');
+    assert.deepEqual(h.ps('ai_0').skins, { [OPERATOR]: SKIN });
+    assert.equal(h.ps('ai_0').setSkins({}), false, 'live writes still refuse bots');
+    assert.deepEqual(h.ps('ai_0').skins, { [OPERATOR]: SKIN });
   });
 
   test('Match.setSkins: only the caller\'s own seat, any phase, and the public view carries it', () => {
@@ -180,7 +196,7 @@ describe('皮肤: the lobby seat and the match', () => {
     const me = h.m.publicView().players.find((p) => p.playerId === 'p_0');
     assert.deepEqual(me.skins, { [OPERATOR]: SKIN });
     const bot = h.m.publicView().players.find((p) => p.playerId === 'ai_0');
-    assert.equal(bot.skins, undefined, 'omitted when empty, so a vanilla payload is byte-identical');
+    assert.deepEqual(bot.skins, { [OPERATOR]: SKIN }, 'the opening bot roll is public for every viewer');
     assert.equal(h.m.setSkins('p_0', {}).ok, true, 'clearing is a valid selection');
     assert.equal(h.m.publicView().players.find((p) => p.playerId === 'p_0').skins, undefined);
   });
@@ -479,6 +495,23 @@ describe('皮肤: the client resolves the appearance (assets.js)', () => {
     assert.deepEqual(skinsOf(MANIFEST, OTHER), {}, 'no skins: the picker draws no section');
     assert.equal(skinHasModel(skinsOf(MANIFEST, OPERATOR)[SKIN]), true);
     assert.equal(skinHasModel(skinsOf(MANIFEST, OPERATOR)['char_498_inside@art#9']), false);
+  });
+
+  test('a summoned token wears the skin\'s own model, else the token\'s own (docs/SKINS.md 召唤物换装)', () => {
+    // the reverse lookup the feature needs: the skin id arrives on the token's UnitInfo, the mapping lives under the operator
+    assert.equal(tokenSkinSpine(MANIFEST, TOKEN, SKIN).skel, '/s/inside_kitchen/token.skel');
+    assert.equal(tokenSkinSpine(MANIFEST, OPERATOR, SKIN), null, 'an operator id is not a token id');
+    assert.equal(tokenSkinSpine(MANIFEST, TOKEN, 'char_498_inside@art#9'), null, 'a skin with no model for this token');
+    // without a skin, and for a skin that brings this token nothing, the token draws the model it always drew
+    assert.equal(spineEntry(MANIFEST, TOKEN).skel, '/s/token/own.skel');
+    assert.equal(spineEntry(MANIFEST, TOKEN, { skin: 'char_498_inside@art#9' }).skel, '/s/token/own.skel');
+    assert.equal(spineEntry(MANIFEST, TOKEN, { skin: SKIN_OTHER }).skel, '/s/token/own.skel', 'another operator\'s skin is not this one\'s');
+    assert.equal(spineEntry(MANIFEST, TOKEN, { skin: 'gone' }).skel, '/s/token/own.skel');
+    // with one, the skin's model is used — a token model has no Front / Back pair, so `back` changes nothing
+    assert.equal(spineEntry(MANIFEST, TOKEN, { skin: SKIN }).skel, '/s/inside_kitchen/token.skel');
+    assert.equal(spineEntry(MANIFEST, TOKEN, { skin: SKIN, back: true }).skel, '/s/inside_kitchen/token.skel');
+    // an operator still resolves through the operator branch, never through a token mapping of the same manifest
+    assert.equal(spineEntry(MANIFEST, OPERATOR, { skin: SKIN }).skel, '/s/inside_kitchen/front.skel');
   });
 });
 

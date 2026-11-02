@@ -436,7 +436,7 @@ test('HTTP (M1, DESIGN §35.23): an enabled version\'s data is served (immutable
       const v = versionById(id);
       const r = await get(`/data/${v.dir}chess.json?v=12345678`);
       assert.equal(r.status, 200, id);
-      assert.equal(r.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+      assert.equal(r.headers.get('cache-control'), 'no-cache', 'arbitrary ?v is not a verified runtime pin (fork D022)');
       assert.deepEqual(JSON.parse(Buffer.from(await r.arrayBuffer()).toString('utf8')), JSON.parse(readFileSync(join(ROOT, 'data', v.dir, 'chess.json'), 'utf8')));
       // its manifest and bounds under /cs/<cs16>/
       const cs = srv.versions.csOf(id);

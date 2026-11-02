@@ -430,4 +430,3 @@ on a leader is cancelled (`MAX_BATTLE_DAMAGE`: 0 damage, nothing to the pool —
   hidden 胄 终极 pool is 21.6M / 28.8M at 3 / 4 players, so a drone is 432000 / 576000 — above the line; the link is a
   share, no hit, and passes it (`Battle.loseHp noHitLimit` [ASSUMED]: research 11 §2.1 checks every damage modifier, but
   which max HP the official link reads is not documented). Re-check this whenever the pool size changes (research 11 §6).
-

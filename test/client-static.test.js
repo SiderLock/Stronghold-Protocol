@@ -397,6 +397,64 @@ function ws0Pong(sock) {
 }
 
 describe('net.js', () => {
+  test('a stalled WebSocket upgrade times out, retries, and ignores the abandoned socket', async () => {
+    const { CONNECT_TIMEOUT_MS } = await mod('net.js');
+    const { net, timers, sockets, ws } = await makeNet();
+    net.setName('A');
+    const old = ws(), lateOpen = old.onopen;
+    timers.advance(CONNECT_TIMEOUT_MS - 1);
+    assert.equal(sockets.length, 1);
+    assert.equal(old.closedWith, null);
+    timers.advance(1);
+    assert.equal(old.closedWith, 4000);
+    assert.equal(net.status, 'reconnecting');
+    timers.advance(500);
+    assert.equal(sockets.length, 2);
+    old.readyState = 1; lateOpen();
+    assert.equal(net.status, 'reconnecting', 'late open cannot publish a stale connection');
+    ws().open();
+    ws().recv({ t: 'welcome', playerId: 'p', name: 'A' });
+    for (let i = 0; i < 5; i++) { ws0Pong(ws()); timers.advance(4000); }
+    assert.equal(net.status, 'online', 'the established connection has no leftover upgrade clock');
+    net.close();
+  });
+
+  test('network recovery probes an OPEN socket and replaces it if its unanswered ping expired', async () => {
+    const { DEAD_AFTER_MS } = await mod('net.js');
+    let wall = 1_000_000;
+    const { net, ws, timers, sockets } = await onlineNet({ now: () => wall });
+    ws0Pong(ws());
+    net.retryNow();
+    assert.equal(net.status, 'online', 'a healthy socket is probed without reconnecting');
+    wall += DEAD_AFTER_MS + 1; // browser suspended timers while connectivity changed
+    await quiet(() => net.retryNow());
+    assert.equal(ws().closedWith, 4000);
+    assert.equal(net.status, 'reconnecting');
+    timers.advance(500);
+    assert.equal(sockets.length, 2);
+    net.close();
+    net.retryNow();
+    assert.equal(sockets.length, 2, 'manual close remains final');
+  });
+
+  test('welcome cannot flush expired actions before a throttled timeout callback runs', async () => {
+    let wall = 1_000_000;
+    const { net, ws } = await makeNet({ now: () => wall });
+    net.setName('A');
+    const expired = net.request('room.ready', { ready: true }, { timeout: 1000 });
+    const fresh = net.request('room.leave', {}, { timeout: 3000 });
+    wall += 1000;
+    ws().open();
+    ws().recv({ t: 'welcome', playerId: 'p', name: 'A' });
+    await assert.rejects(expired, (e) => e.code === 'TIMEOUT');
+    assert.equal(ws().last('room.ready'), undefined);
+    const sent = ws().last('room.leave');
+    assert.ok(sent, 'an unexpired queued action is still sent once');
+    ws().recv({ t: 'ok', rid: sent.rid });
+    await fresh;
+    net.close();
+  });
+
   test('backoffDelay grows, is capped and jittered', async () => {
     const { backoffDelay, BACKOFF } = await mod('net.js');
     const mid = () => 0.5;
@@ -444,6 +502,7 @@ describe('net.js', () => {
       name: '凯尔希',
       version: PROTOCOL_VERSION,
       delta: STATE_DELTA_VERSION,
+      wire: 1,
       token: 'tok-1',
     });
     assert.equal(net.status, 'handshaking');
@@ -630,6 +689,40 @@ describe('net.js', () => {
     assert.equal(errs.length, 1);
     assert.match(errs[0].message, /版本/);
     await assert.rejects(p, (e) => e.code === 'OFFLINE');
+  });
+
+  test('emergency-refused visitors wait for the server retry window with jitter; focus and repeat errors do not churn', async () => {
+    const { net, ws, sockets, timers } = await makeNet();
+    const errors = [];
+    net.on('helloError', (e) => errors.push(e.code));
+    net.setName('A'); ws().open();
+    ws().recv({ t: 'm.emergency', active: true, retryAt: timers.now() + 120000 });
+    ws().recv({ t: 'error', rid: ws().last('hello').rid, code: 'SERVER_EMERGENCY' });
+    ws().drop(1008);
+    assert.equal(net.retryAt - timers.now(), 122500);
+    net.retryNow(); net.reconnectNow(); net.connect();
+    assert.equal(sockets.length, 1, 'automatic focus / online retries cannot skip emergency backoff');
+    timers.advance(122499);
+    assert.equal(sockets.length, 1);
+    timers.advance(1); ws().open();
+    ws().recv({ t: 'm.emergency', active: true, retryAt: timers.now() + 5000 });
+    ws().recv({ t: 'error', rid: ws().last('hello').rid, code: 'SERVER_EMERGENCY' });
+    ws().drop(1008);
+    assert.equal(net.retryAt - timers.now(), 32500, 'near retry windows retain a reasonable lower limit');
+    assert.deepEqual(errors, ['SERVER_EMERGENCY'], 'the persistent notice needs no repeated error toast');
+    timers.advance(32500); ws().open();
+    ws().recv({ t: 'welcome', rid: ws().last('hello').rid, playerId: 'p_1', token: 't', name: 'A' });
+    ws().drop();
+    assert.equal(net.retryAt - timers.now(), 500, 'accepted identity returns to normal reconnect');
+    net.close();
+  });
+
+  test('existing match members keep normal reconnect during emergency without a hello rejection', async () => {
+    const { net, ws, timers } = await onlineNet();
+    ws().recv({ t: 'm.emergency', active: true, retryAt: timers.now() + 120000 });
+    ws().drop();
+    assert.equal(net.retryAt - timers.now(), 500);
+    net.close();
   });
 
   test('pushes are emitted by type and "*"; unsolicited errors as unhandledError; junk ignored', async () => {
@@ -1121,7 +1214,8 @@ describe('screen helpers', () => {
     };
     assert.equal(normalizeSeats(room).length, 4);
     assert.equal(normalizeSeats({ mode: 'solo', seats: [room.seats[0], null, null, null] }).length, 1);
-    assert.deepEqual(normalizeSeats({ mode: 'coop', seats: 'bad' }), [null, null, null, null]);
+    assert.deepEqual(normalizeSeats({ mode: 'coop', seats: 'bad' }), Array(8).fill(null), 'a legacy room without seats uses the default eight-seat capacity');
+    assert.deepEqual(normalizeSeats({ mode: 'coop', capacity: 20, seats: [] }), Array(20).fill(null));
     let f = roomFacts(room, 'h');
     assert.equal(f.isHost, true);
     assert.equal(f.canStart, false, 'guest not ready');

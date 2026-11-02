@@ -284,7 +284,11 @@
 }
 .title-invite .icon { width: .2rem; height: .2rem; }
 .title-invite b { font-size: calc(.2 * var(--t)); letter-spacing: .2em; color: #ffd08a; }
-.title-conn { display: flex; align-items: center; justify-content: center; gap: .1rem; min-height: .32rem; font-size: calc(.14 * var(--t)); color: var(--text-lo); }
+.title-conn { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: .04rem; min-height: .32rem; font-size: calc(.14 * var(--t)); color: var(--text-lo); }
+/* Keep the connection text and icon controls intact as the status row gains entries. */
+.title-conn__status { display: inline-flex; flex: none; align-items: center; gap: .08rem; white-space: nowrap; }
+.title-conn .title-guide, .title-conn .title-announcements { flex: none; padding-inline: .025rem; font-size: calc(.14 * var(--t)); }
+.title-conn .title-settings { flex: none; width: .4rem; height: .4rem; margin-left: 0; }
 /* 统计 (the local stats page) beside the language menu in the top-right corner */
 .title-corner__tools { display: flex; align-items: center; justify-content: flex-end; gap: .1rem; margin-bottom: .1rem; }
 .title-corner__tools .title-lang { margin-bottom: 0; }
@@ -296,7 +300,7 @@
 .lang-select select { height: max(.38rem, 1.4em); min-width: 1.6rem; padding: 0 .12rem; background: #0a0d0c; border: 0; color: var(--text-hi); font-size: calc(.16 * var(--t)); cursor: pointer; }
 .title-lang.lang-select select { height: max(.3rem, 1.4em); font-size: calc(.14 * var(--t)); }
 html[data-script="alphabetic"] .title-login .btn--xl { letter-spacing: .3em; }
-.title-conn .ping { height: max(.26rem, 1.6em); font-size: calc(.15 * var(--t)); }
+.title-conn .ping { flex: none; height: max(.26rem, 1.6em); padding-inline: .06rem; font-size: calc(.15 * var(--t)); }
 
 .title-foot {
   position: absolute;

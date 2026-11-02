@@ -41,7 +41,7 @@ test('the official sprites, all in the asset list; no drawn stand-ins; not ready
 
 test('screens/game.js: the screen at BATTLE_CHECK once its art is in, else the banner; at least BOOT_MIN_MS, it fades, then goes', () => {
   const g = read('public/js/screens/game.js');
-  assert.match(g, /useEffect\(\(\) => \{ if \(gd\.ready\) preloadBootArt\(\); \}, \[gd\.ready\]\);/);
+  assert.match(g, /gd\.ready && pub && phaseMode\(pub\.phase\) !== 'briefing'\) preloadBootArt\(\)/);
   assert.match(g, /if \(phase === PHASE\.BATTLE_CHECK && bootArtReady\(\)\) \{ setBanner\(null\); setBoot\(\(b\) => \(b && b\.key === phaseKey \? b : \{ key: phaseKey, at: Date\.now\(\) \}\)\); \}\n\s+else if [\s\S]*?else if \(b\) setBanner/);
   // from the match screen's first frame when it opens in BATTLE_CHECK (after the held draft screen): the board never shows first
   assert.match(g, /const \[boot, setBoot\] = useState\(\(\) => \(pub\?\.phase === PHASE\.BATTLE_CHECK && bootArtReady\(\) \? \{ key: `\$\{pub\.phase\}:\$\{pub\.round\}`, at: Date\.now\(\) \} : null\)\);/);

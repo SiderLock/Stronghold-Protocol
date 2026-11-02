@@ -253,7 +253,11 @@ describe('the wire: welcome, room.state, the match, /healthz, /cs/, BattleSpec, 
       }));
     }
     for (const [name, f] of Object.entries(data)) {
-      const res = await fetch(srv.url + f.url);
+      const legacy = await fetch(srv.url + f.url);
+      assert.equal(legacy.headers.get('cache-control'), 'no-cache', `${name}: legacy v is revalidated (D022)`);
+      assert.equal(node(Buffer.from(await legacy.arrayBuffer())), f.sha256, name);
+      const pinned = new URL(f.url, srv.url); pinned.search = `?rv=${f.sha256}`;
+      const res = await fetch(pinned);
       assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable', name);
       const buf = Buffer.from(await res.arrayBuffer());
       assert.deepEqual([node(buf), buf.length], [f.sha256, f.bytes], name);

@@ -4,6 +4,7 @@ import { GameData } from '../../server/match/gamedata.js';
 import { DATA, makeMatch, give, checkInvariants } from './harness.js';
 import { PHASE } from '../../shared/constants.js';
 import { cardPickable } from '../../public/js/ui/choiceOverlay.js';
+import { installDraftFacade } from '../../server/match/match/phases.js';
 
 const PACK = 'chess_item_5_07_e_a';
 const byName = name => Object.values(DATA.chess).find(c => !c.isGolden && c.name === name).chessId;
@@ -39,22 +40,26 @@ test('a duplicate draft card becomes unavailable when the preceding player exhau
   const m = h.m, a = h.ps('p_0'), b = h.ps('p_1');
   a.acquireItem(PACK);
   m.phase = PHASE.SP_DRAFT;
-  m.sp = { cards: [PACK, PACK, 'chess_item_1_01_e_a'].map((id, idx) => ({ idx, id, kind: 'item' })),
-    order: ['p_0', 'p_1'], idx: 0, picks: {}, taken: {}, untimed: true };
+  const groups = m.makeDraftGroups({ shuffle: false });
+  Object.assign(groups[0], { cards: [PACK, PACK, 'chess_item_1_01_e_a'].map((id, idx) => ({ idx, id, kind: 'item' })),
+    order: ['p_0', 'p_1'], idx: 0, taken: {}, untimed: true });
+  m.sp = installDraftFacade({ groups, picks: {}, untimed: true }, ['cards', 'order', 'idx', 'taken']);
   assert.ok(m.pickCard(a, 0).ok); assert.equal(m.spTurn(), 'p_1');
   assert.equal(m.pickCard(b, 1).error, 'SOLD_OUT'); assert.equal(m.sp.picks.p_1, undefined);
   const card = m.publicView().sp.cards[1]; assert.equal(card.soldOut, true);
   assert.equal(cardPickable({ turnPid: 'p_1', pickOf: new Map() }, card, { myId: 'p_1', solo: false }), false);
   assert.ok(m.pickCard(b, 2).ok); m.dispose();
 });
-test('measured operator capacities and exceptions: co-op doubles shared stock and each player\'s private 自选 stock (#650)', () => {
+test('measured operator capacities and exceptions: co-op doubles shared stock; private 自选 stock stays (D028)', () => {
   const solo = new GameData(DATA, 'mode_single_normal'), coop = new GameData(DATA, 'mode_multi_normal');
   for (const [name, n] of [['普罗旺斯', 10], ['跃跃', 10], ['风丸', 8], ['蒂比', 12], ['哈洛德', 14], ['缪尔赛思', 5]]) {
     assert.equal(solo.poolCopies(byName(name)), n, name); assert.equal(coop.poolCopies(byName(name)), 2 * n, name);
   }
-  // the maintainer's decision of 2026-10-15 (GitHub #650): the 自选 stock doubles too, or a 自选 operator is diluted
+  // D028: private 自选 stock uses basePoolCopies and never takes the co-op factor (unlike the shared pool).
   for (const [slot, n] of [['chess_char_5_diy1_a', 8], ['chess_char_5_diy2_a', 8], ['chess_char_6_diy1_a', 5], ['chess_char_6_diy2_a', 5]]) {
-    assert.equal(solo.poolCopies(slot), n, slot); assert.equal(coop.poolCopies(slot), 2 * n, slot);
+    assert.equal(solo.poolCopies(slot), n, slot);
+    assert.equal(coop.basePoolCopies(slot), n, slot);
+    assert.equal(coop.poolCopies(slot), 2 * n, `${slot}: gd.poolCopies still names the shared-pool scale`);
   }
   assert.equal(solo.itemPoolCopies(PACK), 2); assert.equal(coop.itemPoolCopies(PACK), 2);
 });
@@ -275,4 +280,52 @@ test('Mimic can exceed the pool; excess copies keep stock empty until enough own
   assert.equal(m.pool.left(id), 0); checkInvariants(m);
   const elite = p.allChess().find(c => m.gd.baseIdOf(c.id) === id);
   assert.ok(p.sell(elite.uid).ok); assert.equal(m.pool.left(id), 2); checkInvariants(m); m.dispose();
+});
+
+test('trait-fixed equipment counts toward stock, may exceed cap, and never reopens the shop', () => {
+  const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
+  const m = h.m, a = h.ps('p_0'), b = h.ps('p_1');
+  const ITEM = 'chess_item_6_09_e_a'; // 变形同构体, 缪尔赛思的 SERVER_GAIN_EQUIP
+  assert.equal(m.gd.isTraitFixedItem(ITEM), true);
+  assert.equal(m.itemPool.cap(ITEM), 3);
+
+  const trait = a.acquireItem(ITEM, { noPool: true });
+  assert.ok(trait?.noPool, 'the fixed identity is retained on the granted piece');
+  assert.equal(m.itemPool.held(ITEM), 1, 'a trait grant still occupies one shared copy');
+  assert.equal(m.itemPool.left(ITEM), 2);
+
+  assert.ok(b.acquireItem(ITEM));
+  assert.ok(b.acquireItem(ITEM));
+  assert.equal(m.itemPool.held(ITEM), 3);
+  assert.equal(m.itemPool.canGain(ITEM), false);
+  assert.equal(a.acquireItem(ITEM), null, 'ordinary acquisition is blocked at the cap');
+  assert.equal(a.pushItemOffer([ITEM]), null, 'a full item stock is omitted from offers');
+
+  const extra = a.acquireItem(ITEM, { noPool: true });
+  assert.ok(extra?.noPool, 'the identity exemption can still grant after the cap');
+  assert.equal(m.itemPool.held(ITEM), 4, 'the exempt grant is counted and may exceed cap');
+  checkInvariants(m);
+  m.dispose();
+});
+
+test('noPool cannot exempt an ordinary item, and fixed golden inheritance keeps stock accounting', () => {
+  const h = makeMatch({ mode: 'coop', humans: 2, seed: 11, fake: true }).start().toPrep();
+  const m = h.m, a = h.ps('p_0'), b = h.ps('p_1');
+  const ORDINARY = 'chess_item_5_07_e_a';
+  assert.equal(m.gd.isTraitFixedItem(ORDINARY), false);
+  assert.ok(a.acquireItem(ORDINARY));
+  assert.ok(b.acquireItem(ORDINARY));
+  assert.equal(a.acquireItem(ORDINARY, { noPool: true }), null, 'an arbitrary noPool flag cannot bypass ordinary stock');
+
+  const FIXED = 'chess_item_3_05_e_a'; // 迅捷作战粮, mergeable fixed equipment
+  assert.ok(a.acquireItem(FIXED, { noPool: true }));
+  const golden = a.acquireItem(FIXED, { noPool: true });
+  assert.ok(golden?.noPool && m.gd.isGolden(golden.id), 'all-fixed copies produce a marked golden');
+  assert.equal(m.itemPool.held(FIXED), 2, 'the fixed golden occupies two copies');
+  assert.ok(b.acquireItem(FIXED));
+  const mixed = b.acquireItem(FIXED, { noPool: true });
+  assert.ok(mixed && !mixed.noPool && m.gd.isGolden(mixed.id), 'a mixed merge keeps the stock-bound identity');
+  assert.equal(m.itemPool.held(FIXED), 4, 'both goldens remain counted');
+  checkInvariants(m);
+  m.dispose();
 });

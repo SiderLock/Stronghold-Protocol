@@ -87,7 +87,8 @@ test('prep editing and shortcuts depend on blocking state and the visible dialog
   const game = readFileSync('public/js/screens/game.js', 'utf8');
   assert.doesNotMatch(game, /const editable = !hasOffers/);
   assert.doesNotMatch(game, /hasPersonalChoice \|\| hasOffers\) && 'has-sp'/, 'minimized windows must not hide the prep bond/effect panels');
-  assert.match(game, /const editable = !offerBlocksPrep\(pub\?\.offers\)/);
+  // D030 emergency freeze also blocks prep editing, beside the offer window (0.3.1).
+  assert.match(game, /const editable = !emergency && !offerBlocksPrep\(pub\?\.offers\)/);
   assert.doesNotMatch(game, /if \(L.pub\?\.offers\?\.length\) return/);
   assert.match(game, /document.querySelector\('\.offerov\[role="dialog"\]'\)/);
 });

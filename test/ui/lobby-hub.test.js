@@ -507,7 +507,7 @@ test('选择同盟方式 on a short screen (§35.18 leftover: the key field\'s p
   assert.ok(lobbyCss.includes(`@media ${dev.SHORT_SCREEN_QUERY} {`));
   assert.equal(typeof dev.useMediaQuery, 'function');
   assert.match(lobbySrc, /const shortScreen = useMediaQuery\(SHORT_SCREEN_QUERY\);/);
-  assert.match(lobbySrc.match(/<\$\{AllianceSelect\}[\s\S]*? \/>/)[0], /short=\$\{shortScreen\} \/>$/);
+  assert.match(lobbySrc.slice(lobbySrc.indexOf('${allyOpen ?')), /short=\$\{shortScreen\} \/>/);
   assert.match(readFileSync(path.join(ROOT, 'public/js/ui/device.js'), 'utf8'), /m\.addEventListener\('change', sync\); return \(\) => m\.removeEventListener\('change', sync\);/);
 });
 
@@ -604,7 +604,7 @@ test('official versions (DESIGN §35.23): the cards of the version shown, the wa
   assert.equal(byId(failed, 'proto-loading').length, 0, 'no spinner');
   assert.ok(byClass(failed, 'diff-card').every((c) => c.props.disabled === true));
   // the lobby: the version only on a server that enables versions; the shown difficulty (the fallback) is the one sent
-  assert.match(lobbySrc, /mode, difficulty: mode === 'solo' \? shownSolo : shownCoop, \.\.\.\(testMode && asTest \? \{ test: true \} : \{\}\), \.\.\.\(versions \? \{ version \} : \{\}\),\n {4}\.\.\.\(mode === 'solo' && soloFree && soloTimed === true \? \{ soloUnlimited: true \} : \{\}\),/);
+  assert.match(lobbySrc, /mode, \.\.\.\(mode === 'coop' \? \{ capacity \} : \{\}\), difficulty: mode === 'solo' \? shownSolo : shownCoop, \.\.\.\(testMode && asTest \? \{ test: true \} : \{\}\), \.\.\.\(versions \? \{ version \} : \{\}\),\n {4}\.\.\.\(mode === 'solo' && soloFree && soloTimed === true \? \{ soloUnlimited: true \} : \{\}\),/);
   assert.match(lobbySrc, /const shownSolo = fallbackDifficulty\(solo, difficulty\);/);
   assert.match(lobbySrc, /const pickDifficulty = \(d\) => \{ setDifficulty\(d\); savePref\('lobby\.difficulty', d\); \};/, 'the pref changes only on a pick');
   assert.match(lobbySrc, /<\$\{VersionSwitch\} \/>\s*<\$\{ResumeMatchButton\} \/>/, 'the chip before 恢复本机对局');

@@ -26,6 +26,21 @@ test('co-op pool doubles the measured single-player capacities; only visible, un
   assert.ok(!p2.has(banned[0]) && p2.left(banned[0]) === 0 && p2.take(banned[0]) === 0);
 });
 
+test('five-player pool: current co-op tier III has 45 copies, other tiers and identity overrides round up', () => {
+  const gd = gdOf(), pool = new SharedPool(gd, { scale: 1.25 });
+  const caps = { 1: 30, 2: 35, 3: 45, 4: 40, 5: 20, 6: 13 };
+  for (const [id, entry] of pool.entries) {
+    const scaled = gd.poolCopies(id) * 1.25;
+    const expected = entry.tier === 3 ? Math.floor(scaled) : Math.ceil(scaled);
+    assert.equal(entry.cap, expected, id);
+    if (!Object.hasOwn(DATA.config.economy.poolCopiesOverrides, id)) assert.equal(entry.cap, caps[entry.tier], `${id} tier baseline`);
+    assert.equal(pool.take(id, 100), expected, `${id}: only the expected copies are available`);
+    assert.equal(pool.take(id), 0);
+    assert.equal(pool.give(id, 100), expected, `${id}: returns clamp at the new cap`);
+    assert.equal(pool.left(id), expected);
+  }
+});
+
 test('take/give never go below 0 or above the cap', () => {
   const pool = new SharedPool(gdOf());
   const id = chessOfTier(6)[0];

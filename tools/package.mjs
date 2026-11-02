@@ -118,8 +118,10 @@ export const FOLDER = 'Stronghold-Protocol';
 /** Root files a player gets. */
 export const ROOT_FILES = ['package.json', 'package-lock.json', 'LICENSE', 'NOTICE.md', 'THIRD-PARTY-NOTICES.md', 'README.md', 'CHANGELOG.md'];
 /** The player docs. */
-export const PLAYER_DOCS = ['docs/PLAYING.md', 'docs/DEPLOY.md', 'docs/PLUGINS.md', 'docs/PLUGIN-GUIDE.md',
-  'docs/PLUGIN-DSL.md', 'docs/PLUGIN-API.md', 'docs/SKINS.md', 'docs/plugin-catalog.example.json'];
+export const PLAYER_DOCS = ['docs/PLAYING.md', 'docs/DEPLOY.md', 'docs/ANNOUNCEMENTS.md', 'docs/ASSET_CACHE.md', 'docs/SERVER_SETTINGS.md',
+  'docs/REFERENCES.md', 'docs/LOCAL_ASSET_EXTRACTION.md',
+  'docs/PLAYER_CAPACITY.md', 'docs/WIRE_PROTOCOL.md', 'docs/HTTP_CACHE.md', 'docs/development/README.md',
+  'docs/PLUGINS.md', 'docs/PLUGIN-GUIDE.md', 'docs/PLUGIN-DSL.md', 'docs/PLUGIN-API.md', 'docs/SKINS.md', 'docs/plugin-catalog.example.json'];
 /** The author harness has no test-only dependencies; the rest of test/ stays out. */
 export const AUTHOR_TEST_FILES = ['test/helpers/battleHarness.js'];
 /** Only these repository-owned plugin resources ship, even if an owner's plugin was accidentally tracked. */
@@ -130,9 +132,9 @@ export const RUNTIME_RESEARCH = ['docs/research/03-operators.json', 'docs/resear
 export const PLAYER_SCRIPTS = ['scripts/install-service-windows.ps1', 'scripts/launch.mjs', 'scripts/open-browser.mjs',
   'scripts/run-server.cmd', 'scripts/start-windows-sandbox.bat', 'scripts/start-windows.bat', 'scripts/start-windows.ps1', 'scripts/start.sh'];
 /** The tools a player runs (npm run setup / doctor / assets, the postinstall) and the ones setup starts. */
-export const PLAYER_TOOLS = ['tools/crop-board-atlas.mjs', 'tools/doctor.mjs', 'tools/fetch-assets.mjs', 'tools/fetch-stats-assets.mjs', 'tools/setup.mjs', 'tools/vendor.mjs', 'tools/plugin.mjs'];
+export const PLAYER_TOOLS = ['tools/announcements.mjs', 'tools/asset-cache-pack.mjs', 'tools/crop-board-atlas.mjs', 'tools/doctor.mjs', 'tools/fetch-assets.mjs', 'tools/fetch-stats-assets.mjs', 'tools/plugin.mjs', 'tools/server-settings.mjs', 'tools/setup.mjs', 'tools/vendor.mjs'];
 /** Whole tool directories: fetch-assets' modules, the local-client extraction setup runs. */
-export const PLAYER_TOOL_DIRS = ['tools/assets/', 'tools/local-extract/'];
+export const PLAYER_TOOL_DIRS = ['tools/assets/', 'tools/asset-cache/', 'tools/local-extract/'];
 /** Whole runtime directories (their tracked files). */
 export const RUNTIME_DIRS = ['server/', 'shared/', 'data/', 'public/', 'packs/', 'schemas/'];
 /** Written into the stage, never taken from the checkout: the pack index of the shipped packs, and the release marker. */
@@ -142,7 +144,7 @@ export const shipsPacks = (files) => files.some((f) => /^public\/i18n\/[^/]+\.js
 /** Never from the tracked list: the dev pages, and what only the art plan adds (or npm ci writes). */
 const NOT_TRACKED_SHIP = ['public/dev/', 'public/assets/', 'public/fonts/', 'public/vendor/'];
 /** The npm scripts a player runs: each `node <file>` of them must ship. */
-export const PLAYER_NPM_SCRIPTS = ['start', 'setup', 'doctor', 'launch', 'postinstall', 'vendor', 'assets'];
+export const PLAYER_NPM_SCRIPTS = ['start', 'setup', 'doctor', 'launch', 'postinstall', 'vendor', 'assets', 'assets:pack'];
 /** Markdown copied into the zip. Relative links to anything else are rewritten at stage time. */
 export const PLAYER_MARKDOWN = [...ROOT_FILES, ...PLAYER_DOCS, 'plugins/README.md', 'plugins/AGENTS.md'].filter((f) => f.endsWith('.md'));
 /** Where a packaged doc link points when the file itself is not in the zip. */
@@ -189,7 +191,7 @@ export const FX_ART_PREFIX = 'public/assets/local/fx/';
  * what 0.2.0 leaves out on purpose. A path is refused when it is one of these or lies under one.
  */
 export const REFUSE = ['pv', '3，9，11回合情况', 'review', 'docs/research/10-networking-hosting.md', '.cache', '.claude', '.git',
-  'logs', 'test/e2e/out', 'scripts/service.env.cmd', '.env', 'handoff',
+  'logs', 'runtime', 'test/e2e/out', 'scripts/service.env.cmd', '.env', 'handoff',
   'test', '.github', 'AGENTS.md', 'public/dev', 'node_modules/.cache'];
 
 /** Home-directory paths: macOS / Linux (case as the OS writes them) and Windows (any case; / or \, JSON-escaped too). */
@@ -236,16 +238,43 @@ export function isPlayerFile(rel) {
 /**
  * Split tracked paths into what ships and what is left out (both sorted).
  * @param {string[]} paths
+ * @param {{ root?: string }} [opts] With a root, include the tracked branch Markdown referenced by the shipped docs.
  * @returns {{ keep: string[], drop: string[] }}
  */
-export function selectTracked(paths) {
+export function selectTracked(paths, { root } = {}) {
   const keep = [];
   const drop = [];
   for (const raw of paths) {
     const p = posixRel(raw);
     if (p) (isPlayerFile(p) ? keep : drop).push(p);
   }
-  return { keep: keep.sort(), drop: drop.sort() };
+  if (!root) return { keep: keep.sort(), drop: drop.sort() };
+  const included = new Set([...keep, ...referencedBranchDocs(root, keep, paths)]);
+  return { keep: [...included].sort(), drop: drop.filter((f) => !included.has(f)).sort() };
+}
+
+/** Follow only tracked branch-document links. Source, test, private files and optional art do not join the package. */
+export function referencedBranchDocs(root, seeds, tracked) {
+  const available = new Set(tracked.map(posixRel));
+  const visited = new Set();
+  const found = new Set();
+  const queue = seeds.filter((rel) => rel.endsWith('.md'));
+  for (let i = 0; i < queue.length; i++) {
+    const rel = queue[i];
+    if (visited.has(rel)) continue;
+    visited.add(rel);
+    let text;
+    try { text = fs.readFileSync(path.join(root, rel), 'utf8'); } catch { continue; }
+    for (const [, , href] of markdownLinkMatches(text)) {
+      if (ABSOLUTE_OR_ANCHOR.test(href)) continue;
+      const target = docLinkPath(rel, href);
+      if (!(target === 'docs/PLAYER_CAPACITY.md' || target.startsWith('docs/development/')) || !target.endsWith('.md')
+        || !available.has(target) || isRefused(target) || isJunk(target)) continue;
+      found.add(target);
+      if (!visited.has(target)) queue.push(target);
+    }
+  }
+  return [...found].sort();
 }
 
 export function trackedFiles(root) {
@@ -459,7 +488,7 @@ export function releaseTag(version) {
 function docLinkPath(fromFile, href) {
   const raw = String(href).split('#')[0];
   const dir = path.posix.dirname(posixRel(fromFile));
-  return path.posix.normalize(path.posix.join(dir, raw));
+  return path.posix.normalize(raw.startsWith('/') ? raw.slice(1) : path.posix.join(dir, raw));
 }
 
 /**
@@ -481,16 +510,31 @@ export function playerDocHref(href, fromFile, shipped, version) {
     throw new Error(`packaged doc ${fromFile} links outside the repository: ${href}`);
   }
   const have = shipped instanceof Set ? shipped : new Set(shipped);
-  if (have.has(norm)) return href;
+  if (have.has(norm)) return href.startsWith('/') ? `${path.posix.relative(path.posix.dirname(fromFile), norm)}${hash}` : href;
   const kind = IMAGE_EXT.test(norm) ? 'raw' : 'blob';
   return `${GITHUB_REPO}/${kind}/${releaseTag(version)}/${norm}${hash}`;
 }
 
-function rewriteDocLine(line, fromFile, shipped, version) {
-  return line.replace(/(!?\[[^\]]*\]\()([^)\s]+)\)/g, (_all, pre, href) => `${pre}${playerDocHref(href, fromFile, shipped, version)})`);
+// Match inline code first so examples such as `![说明](assets/banner.png)` never become release links.
+const DOC_LINK_OR_CODE = /(?<!\\)(`+).*?\1(?!`)|(!?\[[^\]]*\]\()([^)\s]+)\)/g;
+
+/** Actual inline Markdown links, excluding fenced and inline code: [full match, opening markup, href]. */
+export function markdownLinkMatches(text) {
+  const out = [];
+  let fenced = false;
+  for (const line of String(text).split('\n')) {
+    if (/^```/.test(line)) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    for (const m of line.matchAll(DOC_LINK_OR_CODE)) if (!m[1]) out.push([m[0], m[2], m[3]]);
+  }
+  return out;
 }
 
-/** Rewrite inline links in a shipped markdown file. Fenced code blocks are left as written. */
+function rewriteDocLine(line, fromFile, shipped, version) {
+  return line.replace(DOC_LINK_OR_CODE, (all, code, pre, href) => code ? all : `${pre}${playerDocHref(href, fromFile, shipped, version)})`);
+}
+
+/** Rewrite inline links in a shipped markdown file. Fenced and inline code are left as written. */
 export function rewritePlayerDoc(text, fromFile, shipped, version) {
   let fenced = false;
   return String(text).split('\n').map((line) => {
@@ -566,7 +610,7 @@ function groupOf(rel) {
 export function plan(root, opts = {}) {
   const lite = !!opts.lite;
   const all = (opts.paths || trackedFiles(root)).map(posixRel);
-  const { keep, drop } = selectTracked(all);
+  const { keep, drop } = selectTracked(all, { root });
   const art = artPlan(root, { lite, jpVoice: opts.jpVoice ?? FULL_ZIP_JP_VOICE, optionalVoice: opts.optionalVoice ?? FULL_ZIP_OPTIONAL_VOICE });
   const pkg = readJson(path.join(root, 'package.json')) || {};
   const lock = readJson(path.join(root, 'package-lock.json')) || {};
@@ -753,7 +797,7 @@ function rewritePlayerStage(stage, p) {
     if (!pkg) throw new Error('package.json in the stage is not JSON');
     fs.writeFileSync(pkgPath, `${JSON.stringify(playerPackageJson(pkg, shipped), null, 2)}\n`);
   }
-  for (const rel of PLAYER_MARKDOWN) {
+  for (const rel of [...shipped].filter((f) => f.endsWith('.md'))) {
     const file = path.join(stage, rel);
     if (!isFile(file)) continue;
     const text = fs.readFileSync(file, 'utf8');

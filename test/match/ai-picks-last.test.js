@@ -1,23 +1,21 @@
-// The co-op room option 「AI 队友最后选择」 (opts.aiPicksLast; GitHub #338): in the strategy draft (BAND_DRAFT) and the
-// 机变 draft (SP_DRAFT) every human seat picks before every AI seat. The drawn order is kept inside each group (a stable
-// partition AFTER the usual shuffle): no extra random draw, so the option off is today's order and the option on moves
-// no random stream. A human under AI 托管, disconnected or departed is still a human (only room.addBot seats are AI).
-// A human's skip passes the turn to the other humans still to pick, ahead of the AI seats [ASSUMED]; with no other
-// human left it goes to the end as without the option.
+// Upstream's aiPicksLast protocol is accepted for compatibility. Co-op always preserves D004/D012:
+// online manual players pick first within each fixed pool group; autoplay, disconnected and AI seats share
+// one automatic category in their drawn order. Solo is unchanged. No setting consumes another random draw.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { PHASE } from '../../shared/constants.js';
+import { ERR, PHASE } from '../../shared/constants.js';
 import { makeMatch } from './harness.js';
 
 const isAi = (pid) => pid.startsWith('ai_');
-/** the stable humans-first partition of a drawn order */
-const humansFirst = (order) => [...order.filter((p) => !isAi(p)), ...order.filter(isAi)];
-/** humans first, then AI seats, each in seat order — 1 host + 3 AI by default */
 const seatsOf = (ids) => ids.map((playerId, seat) => ({ seat, playerId, name: playerId, isBot: isAi(playerId), connected: true }));
+const drawsOf = (m) => Object.fromEntries(['rngDraft', 'rngShop', 'rngBots', 'rngMeta', 'rngWaves'].map((k) => [k, m[k]()]));
+const manual = (m, pid) => {
+  const ps = m.players.get(pid);
+  return ps.alive && !ps.left && !ps.isBot && ps.connected && !ps.autoplay;
+};
 
-/** A match driven to BAND_DRAFT (every human confirms the briefing); `before(m)` runs while still in INFO_CHECK. */
 function toBandDraft(o, before) {
-  const h = makeMatch({ mode: 'coop', ...o }).start();
+  const h = makeMatch({ mode: 'coop', fake: true, ...o }).start();
   if (before) before(h.m);
   for (const ps of h.m.players.values()) if (!ps.isBot && !ps.left) h.m.handle(ps.playerId, { t: 'g.infoReady' });
   h.run(() => h.m.phase !== PHASE.INFO_CHECK);
@@ -25,184 +23,145 @@ function toBandDraft(o, before) {
   return h;
 }
 
-/** The band-draft order (taken at its start, before any skip) and the next draws of the random streams after it. */
-function bandOrder(o, before) {
-  const h = toBandDraft(o, before);
-  const order = h.m.draft.order.slice();
-  const draws = { draft: h.m.rngDraft(), shop: h.m.rngShop(), bots: h.m.rngBots(), meta: h.m.rngMeta(), waves: h.m.rngWaves() };
-  h.m.dispose();
-  return { order, draws };
-}
-
-test('the option: off by default, on only when opts.aiPicksLast === true, never in solo', () => {
-  const mk = (o) => { const h = makeMatch(o); const v = h.m.aiPicksLast; h.m.dispose(); return v; };
-  assert.equal(mk({ mode: 'coop', humans: 1, bots: 3 }), false);
-  assert.equal(mk({ mode: 'coop', humans: 1, bots: 3, aiPicksLast: true }), true);
-  assert.equal(mk({ mode: 'coop', humans: 1, bots: 3, aiPicksLast: 'yes' }), false, 'only a real boolean');
-  assert.equal(mk({ mode: 'solo', humans: 1, aiPicksLast: true }), false, 'solo: nothing to order');
-});
-
-test('band draft, option off: the order is exactly today\'s for the same seed (no option = off)', () => {
-  let humanNotFirst = 0;
-  for (let seed = 1; seed <= 12; seed++) {
-    const o = { seats: seatsOf(['p_0', 'ai_0', 'ai_1', 'ai_2']), seed };
-    const def = bandOrder(o);
-    const off = bandOrder({ ...o, aiPicksLast: false });
-    assert.deepEqual(off, def, `seed ${seed}`);
-    if (def.order[0] !== 'p_0') humanNotFirst++;
-  }
-  assert.ok(humanNotFirst > 0, 'the shuffle does put an AI first without the option (so the next test means something)');
-});
-
-test('band draft, option on, 1 human + 3 AI: the human always picks first; the same shuffle, every random stream unchanged', () => {
-  for (let seed = 1; seed <= 12; seed++) {
-    const o = { seats: seatsOf(['p_0', 'ai_0', 'ai_1', 'ai_2']), seed };
-    const off = bandOrder(o);
-    const on = bandOrder({ ...o, aiPicksLast: true });
-    assert.equal(on.order[0], 'p_0', `seed ${seed}`);
-    assert.deepEqual(on.order, humansFirst(off.order), `seed ${seed}: the AI seats keep their drawn order`);
-    assert.deepEqual(on.draws, off.draws, `seed ${seed}: no extra random draw`);
-  }
-});
-
-test('band draft, option on, 2 humans + 2 AI on interleaved seats: both humans first, in their drawn order', () => {
-  const ids = ['p_0', 'ai_0', 'p_1', 'ai_1'];
-  const seen = new Set();
-  for (let seed = 1; seed <= 12; seed++) {
-    const o = { seats: seatsOf(ids), seed };
-    const off = bandOrder(o);
-    const on = bandOrder({ ...o, aiPicksLast: true });
-    assert.deepEqual(on.order, humansFirst(off.order), `seed ${seed}`);
-    assert.deepEqual(on.order.slice(0, 2).sort(), ['p_0', 'p_1']);
-    seen.add(on.order[0]);
-  }
-  assert.equal(seen.size, 2, 'the humans\' own order is still drawn (either may lead)');
-});
-
-test('band draft, option on: all humans, or all AI seats (tools/matchrun), keep today\'s order', () => {
-  for (const ids of [['p_0', 'p_1', 'p_2', 'p_3'], ['ai_0', 'ai_1', 'ai_2', 'ai_3']]) {
-    for (let seed = 1; seed <= 4; seed++) {
-      const o = { seats: seatsOf(ids), seed };
-      if (ids[0] === 'ai_0') {
-        // no human: INFO_CHECK ends by itself
-        const run = (x) => { const h = makeMatch({ mode: 'coop', ...x }).start(); h.run(() => h.m.phase !== PHASE.INFO_CHECK); const r = h.m.draft.order.slice(); h.m.dispose(); return r; };
-        assert.deepEqual(run({ ...o, aiPicksLast: true }), run(o), `all AI, seed ${seed}`);
-      } else {
-        assert.deepEqual(bandOrder({ ...o, aiPicksLast: true }), bandOrder(o), `all humans, seed ${seed}`);
-      }
-    }
-  }
-});
-
-test('band draft, option on: a human under AI 托管, disconnected or departed is still ordered as a human', () => {
-  for (let seed = 1; seed <= 8; seed++) {
-    const o = { seats: seatsOf(['p_0', 'p_1', 'p_2', 'ai_0']), seed, aiPicksLast: true };
-    const before = (m) => {
-      m.handle('p_0', { t: 'g.autoplay', on: true });
-      m.onDisconnect('p_1');
-      m.onLeave('p_2');
-    };
-    const h = toBandDraft(o, before);
-    assert.equal(h.m.draft.order[3], 'ai_0', `seed ${seed}: ${h.m.draft.order}`);
-    h.m.dispose();
-  }
-});
-
-test('band draft, option on: a skip passes the turn to the other humans, ahead of the AI seats; the last human\'s skip goes to the end [ASSUMED]', () => {
-  const h = toBandDraft({ seats: seatsOf(['p_0', 'ai_0', 'p_1', 'ai_1']), seed: 3, aiPicksLast: true });
-  const m = h.m;
-  const [h1, h2, a1, a2] = m.draft.order;
-  assert.ok(!isAi(h1) && !isAi(h2) && isAi(a1) && isAi(a2), String(m.draft.order));
-  // the first human passes: behind the other human, still before the AI seats
-  assert.deepEqual(m.handle(h1, { t: 'g.bandSkip' }), { ok: true });
-  assert.deepEqual(m.draft.order, [h2, h1, a1, a2]);
-  assert.equal(m.draftTurn(), h2);
-  // the second human passes: behind the first again
-  assert.deepEqual(m.handle(h2, { t: 'g.bandSkip' }), { ok: true });
-  assert.deepEqual(m.draft.order, [h1, h2, a1, a2]);
-  assert.deepEqual(m.handle(h1, { t: 'g.band', bandId: 'band_amiya' }), { ok: true });
-  assert.equal(m.draftTurn(), h2);
-  m.dispose();
-
-  // a lone human (host + AI): no other human to pass to — the skip moves it to the end as without the option
-  const h3 = toBandDraft({ seats: seatsOf(['p_0', 'ai_0', 'ai_1', 'ai_2']), seed: 3, aiPicksLast: true });
-  const order = h3.m.draft.order.slice();
-  assert.equal(order[0], 'p_0');
-  assert.deepEqual(h3.m.handle('p_0', { t: 'g.bandSkip' }), { ok: true });
-  assert.deepEqual(h3.m.draft.order, [...order.slice(1), 'p_0']);
-  h3.m.dispose();
-
-  // option off: the skip still goes to the very end (today's rule)
-  const h4 = toBandDraft({ seats: seatsOf(['p_0', 'ai_0', 'p_1', 'ai_1']), seed: 3 });
-  h4.run(() => !isAi(h4.m.draftTurn() || 'ai_'));
-  const o4 = h4.m.draft.order.slice();
-  const at = h4.m.draft.idx;
-  const cur = h4.m.draftTurn();
-  assert.deepEqual(h4.m.handle(cur, { t: 'g.bandSkip' }), { ok: true });
-  assert.deepEqual(h4.m.draft.order, [...o4.slice(0, at), ...o4.slice(at + 1), cur]);
-  h4.m.dispose();
-});
-
-/** Drive a fake-battle match into the SP draft of round `r`; `flip(m)` runs just before it is entered. */
-function toSpDraft(o, r, flip) {
-  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', fake: true, ...o }).start();
-  const m = h.m;
-  h.drive(() => m.phase === PHASE.ROUND_START && m.round === r);
-  assert.equal(m.round, r);
-  if (flip) flip(m);
-  h.run(() => m.phase === PHASE.SP_DRAFT);
-  assert.equal(m.phase, PHASE.SP_DRAFT);
+// Enter one draft directly: exercise ordering without playing preceding battles.
+function toSpDraft(o, before) {
+  const h = makeMatch({ mode: 'coop', fake: true, ...o });
+  if (before) before(h.m);
+  h.m.round = 3;
+  h.m.enterSpDraft();
+  assert.equal(h.m.phase, PHASE.SP_DRAFT);
   return h;
 }
 
-test('机变 draft, option off vs on from the same state: on = the humans-first partition of the same shuffle; no random stream moves', () => {
-  for (const [ids, seed] of [[['p_0', 'ai_0', 'ai_1', 'ai_2'], 14], [['p_0', 'ai_0', 'p_1', 'ai_1'], 5], [['p_0', 'ai_0', 'ai_1', 'ai_2'], 2]]) {
-    const o = { seats: seatsOf(ids), seed };
-    const off = toSpDraft(o, 3);
-    const on = toSpDraft(o, 3, (m) => { m.aiPicksLast = true; });
-    assert.deepEqual(on.m.sp.order, humansFirst(off.m.sp.order), `seed ${seed}`);
-    assert.deepEqual(on.m.sp.cards, off.m.sp.cards, 'the same cards');
-    for (const k of ['rngDraft', 'rngShop', 'rngBots', 'rngMeta', 'rngWaves']) assert.equal(on.m[k](), off.m[k](), `${k} unchanged (seed ${seed})`);
-    off.m.dispose();
-    on.m.dispose();
+function snapshot(enter, o, before) {
+  const h = enter(o, before);
+  try {
+    const stage = h.m.phase === PHASE.BAND_DRAFT ? h.m.draft : h.m.sp;
+    return { groups: stage.groups.map((g) => ({ id: g.id, order: g.order.slice(), cards: g.cards })), draws: drawsOf(h.m) };
+  } finally { h.m.dispose(); }
+}
+
+function assertManualFirst(m, stage) {
+  for (const g of stage.groups) {
+    const pending = g.order.slice(g.idx);
+    const manualCount = pending.filter((pid) => manual(m, pid)).length;
+    assert.ok(pending.slice(0, manualCount).every((pid) => manual(m, pid)), `group ${g.id}: ${pending}`);
+    assert.ok(pending.slice(manualCount).every((pid) => !manual(m, pid)), `group ${g.id}: ${pending}`);
+    assert.ok(g.order.every((pid) => g.playerIds.includes(pid)), 'no turn moves into another fixed group');
+  }
+}
+
+test('aiPicksLast compatibility: co-op always enables manual priority; solo always disables the setting', () => {
+  for (const mode of ['coop', 'solo']) for (const aiPicksLast of [undefined, false, true, 'yes']) {
+    const h = makeMatch({ mode, humans: 1, bots: 3, aiPicksLast });
+    try { assert.equal(h.m.aiPicksLast, mode === 'coop'); } finally { h.m.dispose(); }
   }
 });
 
-test('机变 draft, option on, 1 human + 3 AI: the human picks first in every 机变 round of the match', () => {
-  for (const seed of [1, 14]) {
-    const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', fake: true, seats: seatsOf(['p_0', 'ai_0', 'ai_1', 'ai_2']), seed, aiPicksLast: true }).start();
-    const m = h.m;
-    const firsts = {};
-    const enter = m.enterSpDraft;
-    m.enterSpDraft = function () {
-      enter.call(this);
-      if (this.sp) firsts[this.round] = this.sp.order[0];
+for (const [name, enter] of [['band', toBandDraft], ['机变', toSpDraft]]) {
+  test(`${name}: legacy option values leave fixed-group orders, cards and every random stream unchanged`, () => {
+    const ids = Array.from({ length: 20 }, (_, i) => i % 4 === 3 ? `ai_${i}` : `p_${i}`);
+    for (const seed of [1, 5, 14]) {
+      const o = { seats: seatsOf(ids), seed };
+      const expected = snapshot(enter, o);
+      for (const aiPicksLast of [false, true, 'yes']) assert.deepEqual(snapshot(enter, { ...o, aiPicksLast }), expected, `seed ${seed}, ${aiPicksLast}`);
+    }
+  });
+
+  test(`${name}: online manual humans lead; autoplay and disconnected humans keep the same drawn order as AI seats`, () => {
+    const ids = ['p_0', 'p_1', 'p_2', 'ai_0'];
+    const makeAutomatic = (m) => {
+      m.players.get('p_0').autoplay = true;
+      m.players.get('p_1').autoplay = true;
+      m.players.get('p_2').connected = false;
     };
-    h.drive(() => h.ended != null || m.round > 9);
-    const rounds = m.gd.spRounds().filter((r) => r <= 9);
-    assert.deepEqual(rounds, [3, 6, 9]);
-    for (const r of rounds) if (firsts[r] != null) assert.equal(firsts[r], 'p_0', `seed ${seed} R${r}`);
-    assert.ok(firsts[3] === 'p_0', 'round 3 is always reached');
-    m.dispose();
-  }
+    let aiBeforeAutomaticHuman = false;
+    for (let seed = 1; seed <= 12; seed++) {
+      const o = { seats: seatsOf(ids), seed };
+      const allAutomatic = snapshot(enter, o, makeAutomatic);
+      const h = enter(o, (m) => { makeAutomatic(m); m.players.get('p_0').autoplay = false; });
+      try {
+        const stage = h.m.phase === PHASE.BAND_DRAFT ? h.m.draft : h.m.sp;
+        const expected = ['p_0', ...allAutomatic.groups[0].order.filter((pid) => pid !== 'p_0')];
+        assert.deepEqual(stage.groups[0].order, expected, `seed ${seed}: one stable manual/automatic partition`);
+        assertManualFirst(h.m, stage);
+        assert.deepEqual(drawsOf(h.m), allAutomatic.draws, `seed ${seed}: statuses draw no extra randomness`);
+        if (expected.indexOf('ai_0') < expected.indexOf('p_1')) aiBeforeAutomaticHuman = true;
+      } finally { h.m.dispose(); }
+    }
+    assert.ok(aiBeforeAutomaticHuman, 'automatic human seats receive no extra priority over AI');
+  });
+
+  test(`${name}: twenty seats reprioritize only the affected group after disconnect, reconnect and autoplay`, () => {
+    const ids = Array.from({ length: 20 }, (_, i) => i % 4 === 3 ? `ai_${i}` : `p_${i}`);
+    const h = enter({ seats: seatsOf(ids), seed: 38 });
+    const m = h.m;
+    try {
+      const stage = m.phase === PHASE.BAND_DRAFT ? m.draft : m.sp;
+      assert.equal(stage.groups.length, 5);
+      assert.deepEqual(stage.groups.map((g) => g.playerIds), m.poolGroups.map((g) => g.playerIds));
+      assertManualFirst(m, stage);
+      const [group, ...others] = stage.groups;
+      const untouched = others.map((g) => ({ order: g.order.slice(), deadline: g.turnDeadline, timer: g.timer, token: g.token }));
+      const [first, second] = group.order;
+      m.onDisconnect(first);
+      assert.equal(group.order[group.idx], second);
+      assertManualFirst(m, stage);
+      m.onReconnect(first);
+      assert.equal(group.order[group.idx], second, 'a returning player waits behind the current manual picker');
+      assertManualFirst(m, stage);
+      assert.deepEqual(m.handle(second, { t: 'g.autoplay', on: true }), { ok: true });
+      assert.notEqual(group.order[group.idx], second);
+      assertManualFirst(m, stage);
+      assert.deepEqual(m.handle(second, { t: 'g.autoplay', on: false }), { ok: true });
+      assertManualFirst(m, stage);
+      assert.deepEqual(others.map((g) => ({ order: g.order.slice(), deadline: g.turnDeadline, timer: g.timer, token: g.token })), untouched);
+    } finally { m.dispose(); }
+  });
+
+  test(`${name}: a departed pending seat cannot prevent the remaining manual player from choosing`, () => {
+    const h = enter({ seats: seatsOf(['p_0', 'p_1', 'p_2', 'ai_0']), seed: 5 });
+    const m = h.m;
+    try {
+      const stage = m.phase === PHASE.BAND_DRAFT ? m.draft : m.sp;
+      const group = stage.groups[0];
+      const [departing, next] = group.order;
+      m.onLeave(departing);
+      assert.equal(group.order[group.idx], next);
+      assertManualFirst(m, stage);
+      assert.equal(m.players.get(departing).alive, false);
+    } finally { m.dispose(); }
+  });
+}
+
+test('band skip remains in its fixed group, passes only to another manual picker and preserves automatic order', () => {
+  const ids = ['p_0', 'p_1', 'ai_0', 'p_2', 'p_3', 'ai_1'];
+  const h = toBandDraft({ seats: seatsOf(ids), seed: 3, aiPicksLast: false });
+  const m = h.m;
+  try {
+    const [group, other] = m.draft.groups;
+    const [first, second, ai] = group.order;
+    const untouched = { order: other.order.slice(), deadline: other.turnDeadline, timer: other.timer };
+    assert.deepEqual(m.handle(first, { t: 'g.bandSkip' }), { ok: true });
+    assert.deepEqual(group.order, [second, first, ai]);
+    assert.deepEqual(m.handle(second, { t: 'g.bandSkip' }), { ok: true });
+    assert.deepEqual(group.order, [first, second, ai]);
+    assert.deepEqual(m.handle(first, { t: 'g.band', bandId: 'band_amiya' }), { ok: true });
+    assert.equal(m.draftTurn(second), second);
+    assert.equal(m.handle(second, { t: 'g.bandSkip' }).error, ERR.ALREADY, 'each manual player has only one skip');
+    assert.deepEqual({ order: other.order.slice(), deadline: other.turnDeadline, timer: other.timer }, untouched);
+  } finally { m.dispose(); }
+
+  const alone = toBandDraft({ seats: seatsOf(['p_0', 'ai_0', 'ai_1', 'ai_2']), seed: 3 });
+  try {
+    const order = alone.m.draft.order.slice();
+    assert.equal(order[0], 'p_0');
+    assert.equal(alone.m.handle('p_0', { t: 'g.bandSkip' }).error, ERR.BAD_TARGET, 'automatic seats do not make a manual skip meaningful');
+    assert.deepEqual(alone.m.draft.order, order);
+  } finally { alone.m.dispose(); }
 });
 
-test('机变 draft, option on, 2 humans + 2 AI interleaved, one under AI 托管: both humans ahead of the AI seats', () => {
-  const o = { seats: seatsOf(['p_0', 'ai_0', 'p_1', 'ai_1']), seed: 5 };
-  const h = toSpDraft({ ...o, aiPicksLast: true }, 3, (m) => { m.handle('p_1', { t: 'g.autoplay', on: true }); });
-  assert.deepEqual(h.m.sp.order.slice(0, 2).sort(), ['p_0', 'p_1']);
-  assert.ok(h.m.sp.order.slice(2).every(isAi));
-  h.m.dispose();
-});
-
-test('solo: the option changes nothing (seat order, no skip)', () => {
-  const run = (aiPicksLast) => {
-    const h = makeMatch({ mode: 'solo', humans: 1, seed: 7, aiPicksLast }).start();
-    h.m.handle('p_0', { t: 'g.infoReady' });
-    h.run(() => h.m.phase !== PHASE.INFO_CHECK);
-    const r = { order: h.m.draft.order.slice(), next: h.m.rngDraft() };
-    h.m.dispose();
-    return r;
-  };
-  assert.deepEqual(run(true), run(undefined));
+test('solo: legacy option values change neither strategy order nor random streams', () => {
+  const expected = snapshot(toBandDraft, { mode: 'solo', humans: 1, seed: 7 });
+  for (const aiPicksLast of [false, true]) assert.deepEqual(snapshot(toBandDraft, { mode: 'solo', humans: 1, seed: 7, aiPicksLast }), expected);
 });

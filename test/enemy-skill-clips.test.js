@@ -43,7 +43,7 @@ const officialKey = (u, s) => {
 test('applyRoleFix checks every clip of a `skills` map: a missing one leaves the resolved slots', () => {
   const roles = { skills: { 0: { begin: null, loop: 'Skill_1', end: null, index: 0, idle: null } } };
   const fix = { skills: { 0: { begin: null, loop: 'Skill_1', end: null, index: 0, idle: null }, 1: { begin: null, loop: 'Skill_9', end: null, index: 1, idle: null } } };
-  assert.deepEqual(applyRoleFix(roles, fix, { Skill_1: 1 }), { roles, missing: ['skills'] });
+  assert.deepEqual(applyRoleFix(roles, fix, { Skill_1: 1 }), { roles, missing: ['skills.1'] });
   assert.deepEqual(applyRoleFix(roles, fix, { Skill_1: 1, Skill_9: 2 }).roles.skills, fix.skills);
 });
 

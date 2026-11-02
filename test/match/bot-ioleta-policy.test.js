@@ -32,6 +32,9 @@ function setup(t, { seed = 11, naturalBans = false } = {}) {
   // preserves the real seed's disabled bonds and public stock for regressions.
   if (!naturalBans) {
     m.pool = new SharedPool(m.gd);
+    // The strategy reads the player's fixed pool, even in a solo fixture.
+    m.poolGroups[0].pool = m.pool;
+    m.playerPools.set(ps.playerId, m.pool);
     m.disabledBonds = [];
   }
   ps.bandId = 'band_ioleta';

@@ -6,7 +6,7 @@ import { t, N_ } from '../../../shared/i18n.js';
 
 /** Target kinds (TARGET_KINDS). */
 export const KIND_LABELS = Object.freeze({
-  operator: N_('干员'), token: N_('召唤物'), enemy: N_('敌人'), item: N_('道具'), bond: N_('盟约'), band: N_('策略'), ui: N_('界面图'),
+  operator: N_('干员'), skin: N_('时装'), token: N_('召唤物'), enemy: N_('敌人'), item: N_('道具'), bond: N_('盟约'), band: N_('策略'), ui: N_('界面图'),
   music: N_('音乐'), sound: N_('音效'),
 });
 

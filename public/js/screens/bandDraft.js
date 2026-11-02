@@ -1,12 +1,10 @@
 // Band draft — BAND_DRAFT "2/2 选择策略" (research 06 §4.2, D1). Left = the draft order as name cards (OrderRow: the
 // doctor's 名片干员 art, avatar, name, state 等待中 / 决策中 / the picked strategy, the strategy box and ✓), the current
 // picker framed; centre = the wall of every strategy allowed for the mode type (portrait and name); one a teammate already
-// picked reads 已被选择 and cannot be chosen again (research 09 §5, guidebook 策略与轮选; the server refuses it too);
+// picked in this fixed pool group reads 已被选择 and cannot be chosen again (research 09 §5, guidebook 策略与轮选; the server refuses it too);
 // right = the detail pane once a portrait is tapped (icon, 初始生命值, name, effect name + rich description) with
 // 确认选择. 跳过选择 / 无法跳过 (co-op, once) sits in the step header's turn line on the player's own turn.
-// One countdown (user playtest #4 item 4): every turn has the same clock (Match BAND_TURN_SECONDS, m.public.draft
-// turnSeconds) and the step header counts it down — m.public.deadline IS the turn's end; the order rows carry no
-// seconds of their own. The highlighted band (the detail pane's) is what a turn that runs out takes: every change of it
+// Each fixed group has its own clock; the header follows the viewer's group and the rows show their group clock. The highlighted band (the detail pane's) is what a turn that runs out takes: every change of it
 // is reported (g.bandFocus) and the server assigns it while it is free, else 「华法琳」, else the first free strategy
 // (timeoutBand). It starts on that default, so the tip under the order list always names what a timeout gives.
 // Solo, and a co-op match with a single human (the server's soloUntimed: draft.untimed): no clock at all.
@@ -40,19 +38,20 @@ import { useGameData, BandIcon, RichText, PlayerAvatar, Sprite, Img } from '../u
 import { StepHeader, ExitModal } from '../ui/matchChrome.js';
 import { MatchInfoDialog, matchInfoModel } from '../ui/matchInfo.js';
 import { MatchEnemies } from '../ui/matchEnemies.js';
-import { actions, act } from '../ui/gameActions.js';
+import { actions, act, draftRequestScope } from '../ui/gameActions.js';
 import { normalizeDraft, sortedPlayers } from '../ui/gameLogic.js';
 import { useStore } from '../store.js';
+import { MatchChatButton } from '../ui/matchChat.js';
 import { data } from '../data.js';
 import { audio } from '../audio.js';
 import { TurnBanner, TURN_BANNER_LATE_MS } from '../ui/turnBanner.js';
 import { onBootArt, preloadBootArt } from '../ui/protocolBoot.js';
 import { reducedMotion } from '../ui/device.js';
 import { useRise } from '../ui/transitions.js';
-import { CARD_KEY, cardStore, cardOperators, cardContext, seatOperator, seatCardSkin, seatArtSrc } from '../ui/seatArt.js';
+import { CARD_KEY, cardStore, cardOperators, cardEnemies, cardPortraitUrl, cardContext, seatOperator, seatCardSkin, seatArtSrc } from '../ui/seatArt.js';
 import { skinsStore, SKINS_KEY } from '../ui/skins.js';
 import { settingsStore } from '../ui/settingsStore.js';
-import { chessPortraitUrl, uiUrl } from '../ui/assetUrls.js';
+import { uiUrl } from '../ui/assetUrls.js';
 import { aggregateStats, peekStatsRecords, strategyBadgeIds, trophyMedalOf } from '../ui/stats.js';
 import { modeOffBonds, bandOffBonds, bandOffLine } from '../ui/gameLogic.js';
 import { t, tParts, tName } from '../../../shared/i18n.js';
@@ -152,7 +151,7 @@ export function autoPickBand(sel, { bands, taken, myPick = null, defaultId = DEF
  *   selected: the auto pick is the highlighted band (not the default standing in for a band a teammate holds)
  */
 export function draftTip({ timed, turnSeconds = null, autoName = null, selected = true }) {
-  const skip = t('联合模拟在选择策略时可以进行一次跳过');
+  const skip = t('联合模拟有其他手动玩家待选时可跳过一次');
   if (!timed) return t('{skip}；本局不限时', { skip });
   const clock = Number(turnSeconds) > 0 ? t('每位博士有 {n} 秒', { n: Math.round(turnSeconds) }) : t('每位博士限时决策');
   if (!autoName) return t('{skip}；{clock}', { skip, clock });
@@ -160,18 +159,37 @@ export function draftTip({ timed, turnSeconds = null, autoName = null, selected 
     : t('{skip}；{clock}，超时将自动选择「{autoName}」', { skip, clock, autoName });
 }
 
+/** A skip may only yield to another player who can still choose manually, before any automated seat. */
+export function hasManualTeammateAfter(draft, players, myId) {
+  if (!Array.isArray(draft?.order)) return false;
+  const at = draft.order.indexOf(myId);
+  if (at < 0) return false;
+  const picks = draft.picks instanceof Map ? draft.picks : new Map(Object.entries(draft.picks || {}));
+  return draft.order.slice(at + 1).some((pid) => {
+    const p = players.find((row) => row.playerId === pid);
+    return p && p.alive && p.connected && !p.isBot && !p.autoplay && !picks.has(pid);
+  });
+}
+
 /**
- * The step header's countdown during the draft: the current turn's (m.public.deadline = draft.turnDeadline) with a
- * turn's length as the gauge total — null when the draft is untimed.
+ * The step header's countdown: the normalized own group when provided, otherwise the legacy public clock.
+ * A completed or untimed group has no clock.
  * @param {any} pub m.public
+ * @param {any} [group] normalized viewer's group
  * @returns {{ deadline: number, total: number|null } | null}
  */
-export function draftClock(pub) {
-  const d = pub && typeof pub.draft === 'object' ? pub.draft : null;
-  if (!d || d.untimed) return null;
-  const deadline = Number(pub.deadline) > 0 ? Number(pub.deadline) : Number(d.turnDeadline) || 0;
+export function draftClock(pub, group = null) {
+  const d = group || (pub && typeof pub.draft === 'object' ? pub.draft : null);
+  if (!d || d.untimed || (group && d.done)) return null;
+  const deadline = group ? Number(d.turnDeadline) || 0 : Number(pub.deadline) > 0 ? Number(pub.deadline) : Number(d.turnDeadline) || 0;
   if (!(deadline > 0)) return null;
   return { deadline, total: Number(d.turnSeconds) > 0 ? Number(d.turnSeconds) : null };
+}
+
+/** Other fixed groups that have selected this strategy; they do not consume my group's copy. */
+export function otherBandGroups(draft, bandId) {
+  return (draft?.groups || []).filter((group) => group.id !== draft.groupId
+    && [...group.picks.values()].includes(bandId));
 }
 
 /**
@@ -224,7 +242,7 @@ function BandText({ band, class: cls }) {
  * @param {{ p: any, i: number, picked: string|null, cur: boolean, self: boolean, arts: (string|null)[]|null, medal: string|null,
  *   gd: any, onPeek: (bandId: string) => void }} props
  */
-function OrderRow({ p, i, picked, cur, self, arts, medal, gd, onPeek }) {
+function OrderRow({ p, i, picked, cur, self, arts, medal, gd, onPeek, group = null, seconds = null }) {
   const flash = useRise(!!picked, 1100);
   const [badArt, setBadArt] = useState([]);
   const art = seatArtSrc(arts, badArt);
@@ -233,11 +251,12 @@ function OrderRow({ p, i, picked, cur, self, arts, medal, gd, onPeek }) {
     <div class="dorder__card">
       ${art ? html`<img key=${art} class="dorder__art" src=${art} alt="" aria-hidden="true" draggable=${false}
         onError=${() => setBadArt((b) => (b.includes(art) ? b : [...b, art]))} />` : null}
-      <span class="dorder__face"><${PlayerAvatar} player=${p} self=${self} />${self ? html`<span class="dorder__me" title=${t('你')}><${Icon} name="user" /></span>` : null}</span>
+      <span class="dorder__face"><${PlayerAvatar} player=${p} self=${self} />${self ? html`<span class="dorder__me" title=${t('你')}><${Icon} name="user" /></span>` : null}
+        ${group ? html`<span class="dorder__group-badge" title=${t('{group}组 · 同组共享卡池', { group: group.label })}>${group.label}</span>` : null}</span>
       <div class="dorder__text">
         <b class="dorder__name">${medal ? html`<${Img} src=${medal} class="dorder__medal" />` : null}<span>${p.name || t('博士')}</span>${p.isBot ? html`<span class="dorder__ai">AI</span>` : null}</b>
         <span class="dorder__state">${picked ? html`<span class="t-mint">${pband?.name || t('已选择')}</span>`
-          : cur ? html`<span class="t-gold">${t('决策中')}</span>` : html`<span class="t-dim">${t('等待中')}</span>`}</span>
+          : cur ? html`<span class="t-gold">${t('决策中')}${seconds != null ? html`<b class="num dorder__secs">${seconds}s</b>` : null}</span>` : html`<span class="t-dim">${t('等待中')}</span>`}</span>
       </div>
     </div>
     ${picked ? html`<button type="button" class="dorder__box is-band" onClick=${() => onPeek(picked)} title=${t('查看「{name}」', { name: pband?.name || '' })}>
@@ -266,22 +285,24 @@ export function BandDraftScreen({ held = null } = {}) {
   const [exit, setExit] = useState(false);
   const [skipped, setSkipped] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
+  const orderRef = useRef(null);
 
   const mode = gd.config?.modes?.[pub?.modeId];
   const offBonds = modeOffBonds(mode); // the bonds this mode never activates (标准: 10 of 23)
   const solo = roomSolo || mode?.type === 'SINGLE' || String(pub?.modeId || '').includes('single');
   const bands = useMemo(() => allowedBands(gd.list('bands'), mode?.type || (solo ? 'SINGLE' : 'MULTI')), [gd.ready, mode?.type, solo, data.locale(), data.contentId()]);
   const players = sortedPlayers(pub);
-  const draft = normalizeDraft(pub?.draft, players);
+  const draft = normalizeDraft(pub?.draft, players, myId, pub?.poolGroups);
+  const grouped = draft.groups.length > 1;
   const myPick = draft.picks.get(myId) || priv?.bandId || null;
   const inOrder = solo || draft.order.includes(myId);
   const myTurn = !myPick && (solo || draft.turnPid === myId);
   const skipsLeft = draft.skipsLeft.has(myId) ? draft.skipsLeft.get(myId) : (skipped ? 0 : 1);
-  // the last doctor still to pick cannot skip (no one to pass the turn to)
-  const canSkip = !solo && myTurn && skipsLeft > 0 && draft.order.filter((pid) => !draft.picks.has(pid)).length > 1;
+  const manualTeammateAfter = hasManualTeammateAfter(draft, players, myId);
+  const canSkip = !solo && myTurn && skipsLeft > 0 && manualTeammateAfter;
   const taken = solo ? new Map() : teammateBands(draft.picks, myId);
   const pickers = new Map(); // bandId → players
-  for (const [pid, bid] of draft.picks) {
+  for (const [pid, bid] of draft.allPicks) {
     const p = players.find((x) => x.playerId === pid);
     if (!pickers.has(bid)) pickers.set(bid, []);
     pickers.get(bid).push(p || { playerId: pid, name: '?' });
@@ -312,22 +333,26 @@ export function BandDraftScreen({ held = null } = {}) {
   }, [myTurn]);
   // the 本局信息 dialog never outlives the turn it was opened in: a turn change (a pick, a skip, a turn that ran out, an
   // AI pick) or my pick closes it, so whoever's turn begins sees the draft
-  const turnKey = `${draft.turnPid || ''}|${myPick || ''}`;
+  const turnKey = `${draft.id || ''}|${draft.turnPid || ''}|${myPick || ''}`;
   useEffect(() => { setInfoOpen(false); }, [turnKey]);
-  // the held screen (inert) keeps no dialog open over it
   useEffect(() => { if (held) { setInfoOpen(false); setExit(false); } }, [!!held]);
+  useEffect(() => {
+    const selector = grouped ? `.draft-order__group[data-group="${draft.groupId}"] .dorder.is-cur` : '.dorder.is-cur';
+    orderRef.current?.querySelector(selector)?.scrollIntoView({ block: 'nearest' });
+  }, [draft.id, draft.groupId, draft.turnPid]);
 
-  // one countdown (user playtest #4 item 4): the current turn's — m.public.deadline
-  const clock = solo ? null : draftClock(pub);
+  // The own group's countdown matches its current picker; parallel groups keep independent deadlines.
+  const clock = solo ? null : draftClock(pub, draft.groups.length ? draft : null);
   // the highlighted band is what a turn that runs out takes (Match.timeoutBand): report every change before my pick
-  const timed = !solo && !!pub?.draft && !pub.draft.untimed;
+  const timed = !solo && !!pub?.draft && !draft.untimed;
   const focusSent = useRef(null);
   useEffect(() => {
     // (a spectator seat — community report #26 — is in no draft order: it never reports)
-    if (!timed || myPick || !sel || focusSent.current === sel || !draft.order.includes(myId)) return;
-    focusSent.current = sel;
-    act('g.bandFocus', { bandId: sel }, { sfx: false, quiet: true });
-  }, [sel, timed, myPick]);
+    const focusKey = `${draft.id || ''}:${draft.groupId || ''}:${sel}`;
+    if (!timed || myPick || !sel || focusSent.current === focusKey || !draft.order.includes(myId)) return;
+    focusSent.current = focusKey;
+    act('g.bandFocus', { bandId: sel, ...draftRequestScope({ draftId: draft.id, groupId: draft.groupId }) }, { sfx: false, quiet: true });
+  }, [sel, timed, myPick, draft.id, draft.groupId]);
 
   // what a timeout gives me: the highlighted band while free, else the default (never 队友已选 — match/phases.js timeoutBand)
   const autoId = autoPickBand(sel, { bands, taken, myPick, defaultId });
@@ -338,33 +363,40 @@ export function BandDraftScreen({ held = null } = {}) {
   const confirm = async () => {
     if (!band || busy || !myTurn || selTaken) return;
     setBusy('pick');
-    await actions.band(band.bandId);
+    await actions.band(band.bandId, { draftId: draft.id, groupId: draft.groupId });
     setBusy(null);
   };
   const skip = async () => {
     if (busy || !canSkip) return;
     setBusy('skip');
-    if (await actions.bandSkip()) setSkipped(true);
+    if (await actions.bandSkip({ draftId: draft.id, groupId: draft.groupId })) setSkipped(true);
     setBusy(null);
   };
   const pickTile = (id) => { setSel(id); setOpen(true); setPeek(null); audio.sfx('tab', { volume: 0.5 }); };
   const peekBand = (id) => { setPeek(id); setOpen(true); audio.sfx('tab', { volume: 0.5 }); };
   const turnName = players.find((p) => p.playerId === draft.turnPid)?.name;
-  useTicker(clock ? 250 : 0);
+  useTicker(clock || draft.groups.some((group) => !group.untimed && group.turnDeadline > 0) ? 250 : 0);
+  // the picker's row shows the step header's number (both read the one turn deadline)
   const turnSecs = clock ? secondsLeft(clock.deadline) : null;
-  const turnLen = Number(pub?.draft?.turnSeconds) > 0 ? Math.round(pub.draft.turnSeconds) : null;
+  const turnLen = Number(draft.turnSeconds) > 0 ? Math.round(draft.turnSeconds) : null;
   // 本局信息: the briefing's blocks (built only while the dialog is open) and the draft's state under it
   const info = infoOpen ? matchInfoModel(pub, { bonds: gd.list('bonds'), chess: gd.chess, mode, priv, diyData: { chess: data.get('chess'), backups: data.get('backups') } }) : null;
   const infoStatus = infoOpen ? draftInfoStatus({ myPick, pickName: myPick ? gd.band(myPick)?.name : null, myTurn, turnName, secs: turnSecs,
-    waiting: !solo && !draft.done }) : null;
+    waiting: !solo && !draft.allDone }) : null;
+  const orderGroups = grouped ? draft.groups : [{ ...draft, id: null, order: solo ? [myId] : draft.order }];
 
   // 名片干员 art of the order rows (as on the room's seat cards: the doctor's pick, else one chosen by the player id), in
   // the doctor's outfit for that operator (B6 picture-only outfits, docs/SKINS.md; the maintainer's decision 4 of 2026-10-21
   // for the seat cards; ui/seatArt.js seatCardSkin): one's own choice at once, a teammate's from the match's public
   // players (m.public.players[].skins), none for another seat while 「显示其他玩家的皮肤」 is off, the default art when the
   // outfit's pictures are not here (chessPortraitUrl) — or fail to load (the row falls back to them: §35.51)
-  // (gd.backups: the room version's 自选编队 pool joins the card list, as on the room's seat cards)
-  const cards = useMemo(() => cardContext(cardOperators(gd.list('chess'), gd.backups), { pending: !gd.backups }), [gd.ready, gd.backups]);
+  // (gd.backups: the room version's 自选编队 pool joins the card list, as on the room's seat cards; cardEnemies: the
+  // room version's enemies with an icon, the same picker as the room's seat cards)
+  const cards = useMemo(() => cardContext(
+    cardOperators(gd.list('chess'), gd.backups),
+    cardEnemies(gd.list('enemies'), data.get('assets')),
+    { pending: !gd.backups },
+  ), [gd.ready, gd.backups, data.get('enemies'), data.get('assets')]);
   const myCard = useStore((s) => s[CARD_KEY], Object.is, cardStore);
   const localSkins = useStore((s) => s[SKINS_KEY], Object.is, skinsStore);
   const otherSkins = useStore((s) => s.otherSkins !== false, Object.is, settingsStore);
@@ -373,7 +405,7 @@ export function BandDraftScreen({ held = null } = {}) {
     const seat = (Array.isArray(roomSeats) && roomSeats.find((x) => x && x.playerId === p.playerId)) || { playerId: p.playerId };
     const op = seatOperator(seat, cards, { myId, myCard });
     const skin = op ? seatCardSkin(p, op.chess.charId, { myId, localSkins, players, otherSkins }) : null;
-    return op ? [chessPortraitUrl(data.get('assets'), op.chess, { skin }), skin ? chessPortraitUrl(data.get('assets'), op.chess) : null] : null;
+    return op ? [cardPortraitUrl(data.get('assets'), op.chess, skin), skin ? cardPortraitUrl(data.get('assets'), op.chess) : null] : null;
   };
   // this browser's records (up to the stats store's size): read once, after the screen and its entry are up, not while
   // it mounts
@@ -390,10 +422,9 @@ export function BandDraftScreen({ held = null } = {}) {
   }, [gd.ready, local]);
 
   // what the right side shows: 已选定策略 after my pick, else the detail pane once opened, else only the wall
-  const allPicked = !!draft.done || (draft.order.length > 0 && draft.order.every((pid) => draft.picks.has(pid)));
+  const allPicked = draft.allDone;
   const view = peek ? 'detail' : inOrder && myPick ? 'done' : open && band ? 'detail' : 'grid';
   const shownBand = peek ? gd.band(peek) : band;
-  const rows = solo ? players.filter((p) => p.playerId === myId) : draft.order.map((pid) => players.find((p) => p.playerId === pid)).filter(Boolean);
 
   const head = allPicked ? html`<div class="dturn is-done"><span class="dturn__txt"><b>${t('策略选择完成')}</b><span>${t('正在进入模拟…')}</span></span><${Icon} name="hourglass" class="dturn__glass" /></div>`
     : myTurn ? html`<div class="dturn is-turn">
@@ -419,15 +450,20 @@ export function BandDraftScreen({ held = null } = {}) {
     <main class="draft__main">
       <aside class="draft-order">
         <div class="draft-order__deco" aria-hidden="true"><i></i><i></i><span>STRONGHOLD PROTOCOL<br />${solo ? 'SINGLE OPERATOR' : 'COLLABORATIVE SYSTEM'}</span></div>
-        <div class="draft-order__rows">
-          ${rows.map((p, i) => {
-            const picked = draft.picks.get(p.playerId) || (p.playerId === myId ? myPick : p.bandId) || null;
-            const cur = !picked && !allPicked && (solo || draft.turnPid === p.playerId);
+        <div class="draft-order__rows draft-order__list" ref=${orderRef}>
+          ${orderGroups.map((group) => html`<div key=${group.id || 'all'} class=${cx('draft-order__group', grouped && 'draft-order__group--framed')}
+              data-group=${group.id} style=${grouped ? `--pool-group-color:${group.color}` : undefined}
+              role=${grouped ? 'group' : undefined} aria-label=${grouped ? t('{group}组 · 同组共享卡池', { group: group.label }) : undefined}>
+          ${group.order.map((pid) => players.find((p) => p.playerId === pid)).filter(Boolean).map((p, i) => {
+            const picked = group.picks.get(p.playerId) || (p.playerId === myId ? myPick : p.bandId) || null;
+            const cur = !picked && !allPicked && (solo || group.turnPid === p.playerId);
+            const secs = grouped ? (!group.untimed && group.turnDeadline > 0 ? secondsLeft(group.turnDeadline) : null) : turnSecs;
             return html`<${OrderRow} key=${p.playerId} p=${p} i=${i} picked=${picked} cur=${cur} self=${p.playerId === myId}
-              arts=${artOf(p)} medal=${p.playerId === myId ? myMedal : null} gd=${gd} onPeek=${peekBand} />`;
-          })}
+              arts=${artOf(p)} medal=${p.playerId === myId ? myMedal : null} gd=${gd} onPeek=${peekBand} group=${grouped ? group : null} seconds=${secs} />`;
+          })}</div>`)}
         </div>
         ${!solo ? html`<p class="draft-order__tip" data-testid="draft-tip">${draftTip({ timed, turnSeconds: turnLen, autoName: myPick ? null : autoName, selected: open && autoId === sel })}</p>` : null}
+        <${MatchChatButton} class="mchat-draft-entry" onBeforeOpen=${() => setInfoOpen(false)} />
       </aside>
       <i class="draft__link" aria-hidden="true"></i>
 
@@ -445,6 +481,7 @@ export function BandDraftScreen({ held = null } = {}) {
         <section class="draft-grid" role="listbox" aria-label=${t('策略')}>
           ${bands.map((b, i) => {
             const isTaken = taken.has(b.bandId);
+            const otherGroups = otherBandGroups(draft, b.bandId);
             const offNames = bandOffBonds(b, offBonds).map((id) => gd.bond(id)?.name || id); // 本局禁用 (still selectable)
             const on = view === 'detail' && !peek && sel === b.bandId;
             const badged = local.badges.has(b.bandId); // (the count is the detail pane's 已通过模拟 N 次)
@@ -457,6 +494,9 @@ export function BandDraftScreen({ held = null } = {}) {
               ${badged ? html`<span class="dband__badge" data-testid="band-badge" aria-hidden="true">
                 <${Sprite} k="statistics/strategyBadge" class="dband__badge-art" fallback=${html`<span class="dband__medal"><${Icon} name="rook" /></span>`} /></span>` : null}
               <${BandOffTag} names=${offNames} />
+              ${otherGroups.length ? html`<span class="dband__groups">${otherGroups.map((group) => html`<span key=${group.id}
+                class="dband__group" style=${`--pool-group-color:${group.color}`} title=${t('{group}组已选择', { group: group.label })}
+                aria-label=${t('{group}组已选择', { group: group.label })}>${group.label}</span>`)}</span>` : null}
               ${isTaken ? html`<span class="dband__taken">${t('已被选择')}</span>` : null}
               ${on ? html`<span class="dband__selmark" aria-hidden="true">SELECTED</span>` : null}
             </button>`;

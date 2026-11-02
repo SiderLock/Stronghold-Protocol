@@ -9,6 +9,7 @@
 .settle { overflow: hidden; overflow: clip; background: #040606; color: #eef3f1; }
 /* the sprites sit in boxes of their own (theme.css caps an img at its parent, which is 0 wide round the target point) */
 .settle img { max-width: none; }
+.settle__storage { position: absolute; top: .12rem; right: .16rem; z-index: 6; }
 .settle__stage { position: absolute; left: 50%; top: 50%; width: 19.2rem; height: 10.8rem; transform: translate(-50%, -50%) scale(var(--k, 1)); }
 .settle__barbg { position: absolute; left: -10rem; right: -10rem; top: 9rem; bottom: -6rem; background: linear-gradient(180deg, #0d1010, #070909 40%); border-top: 1px solid rgba(200, 214, 210, .1); }
 .settle__barbg .sprite { position: absolute; left: 0; top: 0; width: 100%; height: 1.8rem; object-fit: fill; }

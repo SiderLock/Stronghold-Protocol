@@ -9,7 +9,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { ERR, PHASE } from '../../shared/constants.js';
 import { makeMatch, DATA } from '../match/harness.js';
-import { teammateBands, timeoutBand, allowedBands, autoPickBand, draftClock, draftTip, draftSelection } from '../../public/js/screens/bandDraft.js';
+import { teammateBands, timeoutBand, allowedBands, autoPickBand, draftClock, draftTip, draftSelection, hasManualTeammateAfter } from '../../public/js/screens/bandDraft.js';
 import { BAND_TURN_SECONDS } from '../../server/match/Match.js';
 
 const TURN_MS = BAND_TURN_SECONDS * 1000;
@@ -37,7 +37,7 @@ describe('server: skip requires a successor and remaining quota', () => {
       assert.equal(m.draftTurn(), last);
       assert.equal(m.publicView().draft.order.length, humans, 'the published order retains finished players');
       assert.equal(m.draft.skipsLeft[last], 1);
-      assert.deepEqual(m.handle(last, { t: 'g.bandSkip' }), { error: ERR.BAD_TARGET, detail: 'nobody to pass to' });
+      assert.deepEqual(m.handle(last, { t: 'g.bandSkip' }), { error: ERR.BAD_TARGET, detail: 'no manual teammate to pass to' });
       assert.equal(m.draftTurn(), last);
       assert.equal(m.draft.skipsLeft[last], 1, 'a refused skip consumes no quota');
       assert.deepEqual(m.handle(last, { t: 'g.band', bandId: m.defaultBand(last) }), { ok: true });
@@ -117,6 +117,25 @@ describe('UI: teammateBands', () => {
     assert.equal(t.has('band_z'), false);
     assert.equal(teammateBands(null, 'me').size, 0);
   });
+});
+
+test('the skip button only offers a turn to another connected, manual player who has not picked', () => {
+  const players = [
+    { playerId: 'me', alive: true, connected: true, isBot: false, autoplay: false },
+    { playerId: 'bot', alive: true, connected: true, isBot: true, autoplay: false },
+    { playerId: 'peer', alive: true, connected: true, isBot: false, autoplay: false },
+  ];
+  const draft = { order: ['me', 'peer', 'bot'], picks: new Map() };
+  assert.equal(hasManualTeammateAfter(draft, players, 'me'), true);
+  assert.equal(hasManualTeammateAfter(draft, players, 'peer'), false, 'only AI remains');
+  draft.picks.set('peer', 'band_amiya');
+  assert.equal(hasManualTeammateAfter(draft, players, 'me'), false, 'peer already picked');
+  draft.picks.clear();
+  players[2].connected = false;
+  assert.equal(hasManualTeammateAfter(draft, players, 'me'), false, 'offline peer cannot manually pick');
+  players[2].connected = true;
+  players[2].autoplay = true;
+  assert.equal(hasManualTeammateAfter(draft, players, 'me'), false, 'AI-controlled peer cannot manually pick');
 });
 
 describe('UI: draftSelection (review regression)', () => {
@@ -268,6 +287,7 @@ describe('UI: timeoutBand (the tip names what a timeout gives me)', () => {
     const [a, b, c, d] = m.draft.order;
     for (const picks of [[], ['band_bldsk'], ['band_bldsk', 'band_amiya'], ['band_amiya', 'band_duyaoy'], ['band_bldsk', 'band_amiya', 'band_duyaoy']]) {
       m.draft.picks = Object.fromEntries(picks.map((id, i) => [[a, b, c][i], id]));
+      if (m.draft.groups?.length) m.draft.groups[0].picks = m.draft.picks;
       const taken = teammateBands(new Map(Object.entries(m.draft.picks)), d);
       assert.equal(timeoutBand(all, taken), m.defaultBand(d), `picks ${picks}`);
     }
@@ -295,7 +315,7 @@ describe('UI: one countdown and the highlighted band (user playtest #4 item 4)',
     const m = h.m;
     h.sched.advance(1);
     const turn = m.draftTurn();
-    assert.ok(turn && !turn.startsWith('ai_'), `a human's turn after the AI seats picked at once (${m.draft.order})`);
+    assert.ok(turn && !turn.startsWith('ai_'), `a human chooses before the AI seats (${m.draft.order})`);
     const pub = m.publicView();
     assert.equal(pub.deadline, pub.draft.turnDeadline, 'one countdown');
     assert.equal(pub.draft.turnSeconds, BAND_TURN_SECONDS);
@@ -319,11 +339,11 @@ describe('UI: one countdown and the highlighted band (user playtest #4 item 4)',
     assert.equal(draftSelection('band_bldsk', { bands, taken: new Map([['band_bldsk', ['a']]]), myPick: null, myTurn: true }), 'band_amiya', 'taken on my turn ⇒ the default');
     assert.match(draftTip({ timed: true, turnSeconds: 30, autoName: '华法琳' }), /每位博士有 30 秒，超时将自动选择当前选中的「华法琳」/);
     assert.match(draftTip({ timed: true, turnSeconds: 30, autoName: '阿米娅', selected: false }), /超时将自动选择「阿米娅」$/);
-    assert.equal(draftTip({ timed: true, turnSeconds: 30, autoName: null }), '联合模拟在选择策略时可以进行一次跳过；每位博士有 30 秒');
-    assert.equal(draftTip({ timed: false, autoName: '华法琳' }), '联合模拟在选择策略时可以进行一次跳过；本局不限时');
+    assert.equal(draftTip({ timed: true, turnSeconds: 30, autoName: null }), '联合模拟有其他手动玩家待选时可跳过一次；每位博士有 30 秒');
+    assert.equal(draftTip({ timed: false, autoName: '华法琳' }), '联合模拟有其他手动玩家待选时可跳过一次；本局不限时');
   });
 
-  test('a single human with AI teammates: the draft is untimed (soloUntimed), keeps the co-op order and its skip', () => {
+  test('a single human with AI teammates: the draft is untimed and cannot skip into the AI block', () => {
     const h = draftOf({ humans: 1, bots: 3, seed: 4 });
     const m = h.m;
     h.run(() => m.draftTurn() === 'p_0' || m.phase !== PHASE.BAND_DRAFT, { maxTime: 1000 });
@@ -336,7 +356,9 @@ describe('UI: one countdown and the highlighted band (user playtest #4 item 4)',
     h.sched.advance(10 * 60_000);
     assert.equal(m.phase, PHASE.BAND_DRAFT, 'waits for the player');
     assert.equal(m.draftTurn(), 'p_0');
-    if (m.draft.order.length - m.draft.idx > 1) assert.deepEqual(m.handle('p_0', { t: 'g.bandSkip' }), { ok: true }, 'the co-op skip stays');
+    assert.equal(m.draft.order[0], 'p_0', 'the human chooses first');
+    assert.equal(hasManualTeammateAfter({ order: m.draft.order, picks: new Map() }, pub.players, 'p_0'), false);
+    assert.equal(m.handle('p_0', { t: 'g.bandSkip' }).error, ERR.BAD_TARGET, 'no manual teammate to pass to');
     m.dispose();
   });
 });

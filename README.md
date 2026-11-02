@@ -1,10 +1,71 @@
+## 卫戍协议 20 人版
+
+本 fork 基于 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 原作和 [LongQianChen（龙千尘）的多人分支](https://github.com/LongQianChen/Stronghold-Protocol)，持续维护 **最多 20 人合作、固定分组玩法、皮肤与特效、网络和移动端体验**。完整同步基线为 **0.3.1**，另选择性移植了部分上游 0.3.2 开发中的改进；不代表已经完整同步 0.3.2。
+
+感谢原作者和龙千尘提供实现基础，也感谢社区开发者公开分享代码与思路。[下方致谢](#开发者致谢与功能来源)列出每位作者提供了什么、我们如何采用。
+
+### 相对上游的主要扩展
+
+以下于 **2026-10-23** 对照作者 `master` 的 [`c9d804f4`](https://github.com/sganggs/Stronghold-Protocol/commit/c9d804f470b8d7422ae04eb66faf671cef21ad52) 核对。这里列的是本分支的功能增量，包含继承龙千尘的多人能力和本 fork 后续适配；不把上游已有的插件系统、基础皮肤选择、Spine 渲染与官方特效播放列为本分支原创。上游后续更新时，差异可能变化。
+
+| 方向 | 本分支提供的扩展 | 详细说明 |
+|---|---|---|
+| **20 人与固定分组** | 房间容量可选 4 / 8 / 10 / 16 / 20，默认 8；六人起按实际参战人数分组，各组独立共享干员与装备库存，策略和机变按组并行、组内轮选，保留组内手动真人优先。 | [多人容量与规则](docs/PLAYER_CAPACITY.md) |
+| **多人联防与领袖适配** | 按固定组数扩展联防，最多五轮并可逐轮投票取消后续轮次；领袖血池、退场缩放与搭档分配适配多人，保留全房支援和跨组信标。 | [多人容量与规则](docs/PLAYER_CAPACITY.md) |
+| **找房与房间协作** | 房间列表、快速匹配、在线及游玩人数、公开匹配开关、目录观战、局内文字聊天；等候房可换空位 / AI 座位，换真人座位需对方同意；房主可转让，权限跟随本人。 | [服主配置](docs/SERVER_SETTINGS.md)、[换座规则](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/DECISIONS.md#d040) |
+| **队友申请重刷** | 非房主可以在开局简报页申请重刷，由房主发起原有全员投票；适配 20 席、全部固定组库存、插件对局和紧急冻结保护。 | [重刷申请规则](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/DECISIONS.md#d041) |
+| **皮肤、召唤物与语音** | 在上游皮肤基础上扩展动态小人预览、召唤物随主人换装、皮肤独立语音槽、穿搭导入导出，以及本机客户端皮肤提取、朝向和动作元数据修复。 | [皮肤功能](docs/SKINS.md) |
+| **时装特效与动作修复** | 读取客户端的时装特效替换映射，让已有技能与命中特效跟随时装；补充挂点、魔王特效和部分时装动作修复。缺少素材时保留回退，不代表所有时装与弹道变体均已支持。 | [皮肤与特效](docs/SKINS.md)、[提取参考](docs/LOCAL_ASSET_EXTRACTION.md) |
+| **多人网络与连接诊断** | 紧凑 WebSocket 编码、多人默认压缩和公共状态发送预算；慢连接合并同阶段旧状态，连续异常才显示服务器处理、页面运行或连接延迟提醒，补充服务端测量帮助归因。 | [网络协议与测量](docs/WIRE_PROTOCOL.md)、[HTTP 缓存](docs/HTTP_CACHE.md) |
+| **素材预缓存与下载恢复** | 完整目录及 SHA-256 核验、已有素材包导入、增量复用和在线补齐；本人授权后优先加载当前所需素材，再独立后台补齐。停滞请求释放名额，失败项后置重试，保留已校验文件。 | [预缓存](docs/ASSET_CACHE.md)、[加载与授权缓存](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/ASSET_LOADING.md) |
+| **服主运维** | 文件公告、置顶与显式局内通知；动态 AI 数量上限、下载预算和完整预缓存准入；带宽紧急保护及恢复。自动带宽检测默认关闭，由服主按需开启。 | [公告管理](docs/ANNOUNCEMENTS.md)、[服主配置](docs/SERVER_SETTINGS.md) |
+| **移动端与计算、渲染优化** | 30 / 60 / 不限帧率，可关闭的移动端自动分辨率；场景准备 Worker、AI 预演进程池、图片和特效资源回收、骨骼变换复用、满额粒子跳过无效生成、素材摘要增量复用。 | [移动端与资源维护](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/MOBILE_PERFORMANCE.md)、[运行性能](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/RUNTIME_PERFORMANCE.md) |
+
+这些多人规则是本分支的适配选择，具体边界以[已确认决定](https://github.com/SiderLock/Stronghold-Protocol/blob/master/docs/development/DECISIONS.md)为准。已有测量不等于 20 真人长期游玩或手机真机验收：极低共享带宽下并发下载仍可能延迟，页面提示也不能单独证明是玩家网络的问题。
+
+### 已提前采用的上游改进
+
+作者 `dev` 的对照版本为 [`218647c6`](https://github.com/sganggs/Stronghold-Protocol/commit/218647c6e07531a6c86e2a7b53f9d4c786446197)。下列工作已有上游实现，单独列出来源：
+
+| 改进 | 来源与本分支采用方式 |
+|---|---|
+| **图片时装可穿** | 移植 sganggs 的 [0.3.2 B6 / `77b91081`](https://github.com/sganggs/Stronghold-Protocol/commit/77b91081c7988de7a8fc5304df59fe938f5b5c7c)：只有图片的时装也能穿，商店、详情与结算按席位取图，战斗沿用默认模型。这项已在作者 dev，不属于本分支原创。 |
+| **初始化正则复用** | 采用 hesperine 的 [PR #823](https://github.com/sganggs/Stronghold-Protocol/pull/823)，减少官方描述扫描重复创建正则；作者 dev 已合并。 |
+| **Windows 测试路径兼容** | 参考并沿用 zasx77771 的 [PR #739](https://github.com/sganggs/Stronghold-Protocol/pull/739)，统一皮肤守卫的路径分隔符；作者 master 已包含。 |
+
+### 开发者致谢与功能来源
+
+感谢以下开发者提供实现、修复与设计思路。表中区分随上游继承、直接移植和设计参考；完整冻结版本、采用范围与许可证说明见 [来源与致谢](docs/REFERENCES.md)。
+
+| 开发者与参考 | 提供的功能或思路 | 本分支如何采用 |
+|---|---|---|
+| **[sganggs](https://github.com/sganggs/Stronghold-Protocol)** 与上游贡献者 | 浏览器游戏本体、确定性战斗模拟、规则考证、插件系统、基础皮肤和官方特效系统。 | 作为实现基础持续同步，并选择性移植图片时装等改进。 |
+| **[LongQianChen（龙千尘）](https://github.com/LongQianChen/Stronghold-Protocol)** | 20 人容量、固定分组与并行轮选、多人联防、紧凑协议、预缓存及服主运维基础。 | 继承多人分支，继续适配上游规则、皮肤与性能维护。 |
+| **[Flotiarenor](https://github.com/sganggs/Stronghold-Protocol/pull/685)** · [PR #686](https://github.com/sganggs/Stronghold-Protocol/pull/686) | 外观插件的多套皮肤与立绘、按席位选择及按 owner 渲染。 | 随上游继承，是后续皮肤扩展的基础。 |
+| **[alien-zzy · PR #652](https://github.com/sganggs/Stronghold-Protocol/pull/652)**；**[AoyamaT1 · PR #85](https://github.com/sganggs/Stronghold-Protocol/pull/85)** | 换装交互与动态小人预览方向；#85 是 #652 引用的更早换装参考。 | 参考交互思路，复用现有插件和资源缓存适配预览；不宣称直接移植了 #85 或整个 #652。 |
+| **[FengYuPrime](https://github.com/FengYuPrime/Stronghold-Protocol/blob/master/docs/FORK-SKIN-VFX.md)** | 召唤物随主人换装、时装特效替换映射、资源覆盖层与特效键名排查思路。 | 在本分支已有提取器、展示字段和 VFX 系统中适配，没有整套照搬其 fork。 |
+| **[xcdoge · PR #734](https://github.com/sganggs/Stronghold-Protocol/pull/734)** | 皮肤记录可携带独立语音槽的设计。 | 接入现有语音解析与默认回退。 |
+| **[hesperine · PR #823](https://github.com/sganggs/Stronghold-Protocol/pull/823)** | 复用描述扫描匹配器，减少初始化分配。 | 采用其正则复用优化，保留原解析结果。 |
+| **[zasx77771 · PR #857](https://github.com/sganggs/Stronghold-Protocol/pull/857)**、[PR #739](https://github.com/sganggs/Stronghold-Protocol/pull/739) | 队友申请、房主发起重刷投票的实现，以及 Windows 路径守卫修复。 | 融合重刷申请并适配多人状态机，沿用跨平台兼容思路。 |
+| **[YuriRestia · PR #70](https://github.com/sganggs/Stronghold-Protocol/pull/70)** | 英文界面与补充译文。 | 保留已有翻译采用范围及署名，详见 [NOTICE](NOTICE.md)。 |
+| **[isHarryh（Harry Huang）· Ark-Unpacker](https://github.com/isHarryh/Ark-Unpacker)**、**[K0lb3 · UnityPy](https://github.com/K0lb3/UnityPy)** | LZ4AK 解包与 Unity 资源解析基础。 | 本地提取工具保留原 BSD-3-Clause / MIT 许可与声明，详见 [第三方许可](THIRD-PARTY-NOTICES.md)。 |
+
+本 fork 另有连接质量提示、背压状态合并、场景预处理、缓存生命周期及粒子、骨骼热路径等自行实现和测试。上表不把其他作者的工作归为本分支原创，也不表示所有参考 PR 都已获上游合并。
+
+源码与素材分别遵守各自权利边界：本次维护只发布源码和必要说明，素材提取产物、素材包与私人报告不加入提交。准备素材请看[本地提取参考](docs/LOCAL_ASSET_EXTRACTION.md)；致谢、非商业用途和上游同步均不能代替素材权利人的授权，详见 [NOTICE](NOTICE.md)。
+
+---
+
+
 # 卫戍协议：盟约 · Stronghold Protocol: Alliance
 
-《明日方舟》季节性自走棋塔防玩法「卫戍协议：盟约」的**非官方同人复刻**：浏览器即开即玩，单人或 1–4 人联机合作。
+《明日方舟》季节性自走棋塔防玩法「卫戍协议：盟约」的**非官方同人复刻**：浏览器即开即玩，单人或最多 20 人联机合作。
 
 ![version](https://img.shields.io/badge/version-0.3.3-2ea44f)
 ![license](https://img.shields.io/badge/code%20license-GPL--3.0--or--later-blue)
 ![node](https://img.shields.io/badge/node-22%20%7C%2024-339933)
+
+
 
 ## 声明
 
@@ -26,6 +87,8 @@ English summary: [below](#english).
 
 ## 目录
 
+- [本分支扩展](#相对上游的主要扩展) · [上游改进来源](#已提前采用的上游改进) · [开发者致谢](#开发者致谢与功能来源)
+
 - [声明](#声明) · [简介](#简介) · [功能一览](#功能一览)
 - [快速开始](#快速开始)：[整合包](#方式一整合包推荐) · [从源码运行](#方式二从源码运行) · [系统要求](#系统要求) · [端口与配置](#端口与配置) · [局域网联机](#和朋友一起玩局域网)
 - [插件](#插件) · [联机方式](#联机方式) · [操作](#操作) · [文档](#文档) · [开发与测试](#开发与测试) · [项目结构](#项目结构)
@@ -35,7 +98,7 @@ English summary: [below](#english).
 
 「卫戍协议：盟约」是自走棋 + 塔防：休整期在调度中心招募干员、摆阵、配装备，作战期干员自动部署，迎击从红门涌来的敌人，漏过去的敌人扣目标生命值。本项目在浏览器里复刻了这一玩法，规则和数值尽量对照官方数据表与 PRTS 核对。
 
-- **独立模拟**（单人）与**同盟模拟**（1–4 人**合作**，没有 PvP；空位可以加 AI 队友）。
+- **独立模拟**（单人）与**同盟模拟**（最多 20 人**合作**，没有 PvP；空位可以加 AI 队友）。
 - 服务器是一个 Node.js 程序，**战斗在各玩家的浏览器里模拟**（和官方一样），服务器只管经济与回合，一台低功耗小主机就能开服。
 - 当前版本 0.3.3：0.3.2 的热修复，修正第一期商店装备空栏与跨版本装备图标缓存；第一期上／下半也允许满整备区互换（维护者决定的有意偏差）。默认仍提供四个官方版本，详见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -43,7 +106,7 @@ English summary: [below](#english).
 
 - **完整的一局**：确认本局信息 → 策略轮选（40 名策略）→ 14 回合 → 结算称号；险境及以上满足条件时进入第 15 回合「隐秘核心」。
 - **4 种难度**：标准 / 险境 / 绝境 / 终极，独立与同盟各一套参数，均取自官方数据。
-- **休整期**：招募、刷新、冻结、升级调度中心；整备区与临时整备区；从整备区拖到棋盘部署，用**方向轮盘**选择朝向。同盟模拟的卡池共用。
+- **休整期**：招募、刷新、冻结、升级调度中心；整备区与临时整备区；从整备区拖到棋盘部署，用**方向轮盘**选择朝向。同盟模拟的卡池按座位分组共享。
 - **晋升精锐**：3 名同名干员自动合成精锐，并获得一次高一阶的免费招募。
 - **干员与调配**：112 名可招募干员（+ 精锐）及其技能、天赋和特质；开局前可以为每名干员选择携带的技能（283 个技能全部手工实现）和精锐的模组，调配页也可以换成活动「物资调配处」那样的卡片视图。
 - **盟约与层数**：23 个盟约（8 个势力核心盟约 + 附加盟约），层数整局保留，每个盟约最多 999 层。
@@ -53,7 +116,7 @@ English summary: [below](#english).
 - **联防**：有人漏怪、又有人完美作战时，完美作战的队友带着阵容帮忙拦截漏掉的敌人。
 - **最终攻势与隐秘核心**：两人共享一个战场，全队共同削减同一条领袖血条；10 个敌方领袖，巨型领袖约 5×3 格的受击范围，以及官方的限伤规则。
 - **结算**：官方样式的个人战报和同盟结算页，卫戍认证等级（官方 60 级、每日防卫目标，按本机记录计算）；卫戍之星、不朽盟约、坚若磐石等 6 个结算称号。
-- **断线重连**：同盟模拟断线后 10 分钟内重新打开页面即可回到原座位，掉线期间按原阵容自动作战，也可以「暂离」交给 AI 托管；独立模拟 24 小时内可以回来继续（同一个浏览器）。
+- **断线重连**：同盟模拟断线后 10 分钟内重新打开页面即可回到原座位，掉线期间按原阵容自动作战，也可以「暂离」交给 AI 托管；独立模拟默认在断线后 2 小时内可以回来继续（同一个浏览器）。
 - **交互细节**：漏怪时顶栏用红字 + 「−N」标记待扣的目标生命值（结算时才扣除）；点选、拖放和配发装备都按地上的方格；购买、升级和机变选卡都需要点两次确认；只有一名玩家时除作战外不计时。
 - **画面与声音**：真实 Spine 小人、官方 BGM 与音效、表情（6 套 × 6 个）、作战特效；可选的官方 3D 棋盘（需要从本机客户端提取贴图）。
 - **手机与电脑**：触摸拖拽、长按查看详情，推荐横屏；设置里可以调低画质；界面被挖孔、刘海或曲面边缘挡住时可以用「异形屏适配」调整四边，界面偏大时可以在同一栏调小「界面大小」。
@@ -83,7 +146,7 @@ English summary: [below](#english).
 ### 方式二：从源码运行
 
 ```bash
-git clone https://github.com/sganggs/Stronghold-Protocol.git
+git clone https://github.com/SiderLock/Stronghold-Protocol.git
 cd Stronghold-Protocol
 npm install        # 安装依赖（postinstall 会把 pixi / preact / three 复制到 public/vendor）
 npm run setup      # 检查环境，并从公开镜像下载约 720 MB 美术 / 音频（可中断，再次运行会续传）
@@ -139,7 +202,7 @@ npm start          # 启动服务器：http://localhost:3000
 3. 所有人点「准备就绪」后房主开始。
 4. 同一 Wi-Fi / 路由器下的朋友打开启动窗口里列出的地址（形如 `http://192.168.x.x:3000`）即可。打不开时多半是防火墙：Windows 首次启动时在弹窗中允许「专用网络」，或运行 `npm run doctor` 查看具体命令；访客 Wi-Fi 常开启「AP 隔离」，也会导致连不上。
 
-刷新页面或断线后，同盟模拟 10 分钟内、独立模拟 24 小时内重新打开即可回到原座位。服务器把房间和对局都保存在内存里，**重启服务器会结束所有对局**。
+刷新页面或断线后，同盟模拟 10 分钟内、独立模拟默认 2 小时内重新打开即可回到原座位。服务器把房间和对局都保存在内存里，**重启服务器会结束所有对局**。
 
 ## 插件
 
@@ -250,6 +313,8 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 
 ## 致谢与数据来源
 
+本 fork 的皮肤、特效、性能与联机参考作者及采用范围见 **[来源与致谢](docs/REFERENCES.md)**；素材准备见 **[本地提取参考](docs/LOCAL_ASSET_EXTRACTION.md)**。本次分支整合只发布源码与说明，不上传提取产物或游戏素材包。上游同步不改变素材的权利归属，也不自动授权再次分发。
+
 - 游戏数据：[Kengxxiao/ArknightsGameData](https://github.com/Kengxxiao/ArknightsGameData)。
 - 素材来源：[yuanyan3060/ArknightsGameResource](https://github.com/yuanyan3060/ArknightsGameResource)、[fexli/ArknightsResource](https://github.com/fexli/ArknightsResource)、[isHarryh/Ark-Models](https://github.com/isHarryh/Ark-Models)、[ArknightsAssets/ArknightsAssets2](https://github.com/ArknightsAssets/ArknightsAssets2)；字体来自 [TimWangZi/The-font-of-Arknights](https://github.com/TimWangZi/The-font-of-Arknights) 与 Google Fonts（Noto Sans SC）。详见 [docs/ASSETS.md](docs/ASSETS.md)。
 - 规则核对参考：[PRTS 明日方舟中文 Wiki](https://prts.wiki/)。
@@ -272,7 +337,7 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 
 ## English
 
-An **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess tower-defense mode *Stronghold Protocol: Alliance*, played in the browser: solo, or 1–4 player co-op (AI teammates can fill seats). Combat is simulated in each player's browser, so a low-power PC can host.
+An **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess tower-defense mode *Stronghold Protocol: Alliance*, played in the browser: solo, or up to 20-player co-op (AI teammates can fill seats). Co-op rooms offer 4 / 8 / 10 / 16 / 20 seats, defaulting to 8; see [capacity rules](docs/PLAYER_CAPACITY.md). Combat is simulated in each player's browser, so a low-power PC can host.
 
 - **Run:** download the full bundle `Stronghold-Protocol-v<version>.zip` (~800 MB, all the art inside, the Chinese, Japanese, English, Korean and own-language operator voices, the official battlefield scenes and the official battle effects included) from [Releases](../../releases/latest) — or the lite one, `…-lite.zip` (~25 MB), which downloads the art (~720 MB) on its first start; from 0.2.1 on, `…-update.zip` holds only the files changed since the earlier 0.2.x releases: stop the server, extract it over an existing 0.2.x folder and start again (the first start deletes the files the new version dropped and verifies the install) — install Node.js 22 or 24, then double-click `scripts\start-windows.bat` (Windows) or run `./scripts/start.sh` (macOS / Linux) and open <http://localhost:3000>. From source: `npm install && npm run setup && npm start` (setup downloads ~720 MB of art from public mirrors, the emotes and the how-to-play pages included; the official 3D board, some official HUD icons, two enemy models and 39 summon models are extracted from a local Arknights client — without one the game uses the 2D board and look-alike stand-ins (the summons show their avatars), and a server can copy `public/assets/local/` and `data/local-assets.json` from the full bundle of the same version).
 - **Languages:** Chinese (the default), English, 日本語, 한국어 and 繁體中文 — switch on the title screen or in Settings. Game texts come from the official clients; the Japanese, Korean and Traditional Chinese interface strings are machine translations (corrections welcome: [docs/I18N.md](docs/I18N.md)).

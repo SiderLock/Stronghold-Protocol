@@ -240,4 +240,7 @@ line is lost rather than clamped.
   boss_8 ABYSS 7.2M, gives 144000, which lands. A pool above 14999950 (≈ 2.08 × that; ceil(0.02 × max) = 300000)
   would turn every drone kill into a cancelled hit [ASSUMED: the official routes this loss through the same
   `_OnBossEnemyTakeDamage` check]. Any change to the pool size (an alive-scaled pool, a new difficulty) should keep this
-  in view; a real-kit test pins the line (`test/sim/playtest6_limits.test.js`, 【死亡集群】).
+  in view. The capacity fork now deliberately exempts this scripted percentage loss from the hit limit, preserving
+  the mechanism on a 20-player pool; `test/sim/playtest6_limits.test.js` covers the old boundary and the 36M pool
+  for both server and client simulation. Ordinary attacks and transferred damage keep the official limit; see
+  [PLAYER_CAPACITY.md](../PLAYER_CAPACITY.md).

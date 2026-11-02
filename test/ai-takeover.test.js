@@ -2,18 +2,61 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {startServer} from '../server/index.js';
 import {TestClient} from './helpers/wsClient.js';
-async function fixture(t,testRoom=false,enabled=true){
+async function fixture(t,testRoom=false,enabled=true,capacity=4,wire=false){
   const srv=await startServer({port:0,host:'127.0.0.1',quiet:true,botRehearsal:0}),clients=[];
   t.after(async()=>{for(const c of clients)await c.terminate().catch(()=>{});await srv.close();});
   if(testRoom){srv.lobby.testMode='local';srv.lobby.setTestHost('127.0.0.1');}
-  const player=async(name,token)=>{const c=await TestClient.connect(srv.url.replace('http','ws')+'/ws');clients.push(c);const w=await c.hello(name,token,{delta:1});c.id=w.playerId;c.token=w.token;return c;};
-  const host=await player('Host');assert.equal((await host.request({t:'room.create',mode:'coop',difficulty:'NORMAL',...(testRoom?{test:true}:{})})).t,'ok');const room=[...srv.lobby.rooms.values()][0];
+  const player=async(name,token)=>{const c=await TestClient.connect(srv.url.replace('http','ws')+'/ws',{wire});clients.push(c);const w=await c.hello(name,token,{delta:1});c.id=w.playerId;c.token=w.token;return c;};
+  const host=await player('Host');assert.equal((await host.request({t:'room.create',mode:'coop',difficulty:'NORMAL',capacity,...(testRoom?{test:true}:{})})).t,'ok');const room=[...srv.lobby.rooms.values()][0];
   if(enabled)assert.equal((await host.request({t:'room.setAiTakeover',on:true})).t,'ok');
   const mate=await player('Mate');await mate.request({t:'room.join',code:room.code,testAck:true});await mate.request({t:'room.ready',ready:true});
-  for(let i=0;i<2;i++)await host.request({t:'room.addBot'});assert.equal((await host.request({t:'room.start'})).t,'ok');
+  for(let i=0;i<capacity-2;i++)await host.request({t:'room.addBot'});assert.equal((await host.request({t:'room.start'})).t,'ok');
   const m=room.match;m.startRound(1);m.phase='PREP';m.setDeadline(0);for(const p of m.order)p._botPrepToken=(p._botPrepToken||0)+1;
   const late=await player('Late');if(testRoom)assert.equal((await late.request({t:'room.spectate',code:room.code})).t,'error','test-room admission requires acknowledgement');assert.equal((await late.request({t:'room.spectate',code:room.code,testAck:true})).t,'ok');return {srv,room,m,host,mate,late,player};
 }
+
+test('twenty-seat AI handover preserves the fixed pool group and both negotiated transports',async t=>{
+  const {room,m,host,mate,late}=await fixture(t,false,true,20,true);
+  const bot=m.order.at(-1), id=bot.playerId, pool=m.poolFor(bot), groups=structuredClone(m.poolGroups.map(g=>g.playerIds));
+  const token=late.token;
+  assert.equal((await late.request({t:'room.aiRequest',botId:id})).t,'ok');
+  const vote=room.aiTakeoverVotes[0];
+  await host.request({t:'room.aiVote',voteId:vote.id,approve:true});
+  late.clearInbox();
+  assert.equal((await mate.request({t:'room.aiVote',voteId:vote.id,approve:true})).t,'ok');
+  const welcome=await late.waitFor('welcome',w=>w.playerId===id);
+  assert.equal(welcome.wire,1);
+  assert.equal(welcome.token,token);
+  assert.equal(bot.isBot,false);
+  assert.equal(m.poolFor(bot),pool);
+  assert.deepEqual(m.poolGroups.map(g=>g.playerIds),groups);
+  assert.equal((await late.request({t:'g.refresh'})).t,'ok');
+  assert.ok(late.log.some(msg=>msg.t==='m.state'),'state deltas remain active after the identity handover');
+});
+test('a departed host can return as spectator, leave, and take over an AI', async t => {
+  const {room, m, host, mate, player} = await fixture(t);
+  const id = host.id, bot = m.order[2];
+  assert.equal((await host.request({t:'room.leave'})).t, 'ok');
+  assert.equal(room.seatOf(id).left, true);
+  assert.equal((await host.request({t:'room.spectate', code:room.code})).t, 'ok');
+  assert.equal((await host.request({t:'room.leave'})).t, 'ok');
+  assert.equal(room.spectatorOf(id), null);
+  assert.equal(m.spectators.has(id), false);
+  assert.equal((await host.request({t:'room.spectate', code:room.code})).t, 'ok');
+  await host.terminate();
+  const resumed = await player('Host', host.token);
+  assert.equal(resumed.id, id);
+  assert.equal(room.spectatorOf(id).connected, true);
+  assert.equal(room.seatOf(id).connected, false);
+  assert.equal((await resumed.request({t:'room.aiRequest', botId:bot.playerId})).t, 'ok');
+  const vote = room.aiTakeoverVotes[0];
+  resumed.clearInbox();
+  assert.equal((await mate.request({t:'room.aiVote', voteId:vote.id, approve:true})).t, 'ok');
+  await resumed.waitFor('welcome', w => w.playerId === bot.playerId);
+  assert.equal(room.spectatorOf(id), null);
+  assert.equal(bot.isBot, false);
+  assert.equal((await resumed.request({t:'room.leave'})).t, 'ok');
+});
 test('spectator AI handover needs a strict majority and retains inventory, identity and reconnect token',async t=>{
   const {srv,room,m,host,mate,late,player}=await fixture(t),bot=m.order[2],old=late.id,id=bot.playerId,token=late.token;bot.funds=71;const piece=bot.acquireChess('chess_char_1_01_a',{fromPool:false});
   assert.equal((await host.request({t:'room.aiRequest',botId:id})).t,'error','a player cannot replace another seat');

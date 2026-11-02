@@ -748,6 +748,20 @@ const sameMods = (a, b) => {
   return true;
 };
 
+// Canonical key for the flat scalar mods used by real spawn schedules. Preserve sameMods's
+// shallow equality: undefined fields disappear, -0 equals 0, and non-JSON values use the old comparator.
+function modsKey(mods) {
+  const keys = mods && typeof mods === 'object' ? Object.keys(mods).filter(k => mods[k] !== undefined).sort() : [];
+  const pairs = [];
+  for (const key of keys) {
+    const value = mods[key];
+    if (value !== null && !['string', 'boolean', 'number'].includes(typeof value)) return null;
+    if (typeof value === 'number' && !Number.isFinite(value)) return null;
+    pairs.push([key, value]);
+  }
+  return JSON.stringify(pairs);
+}
+
 /**
  * Semantic validation of a client's BattleResult against the battle's spec (DESIGN §14 "Result validation"). The
  * payload already passed shared/protocol.js isBattleResult (types, sizes). Checks: every spec player reported and
@@ -783,10 +797,20 @@ export function validateClientResult(spec, raw, { gd = null } = {}) {
     const pids = Object.keys(raw.perPlayer);
     if (pids.length !== B.players.size || pids.some((pid) => !B.players.has(pid))) return bad('players');
     const spawnMods = new Map();
+    const byEnemyMods = new Map();
+    const byMods = new Map();
     for (const s of spec.spawns || []) {
       if (!s || typeof s.enemyKey !== 'string') continue;
       if (!spawnMods.has(s.enemyKey)) spawnMods.set(s.enemyKey, []);
       spawnMods.get(s.enemyKey).push(s);
+      const key = modsKey(s.mods);
+      if (key !== null) {
+        let index = byEnemyMods.get(s.enemyKey);
+        if (!index) { index = new Map(); byEnemyMods.set(s.enemyKey, index); }
+        // First matching schedule entry wins, as in Array.find (including across different sources).
+        if (!index.has(key)) index.set(key, s);
+        if (!byMods.has(key)) byMods.set(key, s);
+      }
     }
     const leakCount = new Map();
     // 联防: (enemyKey, leaker) budget shared by the helpers' leaks and the never-spawned re-entries
@@ -833,9 +857,13 @@ export function validateClientResult(spec, raw, { gd = null } = {}) {
         // (a split, a summon) carries its parent's mods — the round multipliers, a bounty id — so the leak's mods may
         // equal another schedule entry's: keep those (dropping them would re-enter it weaker and lose its bounty)
         const cands = spawnMods.get(key) || [];
-        const match = cands.find((s) => sameMods(s.mods ?? null, l.mods ?? null)) || null;
+        const modKey = modsKey(l.mods);
+        const match = (modKey === null ? cands.find(s => sameMods(s.mods ?? null, l.mods ?? null))
+          : byEnemyMods.get(key)?.get(modKey)) || null;
         const src = match || cands[0] || null;
-        const parent = match ? null : (spec.spawns || []).find((s) => s && typeof s.enemyKey === 'string' && sameMods(s.mods ?? null, l.mods ?? null)) || null;
+        const parent = match ? null : (modKey === null
+          ? (spec.spawns || []).find(s => s && typeof s.enemyKey === 'string' && sameMods(s.mods ?? null, l.mods ?? null))
+          : byMods.get(modKey)) || null;
         const modsOf = (s) => (s && s.mods ? { ...s.mods } : null);
         const mods = match ? modsOf(match) : parent ? modsOf(parent) : modsOf(src);
         let sourcePlayerId = typeof l.sourcePlayerId === 'string' ? l.sourcePlayerId : null;

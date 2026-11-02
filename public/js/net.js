@@ -1,8 +1,10 @@
 // WebSocket client for the game server (DESIGN §8).
 //
 // - One socket at ws(s)://<host>/ws, JSON text frames `{ t, ...payload }`.
-// - Auto-reconnect with exponential backoff + jitter; a heartbeat (`ping`) measures latency and
-//   detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
+// - Auto-reconnect with exponential backoff + jitter; a heartbeat (`ping`) measures latency, and
+//   a stalled WebSocket upgrade is abandoned after CONNECT_TIMEOUT_MS. Restored connectivity probes
+//   an apparently open socket too. Queued requests are checked for expiry again before a resync flush.
+// - The heartbeat detects dead sockets (a ping left unanswered — no inbound frame at all — for DEAD_AFTER_MS ⇒
 //   close ⇒ reconnect). Measured from the oldest unanswered ping, not from the last inbound frame,
 //   so a background tab whose timers the browser throttles to ~1/min is not mistaken for dead.
 // - On every (re)connect, once a player name is known, sends `hello {name, token, version}`;
@@ -31,17 +33,28 @@
 
 import { PROTOCOL_VERSION, ERR_TEXT } from '../../shared/constants.js';
 import { validateC2S } from '../../shared/protocol.js';
+import { WIRE_VERSION, encodeWire, decodeWire } from '../../shared/wireCodec.js';
 import { N_ } from '../../shared/i18n.js';
+import { assetCache } from './assetCache.js';
+import { RecentPeak } from '../../shared/networkTiming.js';
+import { ConnectionQuality } from './connectionQuality.js';
+
+const ASSET_ADMISSION_TYPES = new Set(['room.create', 'room.join', 'lobby.quickMatch', 'room.spectate', 'lobby.join', 'lobby.spectate']);
 import { STATE_DELTA_VERSION, StateReceiver } from '../../shared/stateDelta.js';
 import { PeerTransport } from './p2p.js';
 
 export const REQUEST_TIMEOUT_MS = 8000;
+// [ASSUMED] Bound a stalled upgrade independently of the hello/heartbeat clocks.
+export const CONNECT_TIMEOUT_MS = 15000;
 export const HELLO_TIMEOUT_MS = 8000;
 export const PING_INTERVAL_MS = 4000;
 export const DEAD_AFTER_MS = 15000;
 /** Minimum gap between two `state.resync` requests: a gap in one channel is answered by the full frame of the next one. */
 export const RESYNC_GAP_MS = 1000;
 export const BACKOFF = Object.freeze({ base: 500, factor: 2, max: 10000, jitter: 0.2 });
+const EMERGENCY_RETRY_MS = 120000;
+const EMERGENCY_RETRY_MIN_MS = 30000;
+const EMERGENCY_RETRY_JITTER_MS = 5000;
 
 /** Client-side error codes (in addition to shared ERR codes). */
 export const CLIENT_ERR_TEXT = Object.freeze({
@@ -119,6 +132,7 @@ export class Net {
    * @param {any} [opts.WebSocket] WebSocket constructor (default: globalThis.WebSocket)
    * @param {() => (string|null)} [opts.getToken] reconnect-token provider for `hello`
    * @param {() => ({ noReplace: boolean, claimAt?: number })} [opts.getTokenClaim] local ownership for this hello
+   * @param {(type?: string) => (object|null|Promise<object|null>)} [opts.getAssetCacheReadiness] local entry scan (never used for hello/resume)
    * @param {() => number} [opts.now]
    * @param {() => number} [opts.random]
    * @param {{setTimeout: Function, clearTimeout: Function, setInterval: Function, clearInterval: Function}} [opts.timers]
@@ -129,7 +143,9 @@ export class Net {
     this.WS = opts.WebSocket || null;
     this.getToken = typeof opts.getToken === 'function' ? opts.getToken : () => null;
     this.getTokenClaim = typeof opts.getTokenClaim === 'function' ? opts.getTokenClaim : () => null;
+    this.getAssetCacheReadiness = typeof opts.getAssetCacheReadiness === 'function' ? opts.getAssetCacheReadiness : null;
     this.now = opts.now || (() => Date.now());
+    this._monoNow = opts.now || (() => globalThis.performance?.now() ?? Date.now());
     this.random = opts.random || Math.random;
     this.timers = opts.timers || {
       setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
@@ -145,12 +161,21 @@ export class Net {
     this.helloName = null;     // name we sent in the hello that got the last welcome
     this.serverName = null;    // name as normalised by the server
     this.playerId = null;
+    this.wireVersion = 0;
+    this._wireDisabled = false; // Decoding failure downgrades this page to JSON on its next full resync.
     this.attempt = 0;          // consecutive failed connection attempts
     this.retryAt = 0;          // epoch ms of the next reconnect attempt (0 = none)
     this.ping = null;          // last RTT in ms
     this.lastError = null;     // last NetError relevant to the connection (e.g. hello rejected)
     this.clockOffset = 0;
     this.clockSynced = false;
+    this.quality = null;
+    this._quality = new ConnectionQuality();
+    this._clientLag = new RecentPeak(this._monoNow);
+    this._pingSamples = new Map();
+    this._lagTimer = null;
+    this._lagDue = 0;
+    this._visibleSince = 0;
 
     this._rid = 0;
     this._pending = new Map(); // rid -> { msg, resolve, reject, timer, sent }
@@ -158,8 +183,11 @@ export class Net {
     this._listeners = new Map();
     this._manualClose = false;
     this._quietSwap = false;   // next connect() keeps the current status (see CLOSE_HELLO_TIMEOUT)
+    this._helloEmergencyBlocked = false; // only refused visitors; match members retain normal reconnect priority
+    this._emergencyRetryAt = 0;
     this._openedAt = 0;
     this._reconnectTimer = null;
+    this._connectTimer = null;
     this._pingTimer = null;
     this._helloTimer = null;
     this._helloRid = null;
@@ -213,6 +241,7 @@ export class Net {
       status: this.status, attempt: this.attempt, retryAt: this.retryAt, ping: this.ping,
       lastError: this.lastError ? { code: this.lastError.code, text: this.lastError.message } : null,
       playerId: this.playerId,
+      quality: this.quality,
     };
   }
 
@@ -225,6 +254,7 @@ export class Net {
 
   /** Open the socket (no-op when already open/connecting). Also resumes after close()/replacement. */
   connect() {
+    if (this._helloEmergencyBlocked && this._reconnectTimer && this.now() < this.retryAt) return;
     const quiet = this._quietSwap;
     this._quietSwap = false;
     if (this.ws && (this.ws.readyState === WS_OPEN || this.ws.readyState === WS_CONNECTING)) return;
@@ -247,6 +277,12 @@ export class Net {
     ws.onmessage = (ev) => { if (ws === this.ws) this._onMessage(ev?.data); };
     ws.onerror = () => { /* followed by close */ };
     ws.onclose = (ev) => { if (ws === this.ws) this._onClose(ev); };
+    this._connectTimer = this.timers.setTimeout(() => {
+      if (ws !== this.ws || ws.readyState !== WS_CONNECTING) return;
+      this._teardownSocket();
+      try { ws.close(4000, 'connect timeout'); } catch { /* ignore */ }
+      this._scheduleReconnect();
+    }, CONNECT_TIMEOUT_MS);
   }
 
   /** Close for good (no reconnect). Pending requests reject with CLOSED. */
@@ -264,7 +300,9 @@ export class Net {
   /** Skip the backoff wait and reconnect right now (used on `online` / tab focus / retry button). */
   retryNow() {
     if (this._manualClose) return;
-    if (this.ws && (this.ws.readyState === WS_OPEN || this.ws.readyState === WS_CONNECTING)) return;
+    // Restored connectivity can leave a dead TCP socket looking OPEN to the browser.
+    if (this.ws?.readyState === WS_OPEN) { this.probe(); return; }
+    if (this.ws?.readyState === WS_CONNECTING) return;
     this.connect();
   }
 
@@ -302,6 +340,7 @@ export class Net {
   }
 
   _onOpen() {
+    this._clearTimer('_connectTimer', 'clearTimeout');
     this._openedAt = this.now();
     this._lastRx = this._openedAt;
     this._unansweredSince = null;
@@ -342,7 +381,11 @@ export class Net {
 
   _scheduleReconnect() {
     if (this._manualClose) return;
-    const delay = backoffDelay(this.attempt, this.random);
+    // A rejected visitor cannot bypass emergency admission throttling by refocusing the tab.
+    const remaining = this._emergencyRetryAt > this.now() ? this._emergencyRetryAt - this.now() : EMERGENCY_RETRY_MS;
+    const delay = this._helloEmergencyBlocked
+      ? Math.max(EMERGENCY_RETRY_MIN_MS, Math.min(EMERGENCY_RETRY_MS, remaining)) + Math.round(this.random() * EMERGENCY_RETRY_JITTER_MS)
+      : backoffDelay(this.attempt, this.random);
     this.attempt += 1;
     this.retryAt = this.now() + delay;
     this._clearTimer('_reconnectTimer', 'clearTimeout');
@@ -359,8 +402,15 @@ export class Net {
       ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
     }
     this.ws = null;
+    this.wireVersion = 0;
     this._unansweredSince = null;
     this._clearTimer('_pingTimer', 'clearInterval');
+    this._clearTimer('_lagTimer', 'clearInterval');
+    this._clientLag.clear();
+    this._pingSamples.clear();
+    this._quality.reset();
+    this.quality = null;
+    this._clearTimer('_connectTimer', 'clearTimeout');
     this._clearTimer('_helloTimer', 'clearTimeout');
     this._helloRid = null;
     this._helloSentName = null;
@@ -383,9 +433,8 @@ export class Net {
   _sendHello() {
     if (!this.name) return;
     const rid = this._nextRid();
-    // `delta` says this build decodes `m.state` frames (shared/stateDelta.js). A server that does not speak it ignores
-    // the field, and the client then keeps receiving the plain m.public / m.private frames it always got.
     const msg = { t: 'hello', rid, name: this.name, version: PROTOCOL_VERSION, delta: STATE_DELTA_VERSION };
+    if (!this._wireDisabled) msg.wire = WIRE_VERSION;
     let token = null;
     try { token = this.getToken(); } catch { token = null; }
     if (typeof token === 'string' && token.length > 0 && token.length <= 64) {
@@ -419,8 +468,11 @@ export class Net {
     this.helloName = this._helloSentName;
     this.serverName = typeof msg.name === 'string' && msg.name ? msg.name : this._helloSentName;
     this.playerId = msg.playerId ?? null;
+    this.wireVersion = !this._wireDisabled && msg.wire === WIRE_VERSION ? WIRE_VERSION : 0;
     this.attempt = 0;
     this.lastError = null;
+    this._helloEmergencyBlocked = false;
+    this._emergencyRetryAt = 0;
     if (Number.isFinite(msg.serverNow)) this._addClockSample(msg.serverNow + (this.ping ?? 0) / 2 - this.now(), Infinity);
     this._setStatus('online');
     this._flushQueue();
@@ -431,10 +483,12 @@ export class Net {
     this._clearTimer('_helloTimer', 'clearTimeout');
     this._helloRid = null;
     this.lastError = new NetError(msg.code, msg.msg, msg.detail);
+    const alreadyBlocked = this._helloEmergencyBlocked;
+    if (msg.code === 'SERVER_EMERGENCY') this._helloEmergencyBlocked = true;
     this._setStatus('connected');
     // Queued requests can't be sent without a session.
     this._failPending('OFFLINE', true);
-    this._emit('helloError', this.lastError);
+    if (msg.code !== 'SERVER_EMERGENCY' || !alreadyBlocked) this._emit('helloError', this.lastError);
   }
 
   // ---- requests --------------------------------------------------------------------------------
@@ -454,6 +508,22 @@ export class Net {
    * @returns {Promise<any>}
    */
   request(t, fields = {}, opts = {}) {
+    const body = fields && typeof fields === 'object' ? fields : {};
+    const establishing = ['connecting', 'handshaking', 'reconnecting'].includes(this.status) && this.name && !this._manualClose;
+    if (this.getAssetCacheReadiness && ASSET_ADMISSION_TYPES.has(t) && !Object.hasOwn(body, 'assetCache')
+      && (this.status === 'online' || establishing) && !validateC2S({ ...body, t })) {
+      const send = (report) => this._request(t, report ? { ...body, assetCache: report } : body, opts);
+      let pending;
+      try { pending = this.getAssetCacheReadiness(t); }
+      catch { return send(null); }
+      // Optional mode stays usable with unsupported/failed local storage; strict mode is checked on the server.
+      if (pending && typeof pending.then === 'function') return Promise.resolve(pending).catch(() => null).then(send);
+      return send(pending);
+    }
+    return this._request(t, body, opts);
+  }
+
+  _request(t, fields = {}, opts = {}) {
     return new Promise((resolve, reject) => {
       if (t === 'hello') { reject(new NetError('BAD_MSG', 'use setName() for hello')); return; }
       const rid = this._nextRid();
@@ -471,16 +541,8 @@ export class Net {
         return;
       }
       const timeout = Number.isFinite(opts.timeout) && opts.timeout > 0 ? opts.timeout : REQUEST_TIMEOUT_MS;
-      const entry = { msg, resolve, reject, sent: false, timer: null };
-      entry.timer = this.timers.setTimeout(() => {
-        if (this._pending.get(rid) !== entry) return;
-        this._pending.delete(rid);
-        if (entry.sent) {
-          this._expired.add(rid);
-          if (this._expired.size > 64) this._expired.delete(this._expired.values().next().value);
-        }
-        reject(new NetError('TIMEOUT'));
-      }, timeout);
+      const entry = { msg, resolve, reject, sent: false, timer: null, expiresAt: this.now() + timeout };
+      entry.timer = this.timers.setTimeout(() => this._expireRequest(rid, entry), timeout);
       this._pending.set(rid, entry);
       if (this.status === 'online') entry.sent = this._sendRaw(msg);
     });
@@ -505,7 +567,8 @@ export class Net {
     const ws = this.ws;
     if (!ws || ws.readyState !== WS_OPEN) return false;
     try {
-      ws.send(JSON.stringify(obj));
+      const compact = this.wireVersion === WIRE_VERSION && obj.t !== 'hello';
+      ws.send(JSON.stringify(compact ? encodeWire(obj, 'c2s') : obj));
       return true;
     } catch (err) {
       console.warn('[net] send failed', err);
@@ -514,9 +577,22 @@ export class Net {
   }
 
   _flushQueue() {
-    for (const entry of this._pending.values()) {
+    for (const [rid, entry] of this._pending) {
+      // Background throttling can defer the timeout callback until after welcome.
+      if (this.now() >= entry.expiresAt) { this._expireRequest(rid, entry); continue; }
       if (!entry.sent) entry.sent = this._sendRaw(entry.msg);
     }
+  }
+
+  _expireRequest(rid, entry) {
+    if (this._pending.get(rid) !== entry) return;
+    this._pending.delete(rid);
+    this._clearEntryTimer(entry);
+    if (entry.sent) {
+      this._expired.add(rid);
+      if (this._expired.size > 64) this._expired.delete(this._expired.values().next().value);
+    }
+    entry.reject(new NetError('TIMEOUT'));
   }
 
   /**
@@ -569,6 +645,17 @@ export class Net {
       console.warn('[net] dropped non-JSON frame');
       return;
     }
+    if (Array.isArray(msg)) {
+      try {
+        if (this.wireVersion !== WIRE_VERSION) throw new Error('wire not negotiated');
+        msg = decodeWire(msg, 's2c');
+      } catch (error) {
+        console.warn('[net] compact decode failed; reconnecting with JSON', error.message);
+        this._wireDisabled = true;
+        this.reconnectNow();
+        return;
+      }
+    }
     if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.t !== 'string') return;
     // State-delta transport (shared/stateDelta.js): a negotiated server may compress the two big views into `m.state`
     // frames. They are decoded here and continue as the ordinary m.public / m.private messages every listener already
@@ -597,6 +684,9 @@ export class Net {
       // Do not publish or persist that stale welcome, even if the server had already accepted it.
       if (this._helloToken !== this.getToken()) { this.reconnectNow(); return; }
       this._onWelcome(msg);
+    } else if (t === 'm.emergency') {
+      this._emergencyRetryAt = msg.active
+        ? (Number.isFinite(msg.retryAt) ? msg.retryAt - this.clockOffset : this.now() + EMERGENCY_RETRY_MS) : 0;
     } else if (t === 'pong') {
       this._onPong(msg);
     } else if (isHelloError) {
@@ -642,6 +732,14 @@ export class Net {
   _startHeartbeat() {
     this._clearTimer('_pingTimer', 'clearInterval');
     this._pingTimer = this.timers.setInterval(() => this._heartbeat(), PING_INTERVAL_MS);
+    this._clearTimer('_lagTimer', 'clearInterval');
+    this._lagDue = this._monoNow() + 250;
+    this._visibleSince = this.now();
+    this._lagTimer = this.timers.setInterval(() => {
+      if (globalThis.document?.visibilityState === 'hidden') this._clientLag.clear();
+      else this._clientLag.add(Math.max(0, this._monoNow() - this._lagDue));
+      this._lagDue = this._monoNow() + 250;
+    }, 250);
   }
 
   _heartbeat() {
@@ -662,7 +760,11 @@ export class Net {
   _sendPing() {
     if (this.status !== 'online' && this.status !== 'connected') return;
     const now = this.now();
-    if (this._sendRaw({ t: 'ping', c: now }) && this._unansweredSince == null) this._unansweredSince = now;
+    if (this._sendRaw({ t: 'ping', c: now })) {
+      this._pingSamples.set(now, this._monoNow());
+      if (this._pingSamples.size > 8) this._pingSamples.delete(this._pingSamples.keys().next().value);
+      if (this._unansweredSince == null) this._unansweredSince = now;
+    }
   }
 
   /** Force an immediate latency probe (e.g. when the tab regains focus). */
@@ -674,9 +776,24 @@ export class Net {
     const now = this.now();
     const c = Number(msg.c);
     if (!Number.isFinite(c)) return;
-    const rtt = now - c;
+    const sent = this._pingSamples.get(c);
+    this._pingSamples.delete(c);
+    const rtt = sent == null ? now - c : this._monoNow() - sent;
     if (!(rtt >= 0 && rtt < 60000)) return;
     this.ping = Math.round(rtt);
+    // Recent sampler lateness is evidence of page stalls; hidden-tab throttling is excluded.
+    const visible = globalThis.document?.visibilityState !== 'hidden' && c >= this._visibleSince;
+    const overdue = Math.max(0, this._monoNow() - this._lagDue);
+    const recent = this._clientLag.evidence();
+    const clientLag = overdue >= 100 ? overdue : recent?.ms ?? this._clientLag.read() ?? 0;
+    const clientLagAge = overdue >= 100 ? 0 : recent?.ageMs ?? null;
+    const d = msg.d;
+    const safe = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+    const server = d && typeof d === 'object' ? { loopMs: safe(d.loopMs), handlerMs: safe(d.handlerMs),
+      loopAgeMs: safe(d.loopAgeMs), handlerAgeMs: safe(d.handlerAgeMs),
+      queuedBytes: safe(d.queuedBytes), sendMs: safe(d.sendMs) } : null;
+    this.quality = this._quality.sample({ rtt, server, clientLag, clientLagAge,
+      uploadBytes: Number(this.ws?.bufferedAmount) || 0, visible });
     if (Number.isFinite(msg.s)) this._addClockSample(msg.s + rtt / 2 - now, rtt);
     this._emit('ping', this.ping);
     this._emit('status', this.snapshot());
@@ -711,6 +828,12 @@ export class Net {
     this._hooked = true;
     window.addEventListener('online', () => this.retryNow());
     document.addEventListener('visibilitychange', () => {
+      this._clientLag.clear();
+      this._quality.reset();
+      this.quality = null;
+      this._visibleSince = this.now();
+      this._lagDue = this._monoNow() + 250;
+      this._emit('status', this.snapshot());
       if (document.visibilityState !== 'visible') return;
       if (this.status === 'reconnecting') this.retryNow();
       else if (this.status === 'online' || this.status === 'connected') this.probe();
@@ -1027,4 +1150,11 @@ export function createIdentity(deps = {}) {
 export const identity = createIdentity({ onYield: () => net.reconnectNow(net.helloName || net.name) });
 
 /** Browser connection singleton (created lazily-safe: nothing touches the network until connect()). */
-export const net = new Net({ getToken: () => identity.getToken(), getTokenClaim: () => identity.getTokenClaim() });
+export const net = new Net({ getToken: () => identity.getToken(), getTokenClaim: () => identity.getTokenClaim(),
+  // Optional rooms must stay instant: only the owner's strict admission policy needs a local cache scan.
+  getAssetCacheReadiness: (type) => {
+    const state = assetCache.getState();
+    return state.supported && state.requireAssetCache ? assetCache.admission({ fast: type === 'room.create' }) : null;
+  } });
+net.on('welcome', (message) => assetCache.setRequirement(message.requireAssetCache));
+net.on('lobby.state', (message) => assetCache.setRequirement(message.requireAssetCache));

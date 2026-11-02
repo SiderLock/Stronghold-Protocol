@@ -85,6 +85,15 @@ export default [
     rules,
   },
   {
+    files: ['public/asset-cache-sw.js', 'public/js/asset-cache-worker.js'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'module',
+      globals: { ...globals.browser, ...globals.worker, zip: 'readonly' },
+    },
+    rules,
+  },
+  {
     // The sim runs in every player's browser and on the server, and must give the same bits everywhere. ECMA-262
     // leaves these Math functions (and **) implementation-approximated: engines differ in the last bits.
     files: ['server/sim/**/*.js'],

@@ -182,7 +182,7 @@ test('named operator, band, hammer, 黑云 and warden loops stop at the official
     let grants = 0;
     const ctx = {
       round: orchid.bb.round,
-      gd: { item: () => ({}), chess: () => null },
+      gd: { item: () => ({}), chess: () => null, isTraitFixedItem: () => false },
       grantItem() { grants++; return true; },
       grantChess() { grants++; return true; },
     };

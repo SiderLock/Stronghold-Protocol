@@ -4,6 +4,7 @@ import { setTimeout as pause } from 'node:timers/promises';
 import { PHASE } from '../../shared/constants.js';
 import { runHeadless, validateClientResult, RESULT_GRACE_MS } from '../../server/match/fields.js';
 import { RealScheduler } from '../../server/match/scheduler.js';
+import { FreezeScheduler } from '../../server/match/freezeScheduler.js';
 import { compactResult, createBattleFromSpec, resultDigest } from '../../server/sim/spec.js';
 import { makeMatch } from './harness.js';
 
@@ -87,7 +88,7 @@ for (const verify of ['all', 'sample']) {
     const m = h.m;
     // Install the real scheduler before start, while the harness has no queued timers.
     const scheduler = new RealScheduler();
-    m.sched = scheduler;
+    m.sched = new FreezeScheduler(scheduler, { ownsSource: false });
     t.after(() => { m.dispose(); scheduler.dispose(); });
     const waitFor = async (predicate) => {
       const deadline = Date.now() + 10000;

@@ -15,7 +15,8 @@ describe('renderer recovery after transient resource failures', { skip: !enabled
     srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, MatchClass: RecoveryMatch, seedFn: () => 123 });
     const P = (await import('puppeteer-core')).default;
     browser = await P.launch({ executablePath: CHROME, headless: true,
-      args: ['--no-first-run', '--no-proxy-server', ...(process.platform === 'darwin' ? ['--use-angle=metal'] : []), '--enable-gpu', '--ignore-gpu-blocklist'] });
+      args: ['--no-first-run', '--no-proxy-server', '--no-sandbox', '--enable-gpu', '--ignore-gpu-blocklist',
+        ...(process.platform === 'darwin' ? ['--use-angle=metal'] : [])] });
     mkdirSync(new URL('../e2e/out/', import.meta.url), { recursive: true });
   });
   after(async () => { await browser?.close(); await srv?.close(); });
@@ -137,10 +138,13 @@ describe('renderer recovery after transient resource failures', { skip: !enabled
   });
 
   for (const resource of ['atlas', 'three']) test(`${resource} download can recover the 3D board on visibility`, { skip: !art }, async () => {
-    const page = await browser.newPage(); let failing = true, requests = 0;
+    const context = await browser.createBrowserContext(), page = await context.newPage();
+    let failing = true, requests = 0;
     try {
-      // the imported-art service worker (public/sw.js, PR #628 — registered by an earlier page of this origin) would
-      // fetch the hashed atlas itself, past this page's request interception
+      // Fault injection must reach the network, even after another test warmed the browser / service-worker cache.
+      // The imported-art service worker (public/sw.js, PR #628 — registered by an earlier page of this origin) would
+      // fetch the hashed atlas itself, past this page's request interception.
+      await page.setCacheEnabled(false);
       await page.setBypassServiceWorker(true);
       await page.setRequestInterception(true);
       page.on('request', req => {
@@ -152,6 +156,7 @@ describe('renderer recovery after transient resource failures', { skip: !enabled
       await page.setViewport({ width: 1280, height: 720 });
       await page.goto(`http://127.0.0.1:${srv.port}/dev/render-demo.html?scene=prep&stage=act2autochess_m01&board=3d&panel=0`);
       await page.waitForFunction(() => window.__demo?.ready, { timeout: 30000 });
+      assert.ok(requests > 0, `the ${resource} fault was injected before the board initialized`);
       assert.equal(await page.evaluate(() => window.__demo.stats().board3d.on), false);
       const before = requests; failing = false;
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
@@ -159,6 +164,6 @@ describe('renderer recovery after transient resource failures', { skip: !enabled
       assert.ok(requests > before, 'the failed resource is actually requested again');
       assert.equal(await page.evaluate(() => window.__demo.view.debug.app.view.parentNode.querySelectorAll('canvas').length), 2);
       await page.screenshot({ path: fileURLToPath(new URL(`../e2e/out/recovery-${resource}.png`, import.meta.url)) });
-    } finally { await page.close(); }
+    } finally { await context.close(); }
   });
 });

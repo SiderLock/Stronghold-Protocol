@@ -23,7 +23,9 @@ import { hashedPath } from '../../shared/assetPaths.js';
 import { hash16 } from './assetIndex.js';
 import { noopLog } from './config.js';
 import { mergeLocalChars } from '../plugins/artReferences.js';
+import { mergeLocalSkins } from '../../shared/skins.js';
 export { mergeLocalChars } from '../plugins/artReferences.js';
+export { mergeLocalSkins };
 
 /** The manifests that have a view, by their name under data/. */
 export const VIEW_MANIFESTS = Object.freeze(['assets.json', 'local-assets.json', 'local-fx.json']);
@@ -142,6 +144,9 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
     // Local operator art also works with SP_ASSET_INDEX=0 and during the initial hash scan.
     const localFile = path.join(dir, 'local-assets.json');
     const localStat = name === 'assets.json' ? await fsp.stat(localFile).catch(() => null) : null;
+    // the installation's own outfits (tools/local-extract/skins.py): a sidecar beside the manifest
+    const skinsFile = path.join(dir, 'local-skins.json');
+    const skinsStat = name === 'assets.json' ? await fsp.stat(skinsFile).catch(() => null) : null;
     const indexed = index?.ready && index.size > 0;
     if (!indexed && !localStat) return null;
     const file = path.join(dir, name);
@@ -150,7 +155,8 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
       if (cache.delete(name)) pushModels();
       return null;
     }
-    const key = `${index?.generation || 0}|${st.size}|${st.mtimeMs}|${localStat?.size || 0}|${localStat?.mtimeMs || 0}`;
+    const key = `${index?.generation || 0}|${st.size}|${st.mtimeMs}|${localStat?.size || 0}|${localStat?.mtimeMs || 0}`
+      + `|${skinsStat?.size || 0}|${skinsStat?.mtimeMs || 0}`;
     const hit = cache.get(name);
     if (hit && hit.key === key) return hit.view;
     let doc;
@@ -162,13 +168,22 @@ export function createManifestViews({ dataDir, index, log = noopLog }) {
       pushModels();
       return null;
     }
+    // Both local sidecars merge into the served copy. When hashing is off (a scan still running, or
+    // SP_ASSET_INDEX=0) the view is only worth building if one of them actually changed something — otherwise the
+    // file is served as it is, exactly as before.
+    let merged = doc;
     if (localStat) {
       let local;
       try { local = JSON.parse(await fsp.readFile(localFile, 'utf8')); } catch { /* optional local art */ }
-      const merged = mergeLocalChars(doc, local);
-      if (!indexed && merged === doc) return null;
-      doc = merged;
+      merged = mergeLocalChars(merged, local);
     }
+    if (skinsStat) {
+      let localSkins;
+      try { localSkins = JSON.parse(await fsp.readFile(skinsFile, 'utf8')); } catch { /* optional outfits */ }
+      merged = mergeLocalSkins(merged, localSkins);
+    }
+    if (!indexed && merged === doc) return null;
+    doc = merged;
     // one synchronous step: the view and the model lists the index checks a model's URLs against
     const { doc: out, models, hashed, plain } = rewriteManifest(doc, name, indexed ? index : plainIndex);
     const body = Buffer.from(JSON.stringify(out));

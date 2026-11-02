@@ -33,7 +33,7 @@ after(async () => {
 });
 
 async function player(name) {
-  const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`);
+  const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`, { wire: name === 'Alpha' });
   clients.push(c);
   const w = await c.hello(name);
   c.id = w.playerId;
@@ -74,8 +74,11 @@ async function driveLoop(c, { skipOnce = false, until, stats }) {
       const key = `band:${pub.draft.order.join()}`;
       if (done.has(key)) continue;
       done.add(key);
-      const last = pub.draft.order.indexOf(c.id) === pub.draft.order.length - 1;
-      if (!skipped && !last) {
+      const laterManual = pub.draft.order.slice(pub.draft.order.indexOf(c.id) + 1).some((pid) => {
+        const p = pub.players.find((row) => row.playerId === pid);
+        return p && p.alive && p.connected && !p.isBot && !p.autoplay && !pub.draft.picks[pid];
+      });
+      if (!skipped && laterManual) {
         skipped = true;
         const r = await c.request({ t: 'g.bandSkip' });
         // a slow client may lose its (scaled) turn to the timer before the skip arrives
@@ -195,16 +198,18 @@ test('real-time co-op over websockets with the real simulation: 2 humans + 2 AI 
 
   assert.ok(stats.a.skipTries + stats.b.skipTries >= 1, 'a human tried to pass its band-draft turn (g.bandSkip)');
   for (const [c, s] of [[a, stats.a], [b, stats.b]]) {
-    assert.equal(s.bands + s.bandTimeouts, 1, `${c.id} drafted a band (or its turn timed out → 华法琳)`);
+    // A skipped human turn can expire before the throttled next m.public reaches the client; the server still assigns it.
+    assert.ok(m.players.get(c.id)?.bandId, `${c.id} received a strategy (manual pick or timeout)`);
+    assert.ok(s.bands + s.bandTimeouts <= 1, `${c.id} sent at most one band pick`);
     assert.ok(s.buys >= 3 && s.placed >= 3 && s.readies >= 3, `${c.id} played its preps: ${JSON.stringify(s)}`);
     // the SP round (NORMAL R3) gave every alive player a card
     assert.equal(s.cards, 1, `${c.id} picked one 机变 card`);
     const pubs = c.log.filter((x) => x.t === 'm.public');
     const phases = new Set(pubs.map((x) => x.phase));
-    // (sub-100 ms presentation phases at this timer scale may fall between two throttled m.public frames)
+    // (sub-200 ms presentation phases at this timer scale may fall between two throttled m.public frames)
     for (const ph of ['INFO_CHECK', 'BAND_DRAFT', 'SP_DRAFT', 'PREP', 'COMBAT']) assert.ok(phases.has(ph), `${c.id} saw ${ph}`);
-    // m.public: throttled to ≤ 10/s (a 100 ms gap, small timer jitter tolerated)
-    for (let i = 1; i < pubs.length; i++) assert.ok(pubs[i].serverNow - pubs[i - 1].serverNow >= 95, `m.public ${pubs[i].serverNow - pubs[i - 1].serverNow} ms apart`);
+    // Initial/recovery/result/setup-vote forced views are immediate; normal updates follow DELAYS.PUBLIC_THROTTLE (8 Hz = 125 ms).
+    for (let i = 1; i < pubs.length; i++) assert.ok(pubs[i].serverNow - pubs[i - 1].serverNow >= 120, `m.public ${pubs[i].serverNow - pubs[i - 1].serverNow} ms apart`);
     const priv = latest(c, 'm.private');
     assert.equal(priv.hand.length, 10);
     assert.equal(priv.temp.length, 5);

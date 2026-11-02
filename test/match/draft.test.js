@@ -1,4 +1,4 @@
-// INFO_CHECK, band draft (order / skip / one turn clock / timeouts / highlighted band / 队友已选) and 机变 SP drafts (order /
+// INFO_CHECK, band draft (manual-first order / skip / one turn clock / timeouts / highlighted band / 队友已选) and 机变 SP drafts (order /
 // timers / auto-assign / effects); a single human (solo or co-op with AI teammates) is never timed outside battles.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -62,6 +62,52 @@ test('band draft (co-op): random order, one pick per turn, NOT_YOUR_TURN, one sk
   assert.equal(h.ps(first).lp, 20);
   h.sched.advance(1);
   assert.equal(m.phase, PHASE.BATTLE_CHECK);
+  m.dispose();
+});
+
+test('band draft: manual players precede AI within interleaved fixed groups; skip remains in its group', () => {
+  const seats = ['ai_0', 'p_0', 'ai_1', 'p_1', 'p_2', 'ai_2'].map((playerId, seat) => ({
+    seat, playerId, name: playerId, isBot: playerId.startsWith('ai_'), connected: true,
+  }));
+  const h = makeMatch({ mode: 'coop', seats, seed: 37 }).start();
+  const m = h.m;
+  for (const pid of ['p_0', 'p_1', 'p_2']) m.handle(pid, { t: 'g.infoReady' });
+  h.sched.advance(1);
+  assert.equal(m.phase, PHASE.BAND_DRAFT);
+  const [a, b] = m.draft.groups;
+  assert.equal(a.order[0], 'p_0');
+  assert.deepEqual(a.order.slice(1).slice().sort(), ['ai_0', 'ai_1']);
+  assert.deepEqual(b.order.slice(0, 2).slice().sort(), ['p_1', 'p_2']);
+  assert.equal(b.order[2], 'ai_2');
+  assert.equal(m.handle('p_0', { t: 'g.bandSkip' }).error, ERR.BAD_TARGET, 'cannot pass a turn to another group');
+  const [first, second] = b.order;
+  assert.deepEqual(m.handle(first, { t: 'g.bandSkip' }), { ok: true });
+  assert.deepEqual(b.order, [second, first, 'ai_2']);
+  assert.equal(m.draftTurn('p_0'), 'p_0', 'the other group retains its current picker');
+  for (const [pid, bandId] of [['p_0', 'band_amiya'], [second, 'band_amiya'], [first, 'band_sarkazb']]) {
+    assert.deepEqual(m.handle(pid, { t: 'g.band', bandId }), { ok: true });
+  }
+  assert.equal(Object.keys(m.draft.picks).length, 3, 'each group resolves its pending AI after its own manual picks');
+  h.sched.advance(1);
+  assert.equal(m.phase, PHASE.BATTLE_CHECK);
+  assert.equal(Object.keys(m.draft.picks).length, 6);
+  m.dispose();
+});
+
+test('band draft: disconnect, reconnect and AI control reprioritize only turns not yet played', () => {
+  const h = makeMatch({ mode: 'coop', humans: 3, bots: 2, seed: 38 }).start();
+  const m = h.m;
+  for (const pid of ['p_0', 'p_1', 'p_2']) m.handle(pid, { t: 'g.infoReady' });
+  h.sched.advance(1);
+  const [first, second, third] = m.draft.order;
+  m.onDisconnect(first);
+  assert.equal(m.draftTurn(), second, 'a disconnected picker yields to the other manual players');
+  m.onReconnect(first);
+  assert.deepEqual(m.draft.order.slice(0, 3), [second, third, first], 'reconnecting returns before the AI block');
+  assert.deepEqual(m.handle(second, { t: 'g.autoplay', on: true }), { ok: true });
+  assert.equal(m.draftTurn(), third, 'AI control yields the turn');
+  assert.deepEqual(m.handle(second, { t: 'g.autoplay', on: false }), { ok: true });
+  assert.deepEqual(m.draft.order.slice(0, 3), [third, first, second], 'manual control rejoins after the current picker');
   m.dispose();
 });
 
@@ -167,6 +213,29 @@ test('机变 (co-op): 6 shared cards, random order, 30 s first / 16 s others, ti
   assert.equal(m2.phase, PHASE.PREP, '机变 → prep');
   checkInvariants(m2);
   m2.dispose();
+});
+
+test('every co-op 机变 puts active manual players before AI, including after a disconnect and reconnect', () => {
+  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 2, bots: 2, seed: 39, fake: true }).start();
+  const m = h.m;
+  h.toPrep(1);
+  for (const ps of m.alivePlayers()) ps.lp = 200;
+  for (const round of m.gd.spRounds()) {
+    assert.ok(h.drive(() => m.phase === PHASE.ROUND_START && m.round === round), `reached round ${round}`);
+    assert.ok(h.run(() => m.phase === PHASE.SP_DRAFT), `reached round ${round} 机变`);
+    const manual = m.alivePlayers().filter((ps) => !ps.isBot).map((ps) => ps.playerId).sort();
+    assert.deepEqual(m.sp.order.slice(0, manual.length).slice().sort(), manual, `round ${round}: humans first`);
+    assert.ok(m.sp.order.slice(manual.length).every((pid) => m.players.get(pid).isBot), `round ${round}: AI later`);
+    if (round === m.gd.spRounds()[0]) {
+      const first = m.spTurn();
+      const other = manual.find((pid) => pid !== first);
+      m.onDisconnect(first);
+      assert.equal(m.spTurn(), other, 'the other manual player takes the turn');
+      m.onReconnect(first);
+      assert.deepEqual(m.sp.order.slice(0, 2), [other, first], 'reconnected player stays ahead of AI');
+    }
+  }
+  m.dispose();
 });
 
 test('机变 (solo): 3 cards, untimed; supply/shop cards give the item, bounty cards add enemies to the next battle', () => {

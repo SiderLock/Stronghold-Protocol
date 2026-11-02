@@ -62,7 +62,7 @@ describe('the 自选 summon models from the local client are an optional overlay
       assert.match(m.skel, /\.skel$/, id);
       assert.equal(m.atlas, m.skel.replace(/\.skel$/, '.atlas'), `${id}: next to the skeleton (pixi-spine finds the atlas by its name)`);
       assert.ok(m.textures.length >= 1 && m.textures.every((t) => t.endsWith('.png')), id);
-      assert.equal(m.pma, false, `${id}: the extraction writes straight pages (no pma), so the metadata must say false`);
+      assert.equal(typeof m.pma, 'boolean', `${id}: legacy premultiplied and current straight-page extractions declare their alpha mode`);
       const names = Object.keys(m.animations);
       assert.ok(names.includes(m.anims.idle), `${id} idle ${m.anims.idle}`);
       assert.ok(m.anims.attack && names.includes(m.anims.attack.loop), `${id} attack`);

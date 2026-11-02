@@ -10,7 +10,7 @@
 //                      enabled (the default: all four) and forks a process on the first match of one, never at boot;
 //                      none when only 第二期下半 is enabled
 //   http/websocket.js  session wiring (SessionRegistry → Lobby → Network) and the WebSocket at /ws (maxPayload 64 KB,
-//                      permessage-deflate from 1 KB; refused at upgrade with 404 / 429 per network / 503)
+//                      permessage-deflate with a per-connection outbound dictionary; refused at upgrade with 404 / 429 per network / 503)
 //   http/static.js     the static mounts (/ → public/, /data/, /shared/, /sim/ `.js` only), the /data.js browser stand-in,
 //                      the language packs (/packs/index.json, /packs/<id>/<file>), the plugin catalogue
 //                      (/plugins/index.json — the registry is plugins/registry.js), the vanilla content set's manifest
@@ -50,6 +50,9 @@ import { ROOT, listenAddress, bindCandidates, serveDirs, makeLogger, parseTrustP
 import { WS_MAX_PAYLOAD, createSessionStack, attachWebSocket } from './http/websocket.js';
 import { siteCsp } from './http/csp.js';
 import { DATA_SHIM_JS, createStaticHandler } from './http/static.js';
+import { createAnnouncementStore } from './announcements.js';
+import { createAnnouncementNoticeMonitor } from './announcementNotices.js';
+import { createServerSettings } from './serverSettings.js';
 import { createPluginRegistry } from './plugins/registry.js';
 import { computeVanillaContent } from './plugins/identity.js';
 import { createVisualSets } from './plugins/visualSet.js';
@@ -57,6 +60,7 @@ import { createContentSets } from './plugins/contentSets.js';
 import { createPluginPolicy } from './plugins/policy.js';
 import { createRoomSets } from './plugins/roomSets.js';
 import { createMatchHosts } from './match/host/index.js';
+import { createRehearsalPool } from './match/rehearsalPool.js';
 import { createVersionSets } from './versions.js';
 import { versionById } from '../shared/versions.js';
 import { t } from '../shared/i18n.js';
@@ -66,6 +70,8 @@ import { createStudio } from './studio/index.js';
 import { MIME, COMPRESSIBLE, acceptsGzip, pickEncoding, parseRange } from './http/files.js';
 import { BUILD_INPUTS, computeBuildTag, buildTag, resetBuildTag } from './http/buildTag.js';
 import { createRequestHandler } from './http/routes.js';
+import { createAssetCacheHandler } from './http/assetCache.js';
+import { createBandwidthEmergencyController, bandwidthEmergencyOptions } from './bandwidthEmergency.js';
 import { createTrafficCounter } from './http/traffic.js';
 import { createAssetIndex } from './http/assetIndex.js';
 import { createManifestViews } from './http/assetViews.js';
@@ -85,11 +91,15 @@ export {
  * @param {{
  *   port?: number, host?: string, quiet?: boolean, log?: object,
  *   publicDir?: string, dataDir?: string, sharedDir?: string, packsDir?: string, pluginsDir?: string,
- *   MatchClass?: Function, seedFn?: () => number,
+ *   announcementsDir?: string, serverSettingsDir?: string,
+ *   MatchClass?: Function, seedFn?: () => number, rehearsalWorkers?: number,
  *   lobbyGraceMs?: number, reconnectWindowMs?: number, heartbeatMs?: number, helloTimeoutMs?: number,
- *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number,
+ *   ratePerSec?: number, rateBurst?: number, maxConnections?: number, maxRooms?: number, compactWire?: boolean, runtimeCache?: boolean,
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
- *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
+ *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number | null,
+ *   assetCacheLimits?: { totalBps?: number, clientBps?: number, maxDownloads?: number, maxDownloadsPerClient?: number },
+ *   assetCacheBuildCatalog?: Function,
+ *   bandwidthEmergency?: object | false,
  *   versionVoteMs?: number, versionRetryMs?: number,
  *   roomCode?: string | null,
  *   assetIndex?: boolean | { cacheFile?: string | null, delayMs?: number }, studio?: boolean,
@@ -106,6 +116,8 @@ export {
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: import('ws').WebSocketServer,
  *                     lobby: import('./lobby.js').Lobby, network: import('./net.js').Network,
  *                     registry: import('./net.js').SessionRegistry, packs: ReturnType<typeof createPluginRegistry>,
+ *                     announcements: ReturnType<typeof createAnnouncementStore>,
+ *                     serverSettings: ReturnType<typeof createServerSettings>,
  *                     content: import('./plugins/identity.js').VanillaContent, visual: ReturnType<typeof createVisualSets>,
  *                     contents: ReturnType<typeof createContentSets>, hosts: ReturnType<typeof createMatchHosts>,
  *                     versions: ReturnType<typeof createVersionSets>, versionHosts: ReturnType<typeof createMatchHosts> | null,
@@ -114,8 +126,8 @@ export {
  *                     close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
-  // A release ignores external-AI settings (one log line) and keeps the built-in bot (§35.66).
-  // An unknown strategy id still fails here, before data is loaded or the port is opened.
+  // Validate operator options before starting any session/watch timers.
+  const emergencyOptions = bandwidthEmergencyOptions(opts.bandwidthEmergency === false ? { enabled: false } : opts.bandwidthEmergency || {});
   const log = opts.log || makeLogger(!!opts.quiet);
   if (releaseIgnoresExternalAi()) noteLlmIgnored(log);
   try {
@@ -143,12 +155,17 @@ export async function startServer(opts = {}) {
   // language packs and plugins (docs/PACKS.md, docs/PLUGINS.md): scanned now — the start log names them — and again
   // whenever their folders change
   const scriptMode = process.env.SP_PLUGIN_SCRIPTS;
-  const packs = createPluginRegistry({ publicDir, dataDir, packsDir, pluginsDir }, { log, scriptHost:host, scriptMode });
+  const packs = createPluginRegistry({ publicDir, dataDir, packsDir, pluginsDir }, { log, scriptHost: host, scriptMode });
   packs.refresh(true);
   // the content hashes of the art (built in the background once listening) and the manifests served with them
   const indexOptions = assetIndexOptionsFrom(opts, publicDir);
   const assetIndex = indexOptions ? createAssetIndex({ publicDir, log, ...indexOptions }) : null;
+  // Manifest views always exist (upstream 0.3.1): createManifestViews accepts a null index and still merges
+  // local operator art. Fork settings/announcements stay process-wide and feed applySettings / notice monitor.
   const views = createManifestViews({ dataDir, index: assetIndex, log });
+  const serverSettings = createServerSettings({ dir: opts.serverSettingsDir, root: ROOT, log,
+    onChange: (next) => applySettings(next) });
+  const announcements = createAnnouncementStore({ dir: opts.announcementsDir, root: ROOT, log });
   // the visual sets of the cosmetic plugins (DESIGN §32 P1a): what a room's host switches on, served at /vs/ and /p/
   const visual = createVisualSets({ registry: packs, log });
   // the server owner's policy (plugins/config.json), the content sets of the gameplay plugins (served at /cs/<cs16>/…),
@@ -160,6 +177,9 @@ export async function startServer(opts = {}) {
   // an out-of-memory abort in a worker thread ends the whole server)
   const transport = String(process.env.SP_MATCH_HOST || '').trim().toLowerCase() === 'worker' ? 'worker' : 'process';
   const hosts = createMatchHosts({ contents, log, options: { transport, maxWorkers: Math.max(1, policy.get().maxSets), ...(opts.matchHost || {}) } });
+  const rehearsalWorkers = opts.rehearsalWorkers ?? (process.env.SP_REHEARSAL_WORKERS === undefined
+    ? undefined : Number(process.env.SP_REHEARSAL_WORKERS));
+  const rehearsalPool = createRehearsalPool({ data, workers: rehearsalWorkers, log });
   // the official versions (DESIGN §35.23, M1): which ones (the option, else SP_VERSIONS …), their content, and — only
   // when one beyond 第二期下半 is enabled — the match hosts their rooms play in (counted apart from the plugin hosts)
   const versionCfg = versionsFrom(opts, log);
@@ -170,7 +190,7 @@ export async function startServer(opts = {}) {
     : null;
   log.info(`[versions] enabled: ${versions.ids.map((id) => `${id} (${t(/** @type {any} */ (versionById(id)).label)}${id === versions.defaultId ? ', default' : ''})`).join(', ')}`);
   const simPool = createRoomWorkerPool({ data });
-  const { registry, lobby, network } = createSessionStack(opts, { data, log, content, plugins: roomSets, hosts, versions, versionHosts, simPool });
+  const { registry, lobby, network } = createSessionStack(opts, { data, log, content, plugins: roomSets, hosts, versions, versionHosts, simPool, rehearsalPool });
   // Main-thread event-loop delay sampling (server/health/eventLoop.js): opt-in with SP_LOOP_SAMPLE=1, no worker pool involved, and a
   // LOCAL log line per window (`[loop] p50=… p95=… p99=… max=… cpu=… mem=… rooms=… humans=… phase=…`) — deliberately not
   // part of /healthz. This is what tells an operator whether a stall is the rehearsal / battle slice or something else.
@@ -189,21 +209,77 @@ export async function startServer(opts = {}) {
         phase: [...phases].sort().join('+') || 'idle', rehearsals };
     },
   });
-  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, simDir, packsDir, pluginsDir, packs, content, log, assetIndex, views, visual, contents, versions });
+  const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, simDir, packsDir, pluginsDir, packs, content, runtimeCache: opts.runtimeCache, log, assetIndex, views, visual, contents, versions });
+  const announcementNotices = createAnnouncementNoticeMonitor({ store: announcements, network, log });
   // the plugin studio (DESIGN §32.9): its page and API for this machine and the local network; it watches plugins/ only
   // once it is used (hot reload), and rooms whose host is the author or alone follow a plugin's changes by themselves
   const studio = opts.studio === false ? null : createStudio({ publicDir, pluginsDir, dataDir, registry: packs, lobby, sessions: registry, log, fetch: opts.fetch });
-  const trustedRuntime = await createTrustedRuntime({registry:packs,log});
+  const trustedRuntime = await createTrustedRuntime({ registry: packs, log });
   lobby.trustedRuntime = trustedRuntime;
+  // A persisted owner limit overrides the programmatic/env fallback. A null setting means the
+  // default unlimited limiter, while keeping tests and embedders' explicit opts usable.
+  const fallbackAssetCacheLimits = opts.assetCacheLimits;
+  const initialAssetCacheLimits = serverSettings.get().assetCacheLimits ?? fallbackAssetCacheLimits ?? undefined;
+  const assetCache = createAssetCacheHandler({ publicDir, dataDir, log, limits: initialAssetCacheLimits, trustProxy: opts.trustProxy,
+    buildCatalog: opts.assetCacheBuildCatalog, requireAssetCache: () => serverSettings.get().requireAssetCache });
+  let warmingAssetSummary = null;
+  function warmAssetSummary() {
+    if (!warmingAssetSummary) warmingAssetSummary = assetCache.summary()
+      .catch((error) => { log.warn('[asset-cache] admission summary unavailable', error.message); })
+      .finally(() => { warmingAssetSummary = null; });
+    return warmingAssetSummary;
+  }
+  let bandwidthEmergency = null;
+  function applySettings(next) {
+    lobby.setAiLimit(next.maxAiPerRoom);
+    lobby.setAssetCachePolicy({ required: next.requireAssetCache, getSummary: assetCache.currentSummary });
+    assetCache.setLimits(next.assetCacheLimits ?? fallbackAssetCacheLimits);
+    // A persisted owner setting overrides the startup/env fallback and is applied by the
+    // existing private settings poll; an absent field keeps the normal emergency option.
+    bandwidthEmergency?.setEnabled(next.bandwidthEmergencyEnabled ?? emergencyOptions.enabled);
+    // Runtime enabling fails closed until a summary is ready; ordinary optional startup stays lazy.
+    if (next.requireAssetCache && !assetCache.currentSummary()) void warmAssetSummary();
+  }
+  applySettings(serverSettings.get());
+  if (serverSettings.get().requireAssetCache) await warmAssetSummary();
   const startedAt = Date.now();
   // The tag is per process (see buildTag): read the browser runtime once, here, not on every /healthz.
   resetBuildTag();
   buildTag(ROOT, { servedVersionDirs: versions.servedDirs() });
 
   const traffic = createTrafficCounter();
-  const server = http.createServer(createRequestHandler({ serveStatic, csp: process.env.SP_CSP === 'off' ? null : siteCsp(publicDir), health: { startedAt, network, registry, lobby, content, traffic, assetIndex, views, trusted:trustedRuntime?.health, versions, versionHosts }, log, trustProxy: network.opts.trustProxy, studio, trustedRuntime }));
+  let requestHandler;
+  const bandwidthEmergencyEnabled = serverSettings.get().bandwidthEmergencyEnabled ?? emergencyOptions.enabled;
+  bandwidthEmergency = createBandwidthEmergencyController({
+    ...(opts.bandwidthEmergency || {}), ...emergencyOptions, enabled: bandwidthEmergencyEnabled,
+    getMetrics: () => assetCache.metrics(), getCongestion: () => network.congestion(),
+    canResume: () => [...lobby.rooms.values()].every((room) => !room.match || room.activeHumans().some((seat) => seat.connected)),
+    log,
+    onChange: (state) => {
+      if (state.active) {
+        assetCache.trip(state.reason);
+        requestHandler?.abortPublicRequests();
+        // `finish` only means handed to TCP, not delivered. Close ordinary HTTP sockets too,
+        // including finished keep-alive transfers; Node deliberately excludes upgraded WebSockets.
+        server.closeAllConnections?.();
+      } else assetCache.resume();
+      network.setEmergency(state);
+      lobby.setEmergency(state);
+      log.warn(`[bandwidth-emergency] ${state.active ? state.action === 'retry-delayed'
+        ? '现有对局仍未具备恢复条件，继续保护' : '保护开启，下载和新访问已切断，对局冻结'
+        : '尝试恢复访问和对局'} (${state.reason || 'recovery'})`);
+    },
+  });
+  requestHandler = createRequestHandler({ serveStatic, announcements, assetCache,
+    emergency: () => network.emergency, csp: process.env.SP_CSP === 'off' ? null : siteCsp(publicDir),
+    health: { startedAt, network, registry, lobby, content, bandwidthEmergency, traffic, assetIndex, views, trusted: trustedRuntime?.health, versions, versionHosts },
+    log, trustProxy: network.opts.trustProxy, studio, trustedRuntime });
+  const server = http.createServer(requestHandler);
   server.on('clientError', answerClientError);
   const wss = attachWebSocket(server, { network, log, traffic });
+  // Prime before accepting connections; only commands submitted to a running server are broadcast.
+  announcementNotices.start();
+  serverSettings.start();
 
   // The address actually bound. The default may fall back to IPv4; the returned host and url follow that.
   let boundHost;
@@ -246,7 +322,12 @@ export async function startServer(opts = {}) {
       await trustedRuntime?.close();
     }
   } catch (e) {
+    bandwidthEmergency.close();
+    serverSettings.close();
+    assetCache.close();
+    announcementNotices.close();
     network.close(); // stop heartbeat/sweep timers of the half-built server
+    rehearsalPool.close();
     hosts.close();
     versionHosts?.close();
     assetIndex?.close();
@@ -257,6 +338,7 @@ export async function startServer(opts = {}) {
     throw e;
   }
   server.on('error', (e) => log.error('[http] server error', e));
+  bandwidthEmergency.start();
   assetIndex?.start();
   // started only once the server is listening: the first window then reports real counts, not a half-built hall
   eventLoop?.start();
@@ -269,8 +351,13 @@ export async function startServer(opts = {}) {
   async function close() {
     if (closing) return closing;
     closing = (async () => {
+      bandwidthEmergency.close();
+      serverSettings.close();
+      assetCache.close();
+      announcementNotices.close();
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
       try { hosts.close(); } catch (e) { log.error('[shutdown] match hosts', e); }
+      rehearsalPool.close();
       try { versionHosts?.close(); } catch (e) { log.error('[shutdown] version hosts', e); }
       // after the lobby: every room is gone, so no rehearsal can still be waiting on a thread
       try { await simPool?.close(); } catch (e) { log.error('[shutdown] simulation pool', e); }
@@ -289,7 +376,7 @@ export async function startServer(opts = {}) {
     return closing;
   }
 
-  return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, content, visual, contents, hosts, versions, versionHosts, traffic, assetIndex, views, studio, eventLoop, simPool, close };
+  return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, announcements, serverSettings, bandwidthEmergency, content, visual, contents, hosts, versions, versionHosts, traffic, assetIndex, views, studio, eventLoop, simPool, close };
 }
 
 /**

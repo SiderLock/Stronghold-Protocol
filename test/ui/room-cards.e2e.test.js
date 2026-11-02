@@ -139,6 +139,18 @@ describe('名片干员 seat cards (real server)', { skip: !ENABLED && 'set SP_E2
       assert.deepEqual(pk.on, ['']);
       assert.equal(pk.focus, '', 'the current choice (默认) takes the focus');
       assert.ok(pk.inside && pk.pageFits && !pk.bodyScrolls, JSON.stringify(pk));
+      await host.page.evaluate(() => [...document.querySelectorAll('.cardpick__bar button')].find(b => b.textContent.trim() === '敌人').click());
+      await host.page.waitForSelector('.cardpick__op[data-char^="enemy_"]');
+      const enemyId = await host.page.$eval('.cardpick__op[data-char^="enemy_"]', el => el.dataset.char);
+      await host.page.$eval('.cardpick__op[data-char^="enemy_"]', el => el.click());
+      await guest.page.waitForFunction(id => globalThis.__SP__.store.get().room.seats.find(s => s?.name === '凯尔希')?.card === id, { timeout: 10000 }, enemyId);
+      assert.ok(await host.page.$('.seat.is-me .seat__portrait--enemy'));
+      await host.click('[data-testid="seat-card-pick"]');
+      await host.page.waitForSelector('.modal__box.cardpick');
+      await host.click('.cardpick__op[data-char=""]');
+      await host.page.waitForFunction(() => !document.querySelector('.modal__box.cardpick'));
+      await host.click('[data-testid="seat-card-pick"]');
+      await host.page.waitForSelector('.modal__box.cardpick');
       await host.click('.cardpick__search input');
       await host.page.keyboard.type('斯卡蒂');
       await host.page.waitForFunction(() => document.querySelectorAll('.cardpick__op[data-char]:not([data-char=""])').length === 2);

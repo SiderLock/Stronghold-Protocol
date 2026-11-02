@@ -475,7 +475,7 @@ test('gameplay plugins: refused in a version room and for a proposal while on; c
   };
   const h = harness({ plugins });
   const p = h.player('A');
-  ok(h.lobby.create(p, { mode: 'solo', difficulty: 'NORMAL' }));
+  ok(h.lobby.create(p, { mode: 'coop', difficulty: 'NORMAL' }));
   const room = h.lobby.getRoom(p.roomCode);
   ok(h.lobby.setPlugins(p, { plugins: [{ id: 'rules' }] }));
   assert.equal(room.modded, true);

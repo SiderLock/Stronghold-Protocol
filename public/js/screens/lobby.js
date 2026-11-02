@@ -37,7 +37,7 @@
 import { TestMark } from '../ui/testConsole.js';
 import { ResumeMatchButton } from '../ui/resumeMatch.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, DEFAULT_SEATS, ROOM_CAPACITIES, MAX_SPECTATORS, modeIdFor, ERR } from '../../../shared/constants.js';
 import { html, confirmDialog, Button, Icon, MicroLabel, Modal, PingPill, Spinner, DifficultyIcon, TextField } from '../ui/components.js';
 import { Sprite, Img } from '../ui/gameComponents.js';
 import { uiUrl } from '../ui/assetUrls.js';
@@ -49,6 +49,8 @@ import { GuideButton, openGuide } from '../ui/guide.js';
 import { RadarScene, CreateArt, JoinArt } from '../ui/allyArt.js';
 import { ProtocolScene } from '../ui/protocolScene.js';
 import { AchievementDialog, useStatsOpen } from './stats.js';
+import { AnnouncementButton } from '../ui/announcements.js';
+import { AssetCacheButton } from '../ui/assetCache.js';
 import { SweepReport } from './sweep.js';
 import { Emblem } from './title.js';
 import { AllianceBackdrop, useLobbyArt } from '../ui/allianceScene.js';
@@ -59,6 +61,8 @@ import { net, identity } from '../net.js';
 import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
 import { data, getConfig, getMode, getStage, useData } from '../data.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
+import { createLobbyDiscovery } from '../lobbyDiscovery.js';
+import { LobbyOnlinePill, LobbyDiscoveryPanel, LobbyRoomList } from '../ui/lobbyDiscovery.js';
 import { scriptOf } from '../../../shared/i18nPacks.js';
 import { NoticesButton } from '../ui/notices.js';
 import { VersionSwitch } from '../ui/versionPicker.js';
@@ -122,7 +126,7 @@ const MODE_CARDS = [
   },
   {
     id: 'coop', name: N_('同盟模拟'), en: 'ALLIANCE SIMULATION', icon: 'users',
-    desc: N_('与至多 {n} 名博士组成同盟，共享干员池，联防协作抵御敌潮。'), params: { n: MAX_SEATS - 1 },
+    desc: N_('与至多 {n} 名博士组成同盟，分组共享干员池，联防协作抵御敌潮。'), params: { n: MAX_SEATS - 1 },
     points: [N_('1–{n} 名博士 · 可由 AI 队友补位'), N_('联防阶段 · 最终攻势合并生命值')], pointParams: { n: MAX_SEATS },
     // the hub's line above the entry on a short screen, where the whole line is wider than the entry (§35.51)
     pointShort: N_('1–{n} 名博士'),
@@ -603,7 +607,7 @@ export function ProtocolSelect({ roomMode, difficulty, onDifficulty, onClose, on
  * in a 1024 px window — it ended in an ellipsis there).
  */
 export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, onCode, codeOk, online, busy, onJoin, onSpectate, recent, marks, focusKey,
-  testMode = false, asTest = false, onTest = () => {}, short = false }) {
+  testMode = false, asTest = false, onTest = () => {}, short = false, capacity = DEFAULT_SEATS, onCapacity = () => {}, discoveryPanel = null }) {
   const diffName = DIFFICULTY_NAMES[difficulty] ? t(DIFFICULTY_NAMES[difficulty]) : '';
   return html`<${Modal} open=${true} onClose=${onClose} class="ally" veilClass="proto-veil">
     <div class="ally__body">
@@ -621,6 +625,14 @@ export function AllianceSelect({ onClose, onCreate, difficulty = 'FUNNY', code, 
           <button type="button" class="ally-guide" onClick=${() => openGuide(0)}><span class="ally-guide__icon"><${Icon} name="book" /></span>${t('玩法说明')}</button>
         </section>
         <section class="ally-side">
+          <div class="capacity-select">
+            <div class="capacity-select__label">${t('同盟席位')}</div>
+            <div class="capacity-select__options" role="radiogroup" aria-label=${t('同盟人数上限')}>
+              ${ROOM_CAPACITIES.map((n) => html`<button key=${n} type="button" role="radio" aria-checked=${capacity === n ? 'true' : 'false'}
+                class=${`capacity-select__opt${capacity === n ? ' is-active' : ''}`} disabled=${!!busy} onClick=${() => onCapacity(n)}>${t('{n} 人', { n })}</button>`)}
+            </div>
+          </div>
+          ${discoveryPanel}
           <button type="button" class="ally-card ally-card--create ally-create" data-testid="alliance-create" data-difficulty=${difficulty}
               disabled=${!online || busy === 'create'} aria-busy=${busy === 'create' ? 'true' : 'false'} onClick=${() => onCreate()}>
             <span class="ally-card__art"><${CreateArt} /></span>
@@ -666,6 +678,10 @@ export function LobbyScreen() {
     const d = loadPref('lobby.difficulty', 'FUNNY');
     return DIFFICULTIES.includes(d) ? d : 'FUNNY';
   });
+  const [capacity, setCapacity] = useState(() => {
+    const saved = loadPref('lobby.capacity', DEFAULT_SEATS);
+    return ROOM_CAPACITIES.includes(saved) ? saved : DEFAULT_SEATS;
+  });
   // 「不限时」 for the next timed solo (DESIGN §35.23.10; default off). The room's 模拟设置 is the authority once the
   // room exists; this pref is what the lobby card and the create message say before that.
   const [soloFree, setSoloFree] = useState(() => loadPref('lobby.soloUnlimited', false) === true);
@@ -676,6 +692,14 @@ export function LobbyScreen() {
   const [asTest, setAsTest] = useState(false);
   const testMode = useStore((s) => s.testMode === true);
   const [busy, setBusy] = useState(null);
+  const discoveryRef = useRef(null);
+  if (!discoveryRef.current) discoveryRef.current = createLobbyDiscovery({ net });
+  const discovery = discoveryRef.current;
+  const discoveryState = useStore((s) => s, shallowEqual, discovery.target);
+  const [matchCapacity, setMatchCapacity] = useState(() => {
+    const saved = loadPref('lobby.matchCapacity', null);
+    return ROOM_CAPACITIES.includes(saved) ? saved : null;
+  });
   const [recent] = useState(recentRooms);
   const marks = loadPref('recentTestRooms', []);
   const [sweepOpen, setSweepOpen] = useState(false);
@@ -685,6 +709,10 @@ export function LobbyScreen() {
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
+  useEffect(() => {
+    discovery.start();
+    return () => discovery.dispose();
+  }, [discovery]);
 
   const online = conn.status === 'online';
   const codeOk = CODE_RE.test(code);
@@ -705,6 +733,7 @@ export function LobbyScreen() {
 
   const openMode = (m) => { if (m === 'solo') setSoloOpen(true); else setAllyOpen(true); };
   const pickDifficulty = (d) => { setDifficulty(d); savePref('lobby.difficulty', d); };
+  const pickCapacity = (n) => { setCapacity(n); savePref('lobby.capacity', n); };
   const setSoloFreePref = (on) => { const next = on === true; setSoloFree(next); savePref('lobby.soloUnlimited', next); };
 
   const run = async (kind, fn) => {
@@ -720,9 +749,15 @@ export function LobbyScreen() {
   // 独立模拟: at the difficulty picked on 选择模拟协议; 创建同盟: at the remembered one, changed in the room by the host
   // (`version`: the lobby's, only when welcome.versions is present — protocol §4; omitted when the server offers 第二期下半 alone)
   const create = (mode) => run('create', () => net.request('room.create', {
-    mode, difficulty: mode === 'solo' ? shownSolo : shownCoop, ...(testMode && asTest ? { test: true } : {}), ...(versions ? { version } : {}),
+    mode, ...(mode === 'coop' ? { capacity } : {}), difficulty: mode === 'solo' ? shownSolo : shownCoop, ...(testMode && asTest ? { test: true } : {}), ...(versions ? { version } : {}),
     ...(mode === 'solo' && soloFree && soloTimed === true ? { soloUnlimited: true } : {}),
   }));
+  const quickMatch = () => run('quickMatch', () => net.request('lobby.quickMatch', matchCapacity ? { capacity: matchCapacity } : {}).catch((err) => {
+    if (err?.code === ERR.ROOM_NOT_FOUND) { toast(t('暂无可加入的房间，请稍后重试或创建同盟。'), 'warn'); return; }
+    throw err;
+  }));
+  const directoryJoin = (roomId) => run('directoryJoin', () => net.request('lobby.join', { roomId }));
+  const directorySpectate = (roomId) => run('directorySpectate', () => net.request('lobby.spectate', { roomId }));
   const join = (c = code) => {
     // `onClick=${join}` hands the click EVENT as the first argument, and a default parameter only applies to
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field
@@ -760,6 +795,8 @@ export function LobbyScreen() {
       <div class="topbar__left">
         <${Button} variant="ghost" size="sm" icon="chevronLeft" onClick=${backToTitle} title=${t('返回标题')}>${t('返回')}<//>
         <${PingPill} ms=${conn.ping} online=${online} />
+        <${LobbyOnlinePill} count=${discoveryState.online} connected=${online} />
+        <${AssetCacheButton} />
         <span class="topbar__sep" aria-hidden="true"></span>
         <div class="topbar__tools">
           <${NoticesButton} />
@@ -770,6 +807,7 @@ export function LobbyScreen() {
         </div>
       </div>
       <div class="topbar__right">
+        <${AnnouncementButton} variant="secondary" />
         <${VersionSwitch} />
         <${ResumeMatchButton} />
       </div>
@@ -798,6 +836,10 @@ export function LobbyScreen() {
     </main>
 
     ${allyOpen ? html`<${AllianceSelect} onClose=${() => setAllyOpen(false)} onCreate=${() => create('coop')} difficulty=${shownCoop}
+      capacity=${capacity} onCapacity=${pickCapacity}
+      discoveryPanel=${html`<${LobbyDiscoveryPanel} state=${discoveryState} connected=${online} capacity=${matchCapacity}
+        onCapacity=${(n) => { setMatchCapacity(n); savePref('lobby.matchCapacity', n); }}
+        onOpen=${() => discovery.show()} onQuickMatch=${quickMatch} busy=${busy === 'quickMatch'} />`}
       code=${code} onCode=${(v) => setCode(normalizeCode(v))} codeOk=${codeOk} online=${online} busy=${busy}
       onJoin=${join} onSpectate=${spectate} recent=${recent} marks=${marks} focusKey=${!coarse}
       testMode=${testMode} asTest=${asTest} onTest=${setAsTest} short=${shortScreen} />` : null}
@@ -805,6 +847,9 @@ export function LobbyScreen() {
       onClose=${() => setSoloOpen(false)} onCreate=${() => create('solo')} busy=${busy} online=${online}
       testMode=${testMode} asTest=${asTest} onTest=${setAsTest} difficulties=${solo} loading=${versionLoading} failed=${versionFailed}
       soloTime=${soloTimed === true ? { on: soloFree, onToggle: setSoloFreePref } : null} />` : null}
+    ${discoveryState.open ? html`<${LobbyRoomList} state=${discoveryState} connected=${online}
+      onClose=${() => discovery.close()} onRefresh=${() => discovery.refresh()} onPage=${(page) => discovery.page(page)}
+      onJoin=${directoryJoin} onSpectate=${directorySpectate} busy=${!!busy} />` : null}
     ${sweepOpen ? html`<${SweepReport} onClose=${() => setSweepOpen(false)} />` : null}
     ${achOpen ? html`<${AchievementDialog} onClose=${() => setAchOpen(false)} />` : null}
   </div>`;

@@ -14,12 +14,12 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { startServer, parseRange, acceptsGzip, pickEncoding, parseTrustProxy } from '../server/index.js';
 import { loadData, lookup, getChess, getBond, getBand, getMode, getConfig, INDEXED_FILES } from '../server/data.js';
 import * as dataModule from '../server/data.js';
-import { CODE_ALPHABET, BOT_NAMES, DEFAULT_DIFFICULTY } from '../server/lobby.js';
+import { Lobby, CODE_ALPHABET, BOT_NAMES, DEFAULT_DIFFICULTY } from '../server/lobby.js';
 import { sanitizeName, TokenBucket, SessionRegistry, clientAddress, normalizeIp, isLocalIp, limitKeyOf } from '../server/net.js';
 import { StubMatch as Match } from '../server/match/StubMatch.js';
 import { Match as RealMatch } from '../server/match/Match.js';
 import { TestClient } from './helpers/wsClient.js';
-import { ERR, MAX_SEATS, MAX_SPECTATORS, PHASE, EMOTES } from '../shared/constants.js';
+import { ERR, BASE_SEATS, MAX_SEATS, MAX_SPECTATORS, PHASE, EMOTES } from '../shared/constants.js';
 import { DEFAULT_VERSION, VERSIONS } from '../shared/versions.js';
 
 const CODE_RE = new RegExp(`^[${CODE_ALPHABET}]{4}$`);
@@ -69,7 +69,7 @@ function clientPool(getUrl) {
 }
 
 async function createRoom(c, mode = 'coop', difficulty = 'NORMAL') {
-  const r = await c.request({ t: 'room.create', mode, difficulty });
+  const r = await c.request({ t: 'room.create', mode, difficulty, capacity: BASE_SEATS });
   assert.equal(r.t, 'ok', JSON.stringify(r));
   return c.waitFor('room.state', (s) => s.hostId === c.id && s.mode === mode);
 }
@@ -177,7 +177,11 @@ describe('static http server', () => {
     assert.equal(Number(br.headers['content-length']), br.body.length);
     assert.equal(zlib.brotliDecompressSync(br.body).toString(), js);
     const gz = await httpReq(srv.port, '/js/app.js', { headers: { 'accept-encoding': 'gzip, deflate' } });
+    assert.equal(gz.status, 200);
+    assert.equal(gz.headers['content-type'], 'text/javascript; charset=utf-8');
     assert.equal(gz.headers['content-encoding'], 'gzip', 'a LAN http:// page: gzip');
+    assert.equal(gz.headers.vary, 'Accept-Encoding');
+    assert.equal(Number(gz.headers['content-length']), gz.body.length);
     assert.equal(zlib.gunzipSync(gz.body).toString(), js);
     // cached second responses are identical
     assert.deepEqual((await httpReq(srv.port, '/js/app.js', { headers: { 'accept-encoding': 'gzip' } })).body, gz.body);
@@ -268,12 +272,12 @@ describe('static http server', () => {
     assert.match(asset.headers.etag, /^"[0-9a-f]{16}"$/);
     const font = await httpReq(srv.port, '/fonts/f.woff2');
     assert.equal(font.headers['cache-control'], 'public, max-age=86400');
-    const assetV = await httpReq(srv.port, '/assets/img/a.png?v=abc');
+    const assetV = await httpReq(srv.port, '/assets/img/a.png?v=0123456789abcdef');
     assert.match(assetV.headers['cache-control'], /immutable/);
     const assetRoot = await httpReq(srv.port, '/assets');
     assert.equal(assetRoot.status, 301, 'directory redirect, not cached content');
     const versioned = await httpReq(srv.port, '/js/app.js?v=123');
-    assert.match(versioned.headers['cache-control'], /immutable/);
+    assert.equal(versioned.headers['cache-control'], 'no-cache', 'an arbitrary query is not a verified runtime content version');
     const html = await httpReq(srv.port, '/index.html?v=1');
     assert.equal(html.headers['cache-control'], 'no-cache');
   });
@@ -613,7 +617,7 @@ describe('websocket lobby', () => {
     await expectError(c, { t: 'room.join', code: 'AB CD' }, ERR.BAD_MSG);
     await expectError(c, { t: 'room.join', code: { $gt: '' } }, ERR.BAD_MSG);
     await expectError(c, { t: 'room.ready', ready: 'yes' }, ERR.BAD_MSG);
-    await expectError(c, { t: 'room.removeBot', seat: 9 }, ERR.BAD_MSG);
+    await expectError(c, { t: 'room.removeBot', seat: MAX_SEATS }, ERR.BAD_MSG);
     await expectError(c, { t: 'g.buy', slot: -1 }, ERR.BAD_MSG);
     await expectError(c, { t: 'g.move', uid: 1, to: { area: 'moon' } }, ERR.BAD_MSG);
     await expectError(c, { t: 'ping', c: 'x' }, ERR.BAD_MSG);
@@ -693,7 +697,7 @@ describe('websocket lobby', () => {
     assert.equal(st.mode, 'coop');
     assert.equal(st.difficulty, 'HARD');
     assert.equal(st.inMatch, false);
-    assert.equal(st.seats.length, MAX_SEATS);
+    assert.equal(st.seats.length, BASE_SEATS);
     assert.deepEqual(st.seats[0], { seat: 0, playerId: host.id, name: 'Host', isBot: false, ready: false, connected: true });
     assert.deepEqual(st.seats.slice(1), [null, null, null]);
 
@@ -915,10 +919,10 @@ describe('websocket lobby', () => {
     await expectOk(host, { t: 'room.leave' });
     const migrated = await a.waitFor('room.state', (s) => s.hostId !== host.id);
     assert.equal(migrated.hostId, a.id, 'lowest remaining seat becomes host');
-    assert.equal(migrated.seats[0], null);
+    assert.equal(migrated.seats[1]?.playerId, a.id, 'host migration preserves the existing seat');
     await b.waitFor('room.state', (s) => s.hostId === a.id);
 
-    // new joiner takes the lowest free seat (0); host stays with A
+    // New joiner takes the lowest free seat (0); A remains host in the original seat.
     const c = await pool.player('C');
     const joined = await joinRoom(c, st.code);
     assert.equal(seatOf(joined, c.id).seat, 0);
@@ -1373,7 +1377,7 @@ describe('lobby timers and match interface', () => {
     await joinRoom(guest, st.code);
     await host.terminate();
     const migrated = await guest.waitFor('room.state', (s) => s.hostId === guest.id, GRACE + 1000);
-    assert.equal(migrated.seats[0], null);
+    assert.equal(migrated.seats[1]?.playerId, guest.id);
     await expectOk(guest, { t: 'room.addBot' });
   });
 
@@ -1580,20 +1584,73 @@ describe('lobby timers and match interface', () => {
     assert.ok(freed);
   });
 
-  test('a dropped solo run keeps the official singleReconnectTime (24 h), not the 10-minute window', () => {
-    assert.equal(srv.lobby.soloResumeWindowMs(), 86_400 * 1000, 'data config.constants.singleReconnectTime');
+  test('a dropped solo run uses the branch default (2 h), overriding official singleReconnectTime (24 h)', () => {
+    assert.equal(srv.lobby.soloResumeWindowMs(), 2 * 60 * 60_000, 'branch retention policy');
     assert.ok(srv.lobby.soloResumeWindowMs() > WINDOW);
+  });
+
+  test('explicit null solo retention uses official data through server startup', async (t) => {
+    const official = await startServer({ port: 0, host: '127.0.0.1', quiet: true, soloReconnectWindowMs: null });
+    t.after(() => official.close());
+    assert.equal(official.lobby.opts.soloReconnectWindowMs, null);
+    assert.equal(official.lobby.soloResumeWindowMs(), 24 * 60 * 60_000);
+  });
+
+  test('default solo retention resets on reconnect and expires the token plus room after two hours', async (t) => {
+    let now = 1000;
+    const windowMs = 2 * 60 * 60_000;
+    const registry = new SessionRegistry({ now: () => now });
+    const lobby = new Lobby({ registry, now: () => now, MatchClass: RecordingMatch });
+    t.after(() => lobby.shutdown());
+    const host = registry.create('Solo');
+    host.connected = true;
+    assert.deepEqual(lobby.create(host, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
+    const room = lobby.getRoom(host.roomCode);
+    assert.deepEqual(lobby.start(host), { ok: true });
+    const match = room.match;
+    const drop = () => {
+      host.connected = false;
+      host.disconnectedAt = now;
+      lobby.onDisconnect(host);
+    };
+    drop();
+    assert.equal(host.resumeWindowMs, windowMs);
+    now += windowMs - 1;
+    assert.equal(registry.byToken(host.token), host, 'original identity remains resumable before two hours');
+    assert.deepEqual(registry.sweep(), []);
+    assert.equal(lobby.getRoom(room.code)?.match, match);
+
+    host.connected = true;
+    host.disconnectedAt = null;
+    lobby.onHello(host, { resumed: true, repeat: false });
+    assert.equal(room.seatOf(host.playerId).connected, true);
+    assert.ok(match.calls.some(([hook]) => hook === 'onReconnect'));
+    now += 100;
+    drop();
+    now += windowMs;
+    assert.equal(registry.byToken(host.token), host, 'the full window restarts at the latest disconnect');
+    assert.deepEqual(registry.sweep(), []);
+    now++;
+    assert.equal(registry.byToken(host.token), null, 'expired token cannot resume');
+    const expired = registry.sweep();
+    assert.deepEqual(expired, [host]);
+    for (const session of expired) lobby.onExpire(session);
+    assert.ok(match.calls.some(([hook]) => hook === 'onLeave'));
+    assert.equal(lobby.getRoom(room.code), null, 'last human expiry releases the retained room');
+    assert.equal(lobby.stats().rooms, 0);
+    await delay(10); // match disposal follows onEnd on the next macrotask
+    assert.ok(match.calls.some(([hook]) => hook === 'dispose'));
   });
 });
 
 // ---------------------------------------------------------------------------------------------------
-// Solo runs: 下半 solo has no prep / 机变 timer and may be resumed within singleReconnectTime (24 h, research 01 §1,
-// 06 §17); only co-op sessions expire after the reconnect window (real Match: the untimed solo match waits).
+// Solo runs have no prep / 机变 timer and may be resumed for 2 h by default; an explicit shorter override below
+// exercises real reconnect and expiry. Co-op sessions keep the plain reconnect window.
 // ---------------------------------------------------------------------------------------------------
 
 describe('solo resume window', () => {
   const WINDOW = 300;       // stands in for the 10-minute reconnect window
-  const SOLO_WINDOW = 1500; // stands in for singleReconnectTime (24 h)
+  const SOLO_WINDOW = 1500; // shortened override of the branch's default 2 h window
   let srv;
   let url;
   const open = [];

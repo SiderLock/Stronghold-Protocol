@@ -1,0 +1,168 @@
+/* Ordinary announcement history and Markdown reader (js/ui/announcements.js).
+   Keep title history, article body and footer independent; sizes use the existing design scale. */
+
+.modal__box.announcements {
+  width: min(11.4rem, 96vw);
+  height: min(7.8rem, 88vh);
+  max-height: calc(100vh - .6rem - var(--sa-t, 0px) - var(--sa-b, 0px));
+  min-height: 0;
+}
+.announcements > .modal__head { flex: none; padding: .2rem .28rem .18rem; }
+.announcements > .modal__body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+.announcements > .modal__actions { align-items: center; justify-content: space-between; gap: .16rem; padding: .15rem .25rem; }
+.announcements__layout { display: grid; grid-template-columns: minmax(2.4rem, 29%) minmax(0, 1fr); height: 100%; min-height: 0; }
+.announcements__history { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); background: rgba(0, 0, 0, .18); }
+.announcements__history-head { display: flex; align-items: center; justify-content: space-between; flex: none; gap: .1rem; padding: .16rem .18rem; border-bottom: 1px solid var(--line); }
+.announcements__history-head h3 { font-size: max(calc(.16 * var(--t)), 12px); font-weight: 600; color: var(--text-lo); }
+.announcements__history-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.announcements__item { display: flex; flex-direction: column; gap: .08rem; width: 100%; min-height: .72rem; padding: .16rem .18rem; text-align: left; color: var(--text-md); background: none; border: 0; border-bottom: 1px solid var(--line); border-left: 3px solid transparent; cursor: pointer; }
+.announcements__item:hover { background: var(--mint-a10); color: var(--text-hi); }
+.announcements__item.is-selected { background: var(--mint-a10); border-left-color: var(--mint-500); color: var(--text-hi); }
+.announcements__item-title { font-size: max(calc(.18 * var(--t)), 13px); font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.announcements__item-meta, .announcements__article-meta { display: flex; align-items: center; flex-wrap: wrap; gap: .1rem; color: var(--text-lo); font-size: max(calc(.13 * var(--t)), 11px); }
+.announcements__pin { display: inline-flex; align-items: center; padding: .015rem .065rem; color: var(--mint-400); border: 1px solid var(--mint-700); background: var(--mint-a10); font-size: max(calc(.12 * var(--t)), 10px); line-height: 1.5; }
+.announcements__detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.announcements__article-head { display: flex; flex-direction: column; flex: none; gap: .08rem; padding: .2rem .28rem .17rem; border-bottom: 1px solid var(--line); }
+.announcements__article-heading { min-width: 0; }
+.announcements__article-heading h3 { font-size: max(calc(.25 * var(--t)), 18px); font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; color: var(--text-hi); }
+.announcements__article-meta { margin-top: .09rem; }
+.announcements__body { flex: 1; min-height: 0; overflow: auto; padding: .22rem .28rem .3rem; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.announcements__preferences { display: flex; flex-direction: column; gap: .055rem; min-width: 0; }
+.announcements__suppress { display: flex; align-items: center; gap: .09rem; font-size: max(calc(.16 * var(--t)), 12px); color: var(--text-md); cursor: pointer; }
+.announcements__suppress input { flex: none; width: max(.16rem, 15px); height: max(.16rem, 15px); margin: 0; accent-color: var(--mint-500); cursor: pointer; }
+.announcements__suppress.is-disabled { opacity: .55; cursor: default; }
+.announcements__preference-hint { color: var(--text-lo); font-size: max(calc(.12 * var(--t)), 10px); }
+.announcements__footer-buttons { display: flex; align-items: center; flex: none; gap: .1rem; }
+.announcements__status { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .16rem; min-height: 1.3rem; padding: .25rem .15rem; text-align: center; font-size: max(calc(.17 * var(--t)), 13px); }
+.announcements__status > .icon { width: .3rem; height: .3rem; color: var(--amber); }
+.announcements__empty, .announcements__list-warning { padding: .18rem; color: var(--text-lo); font-size: max(calc(.16 * var(--t)), 12px); line-height: 1.6; }
+.announcements__list-warning { color: var(--amber); }
+.announcements__mobile-toggle { display: none; }
+
+.announcement-markdown { color: var(--text-md); font-size: max(calc(.18 * var(--t)), 14px); line-height: 1.8; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+.announcement-markdown > :first-child { margin-top: 0; }
+.announcement-markdown > :last-child { margin-bottom: 0; }
+.announcement-markdown p, .announcement-markdown ul, .announcement-markdown ol, .announcement-markdown blockquote, .announcement-markdown pre { margin: 0 0 .18rem; }
+.announcement-markdown h1, .announcement-markdown h2, .announcement-markdown h3, .announcement-markdown h4, .announcement-markdown h5, .announcement-markdown h6 { color: var(--text-hi); font-weight: 700; line-height: 1.5; margin: .28rem 0 .12rem; }
+.announcement-markdown h1 { font-size: 1.6em; }
+.announcement-markdown h2 { font-size: 1.4em; }
+.announcement-markdown h3 { font-size: 1.2em; }
+.announcement-markdown h4, .announcement-markdown h5, .announcement-markdown h6 { font-size: 1em; }
+.announcement-markdown ul, .announcement-markdown ol { padding-left: 1.5em; }
+.announcement-markdown ul { list-style: disc; }
+.announcement-markdown ol { list-style: decimal; }
+.announcement-markdown li { margin: .04rem 0; }
+.announcement-markdown li > p { margin-bottom: .08rem; }
+.announcement-markdown a { color: var(--mint-400); text-decoration: underline; text-underline-offset: .16em; }
+.announcement-markdown a:hover { color: var(--text-hi); }
+.announcement-markdown__image { display: block; max-width: 100%; height: auto; margin: .12rem 0; }
+.announcement-markdown blockquote { padding: .08rem .18rem; border-left: 3px solid var(--mint-700); color: var(--text-lo); background: rgba(0, 0, 0, .2); }
+.announcement-markdown blockquote > :last-child { margin-bottom: 0; }
+.announcement-markdown hr { border: 0; border-top: 1px solid var(--line-2); margin: .25rem 0; }
+.announcement-markdown__code { max-width: 100%; padding: .15rem .18rem; overflow: auto; background: var(--bg-0); border: 1px solid var(--line); font-family: var(--font-mono); font-size: .92em; line-height: 1.6; white-space: pre; overflow-wrap: normal; }
+.announcement-markdown__inline-code { padding: .02rem .05rem; color: var(--mint-400); background: var(--bg-0); font-family: var(--font-mono); font-size: .92em; }
+.announcement-markdown__notice { padding: .12rem .16rem; border: 1px solid var(--line); color: var(--text-lo); }
+
+/* Small screens show one scroll region at a time. Controls remain visible above and below the reader. */
+@media (max-width: 900px) {
+  .modal__box.announcements { width: 96vw; height: calc(100vh - .35rem - var(--sa-t, 0px) - var(--sa-b, 0px)); max-height: calc(100vh - .35rem - var(--sa-t, 0px) - var(--sa-b, 0px)); }
+  .announcements > .modal__head { padding: .14rem .2rem .1rem; }
+  .announcements > .modal__actions { padding: .12rem .18rem; gap: .12rem; flex-wrap: wrap; }
+  .announcements__layout { display: flex; flex-direction: column; }
+  .announcements__history, .announcements__detail { flex: 1; }
+  .announcements__history { border-right: 0; }
+  .announcements__layout.is-detail .announcements__history { display: none; }
+  .announcements__layout.is-list .announcements__detail { display: none; }
+  .announcements__mobile-toggle { display: inline-flex; align-self: flex-start; }
+  .announcements__article-head { padding: .12rem .2rem; }
+  .announcements__body { padding: .18rem .2rem .25rem; }
+  .announcements__footer-buttons { margin-left: auto; }
+}
+@media (max-height: 480px) {
+  .modal__box.announcements { height: 94vh; max-height: 94vh; }
+  .announcements > .modal__head { padding-top: .1rem; padding-bottom: .08rem; }
+  .announcements > .modal__head .micro { display: none; }
+  .announcements > .modal__actions { padding-top: .09rem; padding-bottom: .09rem; }
+  .announcements__article-head { padding-top: .12rem; padding-bottom: .1rem; }
+}
+
+/* Explicit urgent notices sit above other modal hosts without changing their ordinary lifecycle. */
+.urgent-announcement-layer { position: fixed; inset: 0; z-index: calc(var(--z-modal) + 5); pointer-events: none; }
+.urgent-announcement-layer > .modal { pointer-events: auto; }
+.modal__box.urgent-announcement { width: min(8.6rem, 96vw); height: min(7rem, 88vh); min-height: 0; border-color: var(--amber); }
+.urgent-announcement > .modal__head { flex: none; padding: .2rem .28rem .16rem; }
+.urgent-announcement > .modal__body { flex: 1; min-height: 0; overflow: hidden; padding: 0; }
+.urgent-announcement > .modal__actions { align-items: center; justify-content: space-between; gap: .15rem; padding: .15rem .25rem; }
+.urgent-announcement__article { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.urgent-announcement__article-head { flex: none; padding: .18rem .28rem; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.urgent-announcement__article-head h3 { color: var(--text-hi); font-size: max(calc(.25 * var(--t)), 18px); font-weight: 700; line-height: 1.5; overflow-wrap: anywhere; }
+.urgent-announcement__article-head time { display: block; margin-top: .07rem; color: var(--text-lo); font-size: max(calc(.13 * var(--t)), 11px); }
+.urgent-announcement__running { display: flex; align-items: center; gap: .08rem; flex: none; margin: 0; padding: .1rem .28rem; color: var(--amber); background: var(--amber-a20); font-size: max(calc(.15 * var(--t)), 12px); line-height: 1.6; }
+.urgent-announcement__running .icon { flex: none; width: 1.2em; height: 1.2em; }
+.urgent-announcement__body { flex: 1; min-height: 0; overflow: auto; padding: .22rem .28rem .3rem; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.urgent-announcement__pending { color: var(--text-lo); font-size: max(calc(.14 * var(--t)), 12px); line-height: 1.5; }
+@media (max-width: 900px) {
+  .modal__box.urgent-announcement { width: 96vw; height: 92vh; max-height: calc(100vh - .35rem - var(--sa-t, 0px) - var(--sa-b, 0px)); }
+  .urgent-announcement > .modal__head { padding: .14rem .2rem .1rem; }
+  .urgent-announcement__article-head { padding: .12rem .2rem; }
+  .urgent-announcement__running { padding: .09rem .2rem; }
+  .urgent-announcement__body { padding: .18rem .2rem .25rem; }
+  .urgent-announcement > .modal__actions { padding: .12rem .18rem; }
+}
+@media (max-height: 480px) {
+  .modal__box.urgent-announcement { height: 94vh; max-height: 94vh; }
+  .urgent-announcement > .modal__head { padding-top: .1rem; padding-bottom: .08rem; }
+  .urgent-announcement > .modal__head .micro { display: none; }
+  .urgent-announcement > .modal__actions { padding-top: .09rem; padding-bottom: .09rem; }
+}
+
+/* Landscape touch devices may lose much of their height to browser toolbars before fullscreen.
+   --sp-vh tracks visualViewport in device.js. Position only these boxes within the existing backdrop;
+   neither its desktop geometry nor other modals need a new viewport rule (or CSS :has support). */
+@media (max-height: 600px) {
+  .sp-coarse .modal__box:is(.announcements, .urgent-announcement) {
+    position: absolute;
+    top: calc(12px + var(--sa-t, 0px));
+    right: calc(12px + var(--sa-r, 0px));
+    bottom: auto;
+    left: calc(12px + var(--sa-l, 0px));
+    width: min(16rem, calc(100% - 24px - var(--sa-l, 0px) - var(--sa-r, 0px)));
+    height: calc(100 * var(--sp-vh, 1vh) - 24px - var(--sa-t, 0px) - var(--sa-b, 0px));
+    max-height: calc(100 * var(--sp-vh, 1vh) - 24px - var(--sa-t, 0px) - var(--sa-b, 0px));
+    margin: 0 auto;
+  }
+  .sp-coarse :is(.announcements, .urgent-announcement) > .modal__head { padding: 6px 12px; }
+  .sp-coarse :is(.announcements, .urgent-announcement) > .modal__head .micro { display: none; }
+  .sp-coarse :is(.announcements, .urgent-announcement) > .modal__actions {
+    padding: 6px 12px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sp-coarse :is(.announcements, .urgent-announcement) > .modal__actions .btn {
+    min-width: var(--tap-min, 44px);
+    min-height: var(--tap-min, 44px);
+    font-size: max(calc(.16 * var(--t)), 12px);
+  }
+  .sp-coarse :is(.announcements, .urgent-announcement) > .modal__actions .btn::before {
+    inset: 0;
+    width: auto;
+    height: auto;
+    transform: none;
+  }
+  .sp-coarse .announcements__suppress { min-height: var(--tap-min, 44px); }
+  .sp-coarse .announcements__footer-buttons { margin-left: auto; gap: 8px; }
+  .sp-coarse .announcements__layout { display: flex; flex-direction: column; }
+  .sp-coarse .announcements__history, .sp-coarse .announcements__detail { flex: 1; }
+  .sp-coarse .announcements__history { border-right: 0; }
+  .sp-coarse .announcements__layout.is-detail .announcements__history { display: none; }
+  .sp-coarse .announcements__layout.is-list .announcements__detail { display: none; }
+  .sp-coarse .announcements__mobile-toggle { display: inline-flex; align-self: flex-start; }
+  /* A legal long title at the largest text scale must leave room for the scrollable article too. */
+  .sp-coarse :is(.announcements__article-head, .urgent-announcement__article-head) {
+    max-height: 45%;
+    min-height: 0;
+    overflow: auto;
+    padding: 6px 12px;
+    overscroll-behavior: contain;
+  }
+}

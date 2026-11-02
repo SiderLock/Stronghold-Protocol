@@ -100,7 +100,7 @@ describe('D3: the official slug models are an optional overlay of the web alias'
       assert.equal(m.skel, `${id}.skel`);
       assert.equal(m.atlas, `${id}.atlas`, 'next to the skeleton (pixi-spine finds the atlas by its name)');
       assert.deepEqual(m.textures, [`${id}.png`]);
-      assert.equal(m.pma, false, `${id}: the extraction writes straight pages (no pma), so the metadata must say false`);
+      assert.equal(typeof m.pma, 'boolean', `${id}: legacy premultiplied and current straight-page extractions declare their alpha mode`);
       for (const role of ['idle', 'die']) assert.ok(m.anims[role] in m.animations, `${id} ${role}`);
       assert.ok(m.anims.move.loop in m.animations && m.anims.attack.loop in m.animations, `${id} move / attack`);
       assert.ok(m.hits.Attack?.length, `${id}: the OnAttack frame`);

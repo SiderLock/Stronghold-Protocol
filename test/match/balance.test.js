@@ -36,6 +36,7 @@ test('no custom balance: legacy tuning multipliers are ignored; enemy scale = th
       assert.equal(gd.bossPoolHp(b), DATA.bosses[b].bloodPoint[key] * 4, `${modeId} ${b}: no count, a full team`);
       assert.equal(gd.bossPoolHp(b, 4), DATA.bosses[b].bloodPoint[key] * 4, `${modeId} ${b} four alive`);
       assert.equal(gd.bossPoolHp(b, 2), DATA.bosses[b].bloodPoint[key] * 2, `${modeId} ${b} two alive: twice the data value`);
+      for (const n of [8, 10, 16, 20]) assert.equal(gd.bossPoolHp(b, n), DATA.bosses[b].bloodPoint[key] * n, `${modeId} ${b} ${n} alive`);
     }
   }
   assert.equal(DATA.config.bossHpScale.perPlayer, true);

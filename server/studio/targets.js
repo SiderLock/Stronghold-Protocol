@@ -5,6 +5,9 @@
 //   kind       container of data/assets.json      names from
 //   operator   chars[charId]                      data/chess.json (the visible chess, once per operator), data/backups.json
 //                                                 units (补位 / 自选 operators)
+//   skin       chars[charId].skins[skinKey]       the manifest's own skins: a skin's name, plus its key and its
+//                                                 operator's name as other words (a key carries @ # + ., so it is
+//                                                 copied from here rather than typed)
 //   token      tokens[tokenId]                    data/tokens.json, data/backups.json tokens
 //   enemy      enemies[key]                       data/enemies.json
 //   item       items[iconId | trapId]             data/items.json (the shop's equipment)
@@ -26,6 +29,7 @@ import { N_ } from '../../shared/i18n.js';
 /** The target kinds, in the picker's order: the container of their entries. */
 export const TARGET_KINDS = Object.freeze({
   operator: { container: ['chars'] },
+  skin: { container: ['chars', 'skins'] },
   token: { container: ['tokens'] },
   enemy: { container: ['enemies'] },
   item: { container: ['items'] },
@@ -77,6 +81,25 @@ export function buildTargets(data, manifest) {
     if (!isObj(u) || !str(u.name)) continue;
     const id = str(u.charId) || charId;
     add({ kind: 'operator', key: id, container: ['chars'], name: u.name, alt: [u.appellation, id].filter(Boolean).join(' '), icon: avatarOf(id) });
+  }
+  // skins (docs/SKINS.md): the appearances the installation's manifest already holds — listed so an author can search one
+  // by the outfit's own name (德克萨斯 寒冬) or copy its key, which nobody types by hand (@ # + .). An installation with no
+  // cosmetic layers lists none, exactly as the picker shows no section there.
+  const opNames = new Map(out.filter((t) => t.kind === 'operator').map((t) => [t.key, t.name]));
+  for (const [charId, rec] of Object.entries(isObj(chars) ? chars : {})) {
+    const skins = get(rec, 'skins');
+    if (!isObj(skins)) continue;
+    for (const [key, skin] of Object.entries(skins)) {
+      if (!isObj(skin)) continue;
+      add({
+        kind: 'skin',
+        key,
+        container: ['chars', charId, 'skins'],
+        name: str(skin.name) || key,
+        alt: [key, charId, opNames.get(charId), skin.group].filter(Boolean).join(' '),
+        icon: str(skin.avatar) || str(skin.portrait) || str(skin.illust) || avatarOf(charId),
+      });
+    }
   }
   const tokens = get(manifest, 'tokens');
   const tokenIcon = (id) => str(get(get(tokens, id), 'avatar')) || avatarOf(str(get(get(tokens, id), 'owner')) || '');

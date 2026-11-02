@@ -4,6 +4,12 @@ This is the **single source of truth** for every implementer. Research lives in 
 
 Language: player-facing text is **Simplified Chinese** by default, with an English switch since 0.2.0 (§25.2, docs/I18N.md: UI strings through `t('中文')`, game texts from the official Chinese data or the official EN client's). Code, comments and identifiers are English.
 
+Capacity branch: the upstream sections below document the original four-player scope. This branch's room capacity,
+grouped pools, manual-player draft priority, multiple 联防 waves / votes and sidebar rules are in
+[PLAYER_CAPACITY.md](PLAYER_CAPACITY.md). Leader HP uses the 0.2.1 per-player baseline up to 20 players and additionally
+rescales on departure while preserving the current percentage; [D009](development/DECISIONS.md#d009) supersedes this
+branch's earlier alive / 4 rule. Maintenance evidence is in [development/README.md](development/README.md).
+
 Versions: the first public release was **0.1.0** (2026-10-02, the state of §0–§20.15); the releases after it add the player feedback and GitHub reports — 0.1.1 §21, 0.1.2 §22, 0.1.3 §23, 0.1.4 §24 — and **0.2.0** (2026-10-07; `CHANGELOG.md`) the maintainability refactor, two languages, 补位, 自选编队 and their fidelity work — §25 — **0.2.1** (2026-10-07) the 联防 battlefield restored, full potential and the GitHub fixes after it — §26 — and **0.2.2** (2026-10-09) per-operator 潜能 / 练度, Japanese voices, the statistics page, 失衡, whole-frame attack timing and the GitHub fixes after 0.2.1 — §27. **0.2.3** (2026-10-10; `package.json`, `shared/constants.js APP_VERSION`) 克莱门莎 and new modules, community fixes, text size, per-operator voices, installation, the opening reroll and local match recovery — §28. **0.2.4** (2026-10-11) the official shared card pool and item stock, Raid revival and #475, and the community fixes after 0.2.3 — §29. **0.2.5** (2026-10-12) fixed gifts and already displayed operator offers under the shared stock, random boss pairing, the official battlefield scenes on the 3D board (optional local art: the full bundle includes them when extracted, a missing scene keeps the metal board; §15, §30.21), the official damage-number option, the 驭械术师 / hit-tile / bot ports and the community fixes after 0.2.4 — §30; its rules supersede the corresponding 0.2.4 ones. **0.2.6** (2026-10-13) the host-bandwidth layers 0 and 1 (no BGM download while the music is silent, WebSocket compression, content-hashed asset URLs with long caching, brotli, WebP guide pages), the official scene light gains, the impostor bounds, the deploy-animation replays, the optional ammo count and the community fixes after 0.2.5 — §31; its rules supersede the corresponding 0.2.5 ones. **0.3.0** (2026-10-14) the plugin system (插件) and the fixes after 0.2.6 — §32; **0.3.1** (2026-10-18) the Forge-pack additions, the studio templates and the fixes after 0.3.0 — §34; **0.3.2** (2026-10-24) the fixes after 0.3.1 — [§35](history/0.3.2.md); **0.3.3** (2026-10-25) is its three-fix hotfix — [§36](history/0.3.3.md), the state this document describes; it includes the first two milestones of the official version switch: M0 (§35.22: the version registry, the builds of the earlier versions, behaviour keyed by charId / effectId, the default pinned by tests), invisible to players, and M1 (§35.23: the lobby's version button, the room's version switched by the host's vote, version match hosts, settings by operator and statistics by version), enabled by default for all four official versions (`SP_VERSIONS` narrows the list, §35.23.11). The labels v1 / v2 / v2.1–v2.5.2 in §0, §14–§20 and in the BALANCE / SIM comparisons name the design generations and the private playtest builds that came before it; they are kept as history.
 
 ---
@@ -87,6 +93,8 @@ this swap; the second period added it. This is an **INTENTIONAL DEVIATION**, rec
 [§36.2](history/0.3.3.md), [design/match.md](design/match.md), [META.md](META.md) and [DATA.md](DATA.md).
 
 0.3.4 未发布变更见 [§37](history/0.3.4.md)。名片干员的可选范围扩展到本版本的自选编队池（#877）见 [§37.50](history/0.3.4.md)：候选 = 可见、非自选的 chess 干员 ∪ `backups.diy.ownedPool`，服务器白名单与 `ui/loadoutSync.js installCardSync` 共用同一份名单；跨时期干员本次不做。
+
+Fork source attribution and local extraction are in [REFERENCES.md](REFERENCES.md) and [LOCAL_ASSET_EXTRACTION.md](LOCAL_ASSET_EXTRACTION.md).
 
 ## Where each section lives
 

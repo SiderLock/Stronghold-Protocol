@@ -62,7 +62,7 @@
 
 /* ---- level card ---- */
 .lvcard {
-  position: relative; width: 1.24rem; height: 2.24rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .12rem;
+  position: relative; width: 1.24rem; height: calc(var(--prep-shop-card-height, 2.24) * 1rem); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .12rem;
   padding: .2rem .1rem .1rem; background: linear-gradient(180deg, #5fe0b9, #36b690); border: 0; color: var(--text-on-mint);
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - .14rem), calc(100% - .14rem) 100%, 0 100%);
   transition: filter var(--t-fast), transform var(--t-fast);
@@ -89,7 +89,7 @@
 .scard-wrap { display: flex; }
 .scard {
   --tc: var(--tier-1);
-  position: relative; width: 1.56rem; height: 2.24rem; padding: 0; overflow: hidden; text-align: left;
+  position: relative; width: 1.56rem; height: calc(var(--prep-shop-card-height, 2.24) * 1rem); padding: 0; overflow: hidden; text-align: left;
   display: flex; flex-direction: column; justify-content: flex-end;
   background: #151a18; border: 1px solid rgba(78, 216, 175, .35);
   transition: transform var(--t-fast) var(--ease-out), border-color var(--t-fast), box-shadow var(--t-fast);
@@ -103,8 +103,11 @@
   linear-gradient(180deg, #1c2320, #0f1311); }
 .scard__water { position: absolute; left: -.2rem; top: .34rem; width: 1.1rem; height: 1.1rem; opacity: .1; }
 .scard__water .bglyph { width: 100%; height: 100%; }
-.scard__art { position: absolute; right: -.14rem; top: 0; height: 100%; width: auto; max-width: none; object-fit: cover; pointer-events: none;
-  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 88%); mask-image: linear-gradient(180deg, #000 55%, transparent 88%); }
+/* The card's picture is the operator's 180x180 AVATAR (docs/SKINS.md): a SQUARE. The old rule sized it by the card's
+   HEIGHT (`height: 100%`), which a 1:2 portrait could afford and a square cannot — the avatar became as wide as the card
+   is tall and covered everything. Sized by the card's WIDTH instead, top right, fading before the name strip. */
+.scard__art { position: absolute; left: 50%; top: .1rem; width: 70%; height: auto; aspect-ratio: 1 / 1; transform: translateX(-50%); object-fit: cover; object-position: center top; pointer-events: none;
+  -webkit-mask-image: linear-gradient(180deg, #000 62%, transparent 96%); mask-image: linear-gradient(180deg, #000 62%, transparent 96%); }
 .scard__top { position: absolute; left: .06rem; right: .06rem; top: .06rem; display: flex; align-items: flex-start; justify-content: space-between; z-index: 2; }
 .scard__price { position: absolute; left: 50%; top: 0; transform: translateX(-50%); filter: drop-shadow(0 1px 3px #000); }
 .scard__free { position: absolute; left: 50%; top: .02rem; transform: translateX(-50%); font-family: var(--font-num); font-weight: 700; font-size: .16rem; letter-spacing: .1em; color: var(--text-on-mint); background: var(--mint-400); padding: 0 .1rem; clip-path: polygon(.08rem 0, calc(100% - .08rem) 0, 100% 50%, calc(100% - .08rem) 100%, .08rem 100%, 0 50%); }

@@ -13,7 +13,7 @@ import { checkBuildOnce } from '../public/js/ui/buildGuard.js';
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-build-'));
   for (const rel of [
-    'public/index.html', 'public/js/file.js', 'public/css/file.css',
+    'public/index.html', 'public/asset-cache-sw.js', 'public/js/file.js', 'public/css/file.css', 'public/vendor/runtime.js',
     'server/sim/content/kits/skill.js', 'shared/protocol.js', 'data/chess.json',
   ]) {
     const abs = path.join(root, rel);
@@ -23,7 +23,7 @@ function fixture() {
   return root;
 }
 
-for (const rel of ['server/sim/content/kits/skill.js', 'shared/protocol.js', 'data/chess.json']) {
+for (const rel of ['server/sim/content/kits/skill.js', 'shared/protocol.js', 'data/chess.json', 'public/asset-cache-sw.js', 'public/vendor/runtime.js']) {
   test(`buildTag: an update to ${rel} is visible to an old page after restart only`, async () => {
     const root = fixture();
     try {

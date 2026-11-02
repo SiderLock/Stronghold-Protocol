@@ -46,6 +46,7 @@
 import { useEffect, useReducer } from '../vendor/hooks.module.js';
 import { applyFileOverlay } from '../../shared/i18nData.js';
 import { canonicalLang } from '../../shared/i18nPacks.js';
+import { runtimeURL, runtimeCacheMode } from './runtime.js';
 
 /** Known data files (name → URL basename). Unknown names are allowed too (`/data/<name>.json`). */
 export const DATA_FILES = Object.freeze({
@@ -192,7 +193,8 @@ export function createDataStore(opts = {}) {
    */
   function readJson(name) {
     const run = async () => {
-      const res = await doFetch(urlFor(name), { cache: 'no-cache' });
+      const url = runtimeURL(urlFor(name));
+      const res = await doFetch(url, { cache: runtimeCacheMode(url) });
       if (!res || !res.ok) throw Object.assign(new Error(`HTTP ${res ? res.status : '???'}`), { status: res ? res.status : null });
       try {
         return await res.json();
@@ -344,7 +346,8 @@ export function createDataStore(opts = {}) {
       }
       for (let attempt = 0; ; attempt++) {
         try {
-          const res = await doFetch(url, { cache: 'no-cache' });
+          const versioned = runtimeURL(url);
+          const res = await doFetch(versioned, { cache: runtimeCacheMode(versioned) });
           if (!res || !res.ok) throw Object.assign(new Error(`HTTP ${res ? res.status : '???'}`), { status: res ? res.status : null });
           const json = await res.json();
           if (!json || typeof json !== 'object' || !json.files) throw Object.assign(new Error('not an overlay'), { badJson: true });

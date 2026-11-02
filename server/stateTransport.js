@@ -14,7 +14,7 @@ import { diffState, isStateKind, STATE_DELTA_VERSION } from '../shared/stateDelt
 export const DELTA_KINDS = new Set(['m.public']);
 
 const connections = new WeakMap();   // ws -> { seq, kinds: Map<kind, { snapshot, seq }> }
-const snapshots = new WeakMap();     // msg -> { encoded, view, patches: WeakMap<previousSnapshot, opsJson | false> }
+const snapshots = new WeakMap();     // msg -> immutable bytes/view and patches shared by broadcast recipients
 
 const fullFrame = (kind, seq, encoded) =>
   `{"t":"m.state","kind":${JSON.stringify(kind)},"seq":${seq},"full":${encoded}}`;
@@ -57,25 +57,31 @@ export function prepareStateFrame(ws, msg, encoded) {
     if (view === null || typeof view !== 'object' || Array.isArray(view)) {
       return { data: encoded, commit() {}, usable: false };
     }
-    snapshot = { encoded, view, patches: new WeakMap() };
+    snapshot = { encoded, bytes: Buffer.byteLength(encoded), view, patches: new WeakMap() };
     snapshots.set(msg, snapshot);
   }
   const previous = connection.kinds.get(msg.t);
   const seq = ++connection.seq;
-  let data = fullFrame(msg.t, seq, encoded);
+  let data;
   if (previous && previous.snapshot !== snapshot) {
     // The patch is content-only, so it is shared between connections; the sequence numbers are not.
     let patch = snapshot.patches.get(previous.snapshot);
     if (patch === undefined) {
       const ops = diffState(previous.snapshot.view, snapshot.view);
-      patch = ops ? JSON.stringify(ops) : false;
+      if (ops) {
+        const json = JSON.stringify(ops);
+        patch = { json, bytes: Buffer.byteLength(json) };
+      } else patch = false;
       snapshot.patches.set(previous.snapshot, patch);
     }
     if (patch) {
-      const delta = `{"t":"m.state","kind":${JSON.stringify(msg.t)},"seq":${seq},"base":${previous.seq},"patch":${patch}}`;
-      // Compare actual UTF-8 bytes, not JS string length. Large changes fall back to full.
-      if (Buffer.byteLength(delta) < Buffer.byteLength(data)) data = delta;
+      const prefix = `{"t":"m.state","kind":${JSON.stringify(msg.t)},"seq":${seq},"base":${previous.seq},"patch":`;
+      // Count the shared UTF-8 payload once, not the whole snapshot again for every player.
+      // Only the short envelopes vary with each socket's sequence. Keep the exact byte comparison,
+      // and construct the large full frame only when it will actually be sent.
+      const fullBytes = Buffer.byteLength(fullFrame(msg.t, seq, '')) + snapshot.bytes;
+      if (Buffer.byteLength(prefix) + patch.bytes + 1 < fullBytes) data = `${prefix}${patch.json}}`;
     }
   }
-  return { data, commit() { connection.kinds.set(msg.t, { snapshot, seq }); }, usable: true };
+  return { data: data ?? fullFrame(msg.t, seq, encoded), commit() { connection.kinds.set(msg.t, { snapshot, seq }); }, usable: true };
 }

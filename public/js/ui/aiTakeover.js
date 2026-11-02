@@ -12,9 +12,15 @@ export function AiTakeoverPanel() {
   const run = async (kind, body) => { if (busy) return; setBusy(true); try { await net.request(kind, body); } catch (e) { toastError(e); } finally { setBusy(false); } };
   const spectator = room.spectators?.some(s => s.playerId === myId);
   const requests = room.aiTakeoverVotes || [], votes = requests;
+  const pending = requests.filter(v => v.eligible.includes(myId) && !v.yes.includes(myId) && !v.no.includes(myId));
   const bots = (pub?.players || []).filter(p => p.isBot && p.alive && !p.left);
   const name = id => (pub?.players || []).find(p => p.playerId === id)?.name || id;
-  return html`<button type="button" class="btn ai-participation-entry" onClick=${() => setOpen(true)}>${t('AI 协作')}${votes.length ? ` (${votes.length})` : ''}</button>
+  return html`<div class="ai-participation">
+    <button type="button" class=${`btn ai-participation-entry${pending.length ? ' has-pending' : ''}`} onClick=${() => setOpen(true)}>${t('AI 协作')}${votes.length ? ` (${votes.length})` : ''}</button>
+    ${pending.length && !open ? html`<div class="ai-notice" role="status" aria-live="polite"><button type="button" class="ai-notice__button" onClick=${() => setOpen(true)}>
+      <strong>${t('有观战者申请接替 AI，请投票')}</strong><span>${pending[0].applicantName} → ${name(pending[0].botId)}${pending.length > 1 ? ` +${pending.length - 1}` : ''}</span>
+    </button></div>` : null}
+    </div>
     <${Modal} open=${open} onClose=${() => setOpen(false)} title=${t('AI 协作')} width="min(800px,92vw)" actions=${html`<${Button} onClick=${() => setOpen(false)}>${t('关闭')}<//>`}>
       <p>${t('观战者申请接替AI，同房间在线且未托管的真人过半同意后在休整期加入；无合格队友时由在线房主决定。')}</p>
       <p>${t('申请在退出、断线、投票资格或阶段变化时取消。接替后的席位数据含 AI 此前表现，不计入你的个人统计或奖励。')}</p>
