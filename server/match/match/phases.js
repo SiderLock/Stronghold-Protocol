@@ -7,10 +7,10 @@
 
 import { PHASE, ERR } from '../../../shared/constants.js';
 import { buildNormalWave, buildBossWave } from '../waves.js';
-import { pairPlayers } from '../finalAssault.js';
+import { pairPlayers, bossPairSalt } from '../finalAssault.js';
 import { createRng, deriveSeed } from '../../sim/rng.js';
-import { botPickBand } from '../bot.js';
 import { OK, fail, DELAYS, BAND_TURN_SECONDS } from './common.js';
+import { LEGACY_BOT } from '../botStrategyContract.js';
 
 /** Single-pool diagnostics and old fixtures keep their readable/writable first-group fields. */
 export function installDraftFacade(stage, fields) {
@@ -130,6 +130,8 @@ export class MatchPhases {
   enterBandDraft() {
     if (this.phase !== PHASE.INFO_CHECK) return;
     this.phase = PHASE.BAND_DRAFT;
+    // The opening is settled, so no reroll cooldown outlives this phase.
+    this._rerollStartAt.clear();
     const skips = this.isSolo ? 0 : this.gd.bandDraft.skipsPerPlayer;
     const untimed = this.soloUntimed;
     const groups = this.makeDraftGroups();
@@ -207,11 +209,20 @@ export class MatchPhases {
       if (this.phase !== PHASE.BAND_DRAFT || this.draft !== d || token !== g.token) return;
       const ps = this.players.get(g.order[g.idx]);
       if (!ps || !ps.botControlled) return;
-      // a strategy a teammate already took is not selectable (队友已选): the bot re-draws, else the first free one
-      let id = botPickBand(this, ps);
-      for (let k = 0; k < 8 && this.bandTaken(id, ps.playerId); k++) id = botPickBand(this, ps);
-      if (this.bandTaken(id, ps.playerId)) id = this.gd.bandIds().find((b) => !this.bandTaken(b, ps.playerId)) || id;
-      this._applyBand(ps, id, { dedupe: true });
+      // a co-op seat gone before its pick has no game of its own to play: whatever strategy plays the AI seats, it drafts
+      // by the team's rule (botPickBand's departedWeight: Touch while nobody else holds it, never 歌利亚; §37.65)
+      const bot = !this.isSolo && ps.alive === false ? LEGACY_BOT : this.botFor(ps);
+      const fallback = () => {
+        // a strategy a teammate already took is not selectable (队友已选): the bot re-draws, else the first free one
+        let id = bot.pickBand(this, ps);
+        for (let k = 0; k < 8 && this.bandTaken(id, ps.playerId); k++) id = bot.pickBand(this, ps);
+        if (this.bandTaken(id, ps.playerId)) id = this.gd.bandIds().find((b) => !this.bandTaken(b, ps.playerId)) || id;
+        this._applyBand(ps, id, { dedupe: true });
+      };
+      if (bot.decide?.(this, ps, { kind: 'band',
+        valid: () => this.phase === PHASE.BAND_DRAFT && this.draft === d && token === g.token,
+        complete: () => this.draft !== d || token !== g.token || !!d.picks[ps.playerId], fallback })) return;
+      fallback();
     });
   }
 
@@ -219,7 +230,8 @@ export class MatchPhases {
    * Whether `bandId` was already picked by another player in this fixed pool group. Cross-group repeats are legal.
    * Research 09 §5 / DESIGN §14 corrections:
    * the strategy draft marks a teammate's pick as 队友已选 and it cannot be chosen again (co-op). The automatic
-   * assignments — a turn that runs out and a departing seat — obey the same rule: see timeoutBand / defaultBand.
+   * assignments — a turn that runs out, the AI's pick (also for a departed seat, scheduleBandBot) — obey the same rule:
+   * see timeoutBand / defaultBand.
    */
   bandTaken(bandId, playerId) {
     const picks = this.draftGroup(playerId)?.picks || {};
@@ -229,10 +241,10 @@ export class MatchPhases {
 
   /**
    * The strategy an automatic assignment gives `playerId` (a departing seat; a timed-out turn without a usable
-   * highlight, timeoutBand): the official default 「华法琳」 (bandDraft.timeoutBandId) while no teammate holds it, else the
-   * first strategy of the mode (sortId order, gd.bandIds) that nobody else in this group picked — never a duplicate (队友已选; the
-   * client shows the same choice: public/js/screens/bandDraft.js timeoutBand). Solo drafts have no teammates, so it is
-   * always the default.
+   * highlight, timeoutBand; a seat still to pick when finishBandDraft ends the draft): the official default 「华法琳」
+   * (bandDraft.timeoutBandId) while no teammate holds it, else the first strategy of the mode (sortId order,
+   * gd.bandIds) that nobody else in this group picked — never a duplicate (队友已选; the client shows the same choice:
+   * public/js/screens/bandDraft.js timeoutBand). Solo drafts have no teammates, so it is always the default.
    * @param {string} playerId
    */
   defaultBand(playerId) {
@@ -293,7 +305,9 @@ export class MatchPhases {
     d.picks[ps.playerId] = id;
     g.picks[ps.playerId] = id;
     ps.bandId = id;
-    ps.lp = this.gd.startLp(id);
+    // the strategy's starting LP is a living seat's: one gone before its pick (its turn is the AI's) keeps the 0 it left
+    // with (_quit), in m.public and the result as well (§37.65)
+    if (ps.alive) ps.lp = this.gd.startLp(id);
     this.markPrivate(ps);
     this.markPublic();
     this.startDraftTurn(g);
@@ -332,7 +346,7 @@ export class MatchPhases {
         this.draft.picks[ps.playerId] = id;
         this.draftGroup(ps.playerId).picks[ps.playerId] = id;
         ps.bandId = id;
-        ps.lp = this.gd.startLp(id);
+        if (ps.alive) ps.lp = this.gd.startLp(id); // a seat gone before its pick keeps its 0 (_applyBand)
       }
       this.markPrivate(ps);
     }
@@ -374,6 +388,7 @@ export class MatchPhases {
     this.sp = null;
     this.wave = null;
     this.bossWaves = null;
+    this.bossPairsRound = null;
     const alive = this.alivePlayers();
     // the round's enemies (shared composition, generated now so the prep preview is exact). Planned BEFORE the players'
     // round start: its recompute() checks the board on the field the player deploys on this round (deployFieldOf reads
@@ -400,13 +415,21 @@ export class MatchPhases {
     for (const ps of this._viewers()) this._followScout(ps);
   }
 
-  /** Stable per-match pairs and their templates, generated before the prep preview / board validation. */
+  /** The round's pairs and their templates, generated before the prep preview / board validation. */
   _planBossWaves() {
     const r = this.round;
-    const bossId = r === this.gd.hiddenRound && r !== this.gd.bossRound ? this.hiddenBossId : this.bossId;
-    // Pairing uses an independent seeded draw, consuming no shop, wave, draft or battle randomness.
-    const groups = pairPlayers(this.alivePlayers(), createRng(deriveSeed(this.seed, 'boss-pairs')), this.bossPairs);
+    const hidden = r === this.gd.hiddenRound && r !== this.gd.bossRound;
+    const bossId = hidden ? this.hiddenBossId : this.bossId;
+    // Pairing uses an independent seeded draw, consuming no shop, wave, draft or battle randomness. The Hidden Core
+    // draws its pairs and sides anew (GitHub #845: the official R15 of BV1VCXyBjEN1 p1 pairs 1-2 / 3-4 after an R14 of
+    // 1-4 / 2-3; DESIGN §35.27, superseding §30.12's kept partners) from a stream of its own, so the Final Assault's
+    // draw is unchanged; a player who changes half keeps the board (bossFieldPlacement mirrors it, the halves' deploy
+    // maps are identical). Only the round's first plan draws anew: a re-plan after a departure in its round start, 机变
+    // draft or prep (platform.js _quit) keeps the intact pairs and re-pairs the orphan, as the Final Assault does.
+    const fresh = hidden && this.bossPairsRound !== r;
+    const groups = pairPlayers(this.alivePlayers(), createRng(deriveSeed(this.seed, bossPairSalt(this.gd, r))), fresh ? null : this.bossPairs);
     this.bossPairs = groups.map(g => g.map(p => p.playerId));
+    this.bossPairsRound = r;
     this.bossWaves = groups.map((g) => ({
       players: g.map((p) => p.playerId),
       wave: buildBossWave(this.gd, this.rngWaves, this.factions, r, { bossId, solo: this.isSolo || g.length === 1 }),

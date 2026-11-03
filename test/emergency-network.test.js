@@ -181,7 +181,7 @@ test('an already saturated original match socket is retained without appending m
   } finally { network.close(); }
 });
 
-test('repeated protected heartbeats keep the oldest unanswered ping as recovery evidence', () => {
+test('repeated protected heartbeats keep the oldest unanswered ping as recovery evidence', async () => {
   let now = 1000;
   const registry = new SessionRegistry({ now: () => now });
   const session = registry.create('original');
@@ -198,9 +198,11 @@ test('repeated protected heartbeats keep the oldest unanswered ping as recovery 
     conn.session = session; session.ws = socket; session.connected = true;
     network.setEmergency({ active: true, startedAt: now });
     network.heartbeat();
+    await new Promise(resolve => setImmediate(resolve));
     now += 30000;
     assert.equal(network.congestion().delayedHeartbeats, 1);
     network.heartbeat();
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(pings, 2);
     assert.equal(terminated, 0);
     assert.equal(conn.pendingPingAt, 1000);
@@ -209,6 +211,7 @@ test('repeated protected heartbeats keep the oldest unanswered ping as recovery 
     assert.equal(network.congestion().delayedHeartbeats, 0);
     assert.equal(conn.pendingPingAt, null);
     network.heartbeat();
+    await new Promise(resolve => setImmediate(resolve));
     assert.equal(conn.pendingPingAt, now);
     now += 3001;
     assert.equal(network.congestion().delayedHeartbeats, 1);

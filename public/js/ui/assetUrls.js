@@ -109,6 +109,12 @@ export function profIconUrl(m, profession) {
   return k ? str(obj(obj(obj(m)?.prof)?.icon)?.[k]) : null;
 }
 
+/** Square profession glyph (manifest `prof.large`: a black glyph on white, drawn as a white one by loadout.css). */
+export function profGlyphUrl(m, profession) {
+  const v = obj(obj(obj(m)?.prof)?.large)?.[String(profession || '').toLowerCase()];
+  return str(v);
+}
+
 /** Sub-profession icon from a chess record (`assets.subProfIcon` = 'sub_<id>_icon'). */
 export function subProfIconUrl(m, chess) {
   const sub = obj(obj(obj(m)?.prof)?.sub);
@@ -145,12 +151,15 @@ export function enemyIconUrl(m, enemyKey) {
   return base && base !== enemyKey ? str(obj(obj(obj(m)?.enemies)?.[base])?.icon) : null;
 }
 
-/** Token avatar, falling back to its owner operator's avatar. */
-export function tokenAvatarUrl(m, tokenId) {
+/** Token avatar: `tokens[id].skins[opts.skin]`, else the token's avatar, else its owner's (docs/SKINS.md). */
+export function tokenAvatarUrl(m, tokenId, opts) {
   const tokens = obj(obj(m)?.tokens);
   const t = tokenId ? obj(tokens?.[tokenId]) : null;
-  if (t?.avatar) return str(t.avatar);
-  if (t?.owner) return str(obj(obj(obj(m)?.chars)?.[t.owner])?.avatar);
+  if (!t) return null;
+  const skin = opts?.skin ? obj(obj(t.skins)?.[String(opts.skin)]) : null;
+  if (skin?.avatar) return str(skin.avatar);
+  if (t.avatar) return str(t.avatar);
+  if (t.owner) return str(obj(obj(obj(m)?.chars)?.[t.owner])?.avatar);
   return null;
 }
 

@@ -152,14 +152,15 @@ export class PlayerBasics {
    *
    * A non-plain object, a key that is not a charId, a value that is not a skinId, or a map larger than
    * `SKIN_LIMITS.entries` (256 [ASSUMED]) refuses the whole selection and leaves `this.skins` as it was. A charId this
-   * match's content does not have is dropped. An empty map is a valid clear. Bots wear the default model.
+   * match's content does not have is dropped. An empty map is a valid clear. Only the constructor may give bots
+   * the lobby's shared opening roll; live client writes to a bot remain refused.
    * An unknown skinId still cannot change a battle: `spineEntry` draws the operator's own model, and no sim rule
    * reads `Unit.skin`.
    * @param {Record<string, string>|null} skins
    * @returns {boolean} false when refused (nothing changes); true when stored, including a clear
    */
-  setSkins(skins) {
-    if (this.isBot) return false;
+  setSkins(skins, { allowBot = false } = {}) {
+    if (this.isBot && !allowBot) return false;
     const ids = operatorCharIds(this.gd?.raw);
     const res = checkSkinSelection(skins, (id) => ids.has(id));
     if (!res.ok) return false;

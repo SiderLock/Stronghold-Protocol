@@ -5,12 +5,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer } from '../server/index.js';
 import { StubMatch } from '../server/match/StubMatch.js';
-import { Lobby } from '../server/lobby.js';
+import { Lobby, BOT_NAMES } from '../server/lobby.js';
 import { SessionRegistry } from '../server/net.js';
 import { TestClient } from './helpers/wsClient.js';
 import { ROOM_CAPACITIES, DEFAULT_SEATS, MAX_SEATS, MAX_DRAFT_CARDS } from '../shared/constants.js';
 import { validateC2S } from '../shared/protocol.js';
 import { writeServerSettings } from '../server/serverSettings.js';
+
+test('the AI name pool covers all twenty seats without duplicates', () => {
+  assert.equal(BOT_NAMES.length, 20);
+  assert.equal(new Set(BOT_NAMES).size, 20);
+  assert.ok(BOT_NAMES.every(name => name.startsWith('AI·')));
+});
 
 async function capacityServer(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-capacity-'));

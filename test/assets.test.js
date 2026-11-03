@@ -153,9 +153,14 @@ describe('animation-role resolver (research 07 §5.4)', () => {
       const { bad, seen } = walk(/^Skill_?0*[1-9](?:$|_)/i, (a, id) => !id.startsWith('enemies.') || !!a.skills);
       assert.ok(seen >= 10, `models with numbered skill clips (${seen})`);
       assert.deepEqual(bad, []);
+      // 盐风主教昆图斯: each slot (data/enemies.json skills[]) plays its official ability's clip (PREFAB_SPINE_ROLES, from
+      // the prefab enm_pfb_18.ab — not "Skill_n = slot n−1"): Tidewater* Skill_02, Rockfall* Skill_01, SummonTentac* Skill_03, Doom Skill_04
       const q = manifest.enemies.enemy_1521_dslily.spine.anims;
-      assert.deepEqual(Object.values(q.skills).map((c) => c.loop), ['Skill_01', 'Skill_02', 'Skill_03', 'Skill_04']);
-      assert.equal(q.skill.loop, 'Skill_01', 'the primary clip is unchanged');
+      assert.deepEqual(Object.values(q.skills).map((c) => c.loop), ['Skill_02', 'Skill_01', 'Skill_03', 'Skill_02', 'Skill_01', 'Skill_03', 'Skill_02', 'Skill_01', 'Skill_03', 'Skill_04']);
+      assert.equal(q.skill.loop, 'Skill_02', 'the primary clip: slot 0 (大潮)');
+      // 假想敌：胄 (both records share the model): 死亡集群 (slot 1, prefabKey "2") plays Skill_3, not Skill_2
+      for (const id of ['enemy_9013_acstmk', 'enemy_9013_acstmk_2']) assert.deepEqual(Object.values(manifest.enemies[id].spine.anims.skills).map((c) => c.loop), ['Skill_1', 'Skill_3', 'Revive'], id);
+      assert.deepEqual(Object.values(manifest.enemies.enemy_9032_aclionk.spine.anims.skills).map((c) => c.loop), ['Skill_1', 'Skill_2', 'Skill_2', 'Skill_1', 'Skill_3']);
       // operators keep their pool's indices (宴's fix, PREFAB_SPINE_ROLES / DESIGN §25.22.9, stays as it was)
       const utage = manifest.chars.char_337_utage.spine.front.anims;
       assert.deepEqual(Object.keys(utage.skills).sort(), ['0', '1']);
@@ -814,16 +819,12 @@ describe('generated manifest data/assets.json', () => {
     assert.deepEqual(noClip, [], 'Spine skill clips per index (a non-default skill never plays the default skill\'s animation)');
   });
 
-  test('every atlas on disk has size: lines (and pma: true for enemies)', { skip }, () => {
-    const atlases = [];
-    const walk = (dir) => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const p = join(dir, e.name);
-        if (e.isDirectory()) walk(p); else if (e.name.endsWith('.atlas')) atlases.push(p);
-      }
-    };
-    const spineDir = join(ASSETS, 'spine');
-    if (existsSync(spineDir)) walk(spineDir);
+  test('every downloaded manifest atlas has size: lines (and pma: true for enemies)', { skip }, () => {
+    // Add-only installs retain old, unreferenced art and locally extracted outfits. Their raw atlases are not outputs
+    // of fetch-assets' normalizer; verify the models this generated manifest actually publishes.
+    const models = [...Object.values(manifest.chars).flatMap(c => Object.values(c.spine || {})),
+      ...Object.values(manifest.enemies).map(e => e.spine), ...Object.values(manifest.tokens).map(t => t.spine)].filter(Boolean);
+    const atlases = [...new Set(models.map(s => join(PUBLIC, s.atlas)))];
     assert.ok(atlases.length > 400, `${atlases.length} atlases`);
     for (const p of atlases) {
       const info = atlasInfo(readFileSync(p, 'utf8'));

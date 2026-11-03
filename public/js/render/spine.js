@@ -95,6 +95,33 @@ export function hasClipping(data) {
 /**
  * Is (x, y) inside the polygon of `n` points `pts` (flat [x0, y0, x1, y1, …])? Ray casting (PR #384 by @Convey123).
  */
+/**
+ * PIXI texture of a named attachment of a slot in a pixi-spine skeleton (null without one). The region pixi-spine
+ * prepared (`RegionAttachment.region.texture`, already rotated / trimmed to the atlas frame) is preferred; an atlas
+ * region without one is cut out of its page's base texture.
+ * @param {any} spineData pixi-spine skeleton data (`spine.spineData`)
+ * @param {string} slotName slot name, e.g. 'C_Eff_Moire_B'
+ * @param {string} attachmentName attachment name, e.g. 'C_Eff_Moire_B'
+ * @param {any} [PIXI] the PIXI namespace (defaults to globalThis.PIXI)
+ * @returns {any} a PIXI Texture, or null
+ */
+export function attachmentTexture(spineData, slotName, attachmentName, PIXI = globalThis.PIXI) {
+  try {
+    const i = spineData?.slots?.findIndex((s) => s.name === slotName) ?? -1;
+    const skin = spineData?.skins?.[0];
+    const att = i >= 0 && typeof skin?.getAttachment === 'function' ? skin.getAttachment(i, attachmentName) : null;
+    const region = att?.region;
+    if (!region || !PIXI?.Texture) return null;
+    if (region.texture) return region.texture;              // pixi-spine's own cut (rotated regions included)
+    const page = region.page;
+    const base = page?.baseTexture;
+    if (!base || region.rotate || !PIXI.Rectangle) return null;
+    const w = base.width || page.width || 0, h = base.height || page.height || 0;
+    if (!w || !h) return null;
+    return new PIXI.Texture(base, new PIXI.Rectangle(Math.round(region.u * w), Math.round(region.v * h), region.width, region.height));
+  } catch { return null; }
+}
+
 export function pointInPolygon(x, y, pts, n) {
   let inside = false;
   for (let i = 0, j = n - 1; i < n; j = i++) {
@@ -282,7 +309,7 @@ function scratchSkeleton(rec) {
 function boundsRecord(data, Skeleton) {
   let rec = boundsOf.get(data);
   if (rec) return rec;
-  rec = { data, Skeleton, skel: null, rects: new Map(), todo: [], job: null, users: 0, failed: false, buf: { v: new Float32Array(256) } };
+  rec = { data, Skeleton, skel: null, rects: new Map(), poses: new Map(), todo: [], job: null, users: 0, failed: false, buf: { v: new Float32Array(256) } };
   try {
     const skel = scratchSkeleton(rec);
     skel.setToSetupPose();
@@ -293,6 +320,29 @@ function boundsRecord(data, Skeleton) {
   }
   boundsOf.set(data, rec);
   return rec;
+}
+
+/** A clip's start/end draws attachments, or null when this runtime cannot measure it. Cached with clip bounds. */
+export function clipPoseVisible(data, Skeleton, name, end = false) {
+  if (!data || typeof data !== 'object') return null;
+  const rec = boundsRecord(data, Skeleton), key = `${name}:${end ? 'end' : 'start'}`;
+  if (rec.poses.has(key)) return rec.poses.get(key);
+  if (rec.failed) return null;
+  try {
+    const anim = data.findAnimation?.(name);
+    if (!anim || typeof anim.apply !== 'function') return null;
+    // A separate short-lived skeleton leaves the incremental bounds sampler's in-progress pose untouched.
+    const skel = new Skeleton(data);
+    skel.setToSetupPose();
+    const t = end ? anim.duration : 0;
+    anim.apply(skel, t, t, false, null, 1, 0, 0);
+    skel.updateWorldTransform();
+    const r = poseRect(skel, emptyRect(), { v: new Float32Array(256) });
+    const visible = r[2] > r[0] && r[3] > r[1];
+    rec.poses.set(key, visible);
+    return visible;
+  } catch { return null; }
+  finally { if (!rec.users && !rec.todo.length && !rec.job) rec.skel = null; }
 }
 
 /**
@@ -419,6 +469,7 @@ export class SpineActor {
     this.endAt = 0;               // landing in endRoles (the next form's) when given
     this.endRoles = null;
     this.skillIndex = null;       // the skill slot whose clip `skill` plays (setSkillIndex), null = the manifest's primary
+    this.strike = null;           // the attack-class skill clip the next / current attack plays (castStrike)
     this.runMode = false;         // move on the model's own Run cycle (setRunMode)
     this.formRoles = null;        // the clip set of the form in force (setForm), over the unit's own roles
     this.skillOn = false;
@@ -430,6 +481,7 @@ export class SpineActor {
     this.current = '';
     this.frozen = false;
     this.dead = false;
+    this._downHeld = false;
     this.interval = 1;
     /**
      * Enemies (render/units.js, GitHub #58): each attack plays the attack clip once — at its own speed, faster only when
@@ -778,7 +830,18 @@ export class SpineActor {
     return withHit || cands[0];
   }
 
+  /**
+   * The clip of the attack-class skill the next attack is (render/units.js UnitView.onCast: an enemy's `strike` slot,
+   * `anims.skills[slot]` — 杰斯顿·威廉姆斯's C1_Skill): that attack plays it in place of its attack clip, then the clip's end
+   * restores the attack role; null = a plain attack. A clip the model lacks is ignored.
+   * @param {{ begin: string|null, loop: string, end: string|null }|null} clip
+   */
+  castStrike(clip) {
+    this.strike = clip && this.has(clip.loop) ? clip : null;
+  }
+
   _attackClip() {
+    if (this.strike) return this.strike;
     const sk = this.roles.skill;
     const mode = this.skillOn ? this.skillAttackMode?.() : null;
     if (this.skillOn && !this._skillLoopHeld()) {
@@ -947,6 +1010,29 @@ export class SpineActor {
   }
 
   /**
+   * Knock-downs persist until redeploy, unlike a final death. Some Die clips (魔王 / 追悼) dissolve every attachment.
+   * [ASSUMED] For those only, hold this model's Stun pose, then Idle, instead of an invisible end or another body.
+   * A visible Die end and every ordinary enemy/final-death animation retain their existing playback.
+   */
+  holdDeathPose() {
+    if (!this.dead || this._downHeld) return false;
+    this._downHeld = true;
+    const data = this.spine.spineData, Skeleton = this.spine.skeleton?.constructor;
+    const die = this.dieClip();
+    if (!die || clipPoseVisible(data, Skeleton, die, true) !== false) return false;
+    // A transformed body (e.g. a doll) must not borrow the base body's Stun when its form supplies none.
+    const stun = this.formRoles && !this.formRoles.stun ? null : this.roles.stun?.loop;
+    const pose = [stun, this.roles.idle, 'Idle'].find(name => this.has(name)
+      && clipPoseVisible(data, Skeleton, name) === true);
+    if (!pose) return false;
+    this.spine.skeleton.setToSetupPose();
+    this.frozen = false;
+    this._play(pose, false, { mix: 0, timeScale: 0 });
+    this.update(0);
+    return true;
+  }
+
+  /**
    * True while an update would draw the same pixels: a frozen model, or a dead one whose only clip — track 0, not
    * looping, not mixing — has played out (the held end of a death clip; a skeleton without one holds its idle at
    * timeScale 0). Only once an update has posed the current clip and put the current tint on the slots (pixi-spine applies
@@ -967,6 +1053,7 @@ export class SpineActor {
   /** Revive (redeploy after death). */
   revive() {
     this.dead = false;
+    this._downHeld = false;
     this.frozen = false;
     this.mode = 'base';
     this.skillOn = false;
@@ -1000,6 +1087,7 @@ export class SpineActor {
             break;
           }
           const clip = this._attackClip() || this.roles.attack;
+          this.strike = null;   // a strike attack is over (castStrike)
           // a skill with its own idle: back to that idle (its end clip is for the end of the skill, setSkill(false))
           const toSkillIdle = clip === this.roles.skill && !!this._skillIdle();
           if (clip && this.has(clip.end) && !toSkillIdle) { this._play(clip.end, false); this._queue(this._baseName(), true); }
@@ -1131,6 +1219,23 @@ export class SpineActor {
       clips.set(n, rec.rects.get(n));
     }
     return clips;
+  }
+
+  /**
+   * PIXI texture of a named attachment of a slot of this model (null without one) — the official effect art a kit
+   * attaches at runtime: 魔王's three 「微尘」 live in the slots `C_Eff_Moire_B` / `B2` / `B3` (all sharing the region
+   * `C_Eff_Moire_B`), but every animation leaves those slots empty, so render/motes.js draws them itself and needs the
+   * region. The texture is cached per (slot, attachment).
+   * @param {string} slotName e.g. 'C_Eff_Moire_B'
+   * @param {string} attachmentName e.g. 'C_Eff_Moire_B'
+   * @returns {any} a PIXI Texture, or null (no such slot / attachment, no region, no PIXI)
+   */
+  effectTexture(slotName, attachmentName) {
+    const key = `${slotName}|${attachmentName}`;
+    if (this._effectTex?.has(key)) return this._effectTex.get(key);
+    const out = attachmentTexture(this.spine?.spineData, slotName, attachmentName, globalThis.PIXI);
+    (this._effectTex || (this._effectTex = new Map())).set(key, out);
+    return out;
   }
 
   /** Model height in skeleton units (setup-pose bounds, else a chibi default). */

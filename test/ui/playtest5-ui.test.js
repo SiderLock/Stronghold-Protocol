@@ -14,9 +14,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { unscaled } from '../helpers/uiSize.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
+const read = (p) => unscaled(readFileSync(path.join(ROOT, p), 'utf8'));
 
 const { GLYPHS, gearPath, GIcon } = await import('../../public/js/ui/gameComponents.js');
 const { hudBands, HUD_REM } = await import('../../public/js/ui/fieldHost.js');
@@ -105,11 +106,14 @@ describe('8: the settings gear is a clean, regular icon', () => {
 const remAt = (w, h) => Math.max(40, Math.min(w / 19.2, h / 10.8, 240));
 
 /** Run `fn` with a stubbed DOM: the root font size, and the HUD layer's top (safe-area inset). */
-function withDom(rem, hudTop, fn) {
+function withDom(rem, hudTop, fn, bondsBottom = 0, variables = null) {
   const g = globalThis;
   const saved = { document: g.document, getComputedStyle: g.getComputedStyle };
-  g.getComputedStyle = () => ({ fontSize: `${rem}px` });
-  g.document = { documentElement: {}, querySelector: (s) => (s === '.gm__hud' ? { getBoundingClientRect: () => ({ top: hudTop }) } : null) };
+  const game = variables ? {} : null;
+  g.getComputedStyle = (el) => el === game ? { getPropertyValue: (name) => variables[name] || '' } : { fontSize: `${rem}px` };
+  g.document = { documentElement: {}, querySelector: (s) => s === '.gm' ? game : s === '.gm__hud'
+    ? { getBoundingClientRect: () => ({ top: hudTop }) }
+    : s === '.gm__bonds' && bondsBottom ? { getBoundingClientRect: () => ({ bottom: bondsBottom, height: 44 }) } : null };
   try { return fn(); } finally { g.document = saved.document; g.getComputedStyle = saved.getComputedStyle; }
 }
 
@@ -117,15 +121,22 @@ describe('9: the prep camera keeps the bench clear of the shop bar on phones in 
   test('HUD_REM mirrors the CSS it measures (bond strip bottom, shop bar top, the notched-phone rule)', () => {
     const game = read('public/css/screens/game.css');
     const shop = read('public/css/screens/game-shop.css');
-    // bond strip: top 1.36rem + a .52rem disc and its name line → measured 2.14–2.15rem in Chrome; 2.16rem kept
-    assert.match(game, /\.gm__bonds \{ position: absolute; left: 1\.56rem; top: 1\.36rem;/);
+    // #678: clip padding is offset by margins; the 44 px arrows can still raise the band on phones.
+    assert.match(game, /--prep-bond-top: 1\.36;/);
+    assert.match(game, /--prep-shop-card-height: 2\.24;/);
+    assert.match(game, /\.gm__bonds \{ position: absolute; left: 1\.56rem; top: calc\(var\(--prep-bond-top\) \* 1rem\);/);
     assert.match(game, /\.bslot \.bond \{ --disc: \.52rem; \}/);
+    assert.match(game, /\.gm__bonds \.bstrip-scroll \.bstrip \{[^}]*padding: \.08rem 0; margin: -\.08rem 0;/);
+    assert.match(game, /\.gm__bonds \.bstrip-scroll__arrow \{[^}]*height: 44px;/);
+    assert.equal(HUD_REM.bondStripTop, 1.36);
     assert.equal(HUD_REM.bondStripBottom, 2.16);
+    assert.equal(HUD_REM.bondArrowPx, 44);
     // shop bar: bottom .2rem + row padding .1rem × 2 + 2.24rem cards (level / operator / item) + 2 px + 1 px borders
     assert.match(shop, /\.shopbar \{\n {2}position: absolute; right: \.26rem; bottom: \.2rem;/);
     assert.match(shop, /\.shopbar__row \{\n {2}position: relative; display: flex; align-items: stretch; gap: \.08rem; padding: \.1rem;\n[^}]*border: 1px solid var\(--line-2\); border-top: 2px solid var\(--mint-700\);/);
-    assert.match(shop, /\.lvcard \{\n {2}position: relative; width: 1\.24rem; height: 2\.24rem;/);
-    assert.match(shop, /\.scard \{\n {2}--tc: var\(--tier-1\);\n {2}position: relative; width: 1\.56rem; height: 2\.24rem;/);
+    assert.match(shop, /\.lvcard \{\n {2}position: relative; width: 1\.24rem; height: calc\(var\(--prep-shop-card-height, 2\.24\) \* 1rem\);/);
+    assert.match(shop, /\.scard \{\n {2}--tc: var\(--tier-1\);\n {2}position: relative; width: 1\.56rem; height: calc\(var\(--prep-shop-card-height, 2\.24\) \* 1rem\);/);
+    assert.equal(HUD_REM.shopCardHeight, 2.24);
     assert.equal(HUD_REM.shopBarTop, 0.2 + 0.1 * 2 + 2.24);
     assert.equal(HUD_REM.shopBarBorderPx, 3);
     // the bar stays on the viewport's bottom edge on a notched phone (DESIGN §18.1): no bottom inset to add
@@ -137,19 +148,50 @@ describe('9: the prep camera keeps the bench clear of the shop bar on phones in 
       for (const k of ['normal', 'unite', 'boss', 'hidden', 'pen']) assert.equal(hudBands(k, { width: 844, height: 390 }), null, k);
       for (const k of ['prep', 'bossPrep']) {
         const b = hudBands(k, { width: 844, height: 390 });
-        assert.ok(Math.abs(b.top - 86.4) < 1e-9 && Math.abs(b.bottom - 108.6) < 1e-9, `${k} ${JSON.stringify(b)}`);
+        assert.ok(Math.abs(b.top - 98.4) < 1e-9 && Math.abs(b.bottom - 108.6) < 1e-9, `${k} ${JSON.stringify(b)}`);
       }
     });
     withDom(100, 0, () => assert.deepEqual(hudBands('prep', { width: 1920, height: 1080 }), { top: 216, bottom: 267 }));
-    withDom(40, 12, () => assert.ok(Math.abs(hudBands('prep', { width: 844, height: 390 }).top - 98.4) < 1e-9, 'top inset'));
-    withDom(40, 0, () => assert.deepEqual(hudBands('prep', { width: 640, height: 200 }), { top: 80, bottom: 80 }), 'clamped at 40 % of the height');
+    withDom(40, 12, () => assert.ok(Math.abs(hudBands('prep', { width: 844, height: 390 }).top - 110.4) < 1e-9, 'top inset'));
+    withDom(40, 0, () => assert.deepEqual(hudBands('prep', { width: 640, height: 200 }), { top: 80, bottom: 80 }, 'clamped at 40 % of the height'));
+  });
+
+  test('a taller measured scroller is kept clear; a collapsed strip keeps the minimum band', () => {
+    const size = { width: 844, height: 390 };
+    withDom(40, 12, () => assert.equal(hudBands('prep', size).top, 124), 124);
+    withDom(40, 12, () => assert.ok(Math.abs(hudBands('prep', size).top - 110.4) < 1e-9), 90);
+  });
+
+  test('responsive HUD dimensions enlarge the phone camera without losing inset or measured clearance', () => {
+    const vars = { '--prep-bond-top': '1.16', '--prep-shop-card-height': '1.85' };
+    const size = { width: 844, height: 390 };
+    const base = withDom(40, 0, () => hudBands('prep', size));
+    const compact = withDom(40, 0, () => hudBands('prep', size), 0, vars);
+    assert.ok(Math.abs(compact.top - 90.4) < 1e-9);
+    assert.ok(Math.abs(compact.bottom - 93) < 1e-9);
+    assert.ok(presetCamera('prep', size, { hud: compact }).scale > presetCamera('prep', size, { hud: base }).scale);
+    withDom(40, 12, () => assert.ok(Math.abs(hudBands('prep', size).top - 102.4) < 1e-9), 0, vars);
+    withDom(40, 12, () => assert.equal(hudBands('prep', size).top, 124), 124, vars);
+  });
+
+  test('tall landscape screens reserve the team panel width, including safe area and UI scale', () => {
+    const g = globalThis, saved = { document: g.document, getComputedStyle: g.getComputedStyle };
+    const root = {}, field = { getBoundingClientRect: () => ({ left: 20, top: 0 }) };
+    const hud = { getBoundingClientRect: () => ({ left: 67, top: 0, width: 700, bottom: 600 }) };
+    g.document = { documentElement: root, querySelector: (s) => s === '.gm__field' ? field : s === '.gm__hud' ? hud : null };
+    g.getComputedStyle = () => ({ fontSize: '31.25px', getPropertyValue: (name) => name === '--sp-ui' ? '0.75' : '' });
+    try {
+      const narrow = hudBands('prep', { width: 800, height: 600 });
+      assert.ok(Math.abs(narrow.left - (47 + 31.25 * 0.22 + 130 * 0.75)) < 1e-9);
+      assert.equal(hudBands('prep', { width: 1200, height: 600 }).left, undefined, 'wide landscape keeps its existing framing');
+    } finally { g.document = saved.document; g.getComputedStyle = saved.getComputedStyle; }
   });
 
   test('wiring: the game hands hudBands to the view, the view to the prep cameras', () => {
     assert.match(read('public/js/ui/fieldHost.js'), /padding: hudPadding, hud: hudBands \}/);
     const app = read('public/js/render/app.js');
     // (the folded shop's band since public issue #5: test/ui/issue5-fold-camera.test.js)
-    assert.match(app, /hud: hudBands\(vk, sz, \{ shop: o\.shop !== false \}\),/);
+    assert.match(app, /hud: hudBands\(vk, sz, \{ shop: o\.shop \?\? true \}\),/);
     assert.match(app, /presetCamera\('prep', \{ width: s0\.width, height: s0\.height, padding: defaultPadding\('prep', s0\) \}, \{ hud: hudBands\('prep', s0\) \}\)/);
   });
 

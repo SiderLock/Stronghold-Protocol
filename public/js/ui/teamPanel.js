@@ -130,8 +130,9 @@ export function TeamPanel({ pub, myId, watching, bubbles, emotes = [], emoteNow 
   const players = sections.flatMap((section) => section.players);
   const grouped = sections.some((section) => section.group);
   const many = players.length > 6;
+  const scrollable = players.length > 4;
   const playersById = new Map(players.map((p) => [p.playerId, p]));
-  const activeEmotes = many && Array.isArray(emotes) ? emotes.filter((e) => e && playersById.has(e.playerId)
+  const activeEmotes = scrollable && Array.isArray(emotes) ? emotes.filter((e) => e && playersById.has(e.playerId)
     && emoteNow - e.at < emoteTtl && e.at <= emoteNow + 1000) : [];
   const newestEmote = activeEmotes.at(-1)?.seq || 0;
   useEffect(() => {
@@ -169,7 +170,7 @@ export function TeamPanel({ pub, myId, watching, bubbles, emotes = [], emoteNow 
     noteAsked(p);
     onWatch(p);
   };
-  return html`<aside class=${cx('team', compact && 'team--compact', many && 'team--many', grouped && 'team--grouped')} aria-label=${t('同盟成员')}>
+  return html`<aside class=${cx('team', compact && 'team--compact', scrollable && 'team--scrollable', many && 'team--many', grouped && 'team--grouped')} aria-label=${t('同盟成员')}>
     <div class="team__list">
     ${sections.map(({ group, players: members }) => html`<div key=${members[0].playerId}
       class=${cx('team__section', group && 'team__pool-group')} style=${group ? `--pool-group-color:${group.color}` : undefined}
@@ -224,7 +225,7 @@ export function TeamPanel({ pub, myId, watching, bubbles, emotes = [], emoteNow 
     })}
     </div>`)}
     </div>
-    ${many && activeEmotes.length ? html`<div class="team__emote-feed" role="log" aria-live="polite" aria-label=${t('同盟表情')} ref=${feedRef}>
+    ${scrollable && activeEmotes.length ? html`<div class="team__emote-feed" role="log" aria-live="polite" aria-label=${t('同盟表情')} ref=${feedRef}>
       ${activeEmotes.map((e) => {
         const p = playersById.get(e.playerId);
         return html`<div key=${e.seq} class="team__feed-row" aria-label=${t('{name}发送表情', { name: p.name || t('博士') })}>

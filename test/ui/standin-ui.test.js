@@ -75,7 +75,11 @@ describe('干员持有 model (ui/ownershipModel.js)', () => {
     assert.deepEqual(M.parseStoredOwnership(null), []);
     assert.deepEqual(M.parseStoredOwnership({ v: 1, notOwned: [SILVER, 'bad id', SILVER, '__proto__', 7, SARIA] }), [SILVER, SARIA].sort());
     assert.deepEqual(M.parseStoredOwnership([MLYSS]), [MLYSS], 'a bare array of an older build');
-    assert.deepEqual(M.toStoredOwnership([SARIA, SILVER]), { v: M.OWNERSHIP_VERSION, notOwned: [SILVER, SARIA].sort() });
+    // v2 (DESIGN §35.23): by operator; the v1 form only while a store waits for its migration
+    assert.deepEqual(M.toStoredOwnership(['char_202_demkni', 'char_172_svrash']), { v: 2, notOwnedChars: ['char_172_svrash', 'char_202_demkni'] });
+    assert.deepEqual(M.parseStoredOwnershipChars(M.toStoredOwnership(['char_202_demkni'])), ['char_202_demkni']);
+    assert.deepEqual(M.parseStoredOwnership(M.toStoredOwnership(['char_202_demkni'])), [], 'a v2 store has no chess ids');
+    assert.deepEqual(M.toStoredOwnershipV1([SARIA, SILVER]), { v: 1, notOwned: [SILVER, SARIA].sort() });
     assert.deepEqual(M.sanitizeNotOwned([SILVER, CATHY, 'chess_char_9_99_a', getChess(SILVER).goldenId], getChess), [SILVER], 'droppable chess only');
   });
   test('toggles: setOwned / isOwned return new sorted lists', () => {
@@ -101,10 +105,11 @@ describe('干员持有 model (ui/ownershipModel.js)', () => {
     assert.equal(M.notOwnedCount([SILVER, CATHY, 'chess_char_6_10_a'], roster), 1, 'PRESET / retired ids do not count');
   });
   test('export / import: versioned envelope, bare arrays and text; junk, newer versions and other kinds refused', () => {
-    const text = M.serializeOwnership([SARIA, SILVER], { now: 0 });
+    const text = M.serializeOwnership(['char_202_demkni', 'char_172_svrash'], { now: 0 });
     const env = JSON.parse(text);
-    assert.deepEqual([env.kind, env.v, env.count, env.notOwned], [M.OWNERSHIP_EXPORT_KIND, 1, 2, [SILVER, SARIA].sort()]);
-    assert.deepEqual(M.parseOwnershipImport(text), { ok: true, notOwned: [SILVER, SARIA].sort() });
+    assert.deepEqual([env.kind, env.v, env.count, env.notOwnedChars], [M.OWNERSHIP_EXPORT_KIND, 2, 2, ['char_172_svrash', 'char_202_demkni']]);
+    assert.deepEqual(M.parseOwnershipImport(text), { ok: true, notOwnedChars: ['char_172_svrash', 'char_202_demkni'] });
+    assert.deepEqual(M.parseOwnershipImport({ kind: M.OWNERSHIP_EXPORT_KIND, v: 1, notOwned: [SARIA, SILVER] }), { ok: true, notOwned: [SILVER, SARIA].sort() }, 'a v1 export (第二期下半 chess ids)');
     assert.deepEqual(M.parseOwnershipImport([MLYSS]), { ok: true, notOwned: [MLYSS] });
     assert.deepEqual(M.parseOwnershipImport({ v: 1, notOwned: [] }), { ok: true, notOwned: [] }, 'an empty list = everything owned');
     assert.equal(M.parseOwnershipImport('').ok, false);

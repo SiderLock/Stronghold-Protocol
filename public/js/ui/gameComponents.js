@@ -6,8 +6,8 @@ import { html, Icon, TierChip, Tooltip } from './components.js';
 import { data, useData, localAsset } from '../data.js';
 import { parseRichText, rtClassName } from './richText.js';
 import { t as tr } from '../../../shared/i18n.js';
-import { useStore } from '../store.js';
-import { skinsStore, ownerSkin } from './skins.js';
+import { useStore, store } from '../store.js';
+import { skinsStore, ownerSkin, tokenSkinShown } from './skins.js';
 import { settingsStore } from './settingsStore.js';
 import {
   uiUrl, chessAvatarUrl, chessPortraitUrl, itemIconUrl, tokenAvatarUrl, enemyIconUrl, bondIconUrl, bandIconUrl,
@@ -27,8 +27,9 @@ export const GAME_FILES = ['config', 'assets', 'chess', 'bonds', 'items', 'bands
  */
 export function useGameData() {
   const ready = useData(...GAME_FILES);
-  // (config / factions / choices are read once per memo: a language switch reads them again in the new locale)
-  return useMemo(() => makeLookups(ready), [ready, data.locale()]);
+  // (config / factions / choices are read once per memo: a language switch reads them again in the new locale, a
+  // content switch — a version or a plugin set — from the new files)
+  return useMemo(() => makeLookups(ready), [ready, data.locale(), data.contentId()]);
 }
 
 /** A 自选 operator's summon record (data/backups.json `tokens`, 0.2.0), or null. */
@@ -93,6 +94,13 @@ export function Sprite({ k, class: cls, fallback = null }) {
   return html`<${Img} src=${uiUrl(data.get('assets'), k)} class=${cx('sprite', cls)} fallback=${fallback} />`;
 }
 
+/** Official promotion phase from the resolved record's status (not its shop tier or normal / golden form). */
+export function PromotionIcon({ m, phase, class: cls }) {
+  if (!Number.isInteger(phase) || phase < 0 || phase > 2) return null;
+  return html`<${Img} src=${uiUrl(m, `elite/elite_${phase}`)} class=${cls}
+    fallback=${html`<small class=${cls}>E${phase}</small>`} />`;
+}
+
 /**
  * Official sprite from the local-client extraction (data/local-assets.json, DESIGN §13) with a fallback node when the
  * manifest / entry is missing or the image fails.
@@ -126,8 +134,22 @@ export const isGoldenPiece = (piece, chess) => !!(piece?.golden || chess?.isGold
  *   `rec`: the chess record to draw instead of the data's (a 自选 piece's composed record — 0.2.0, gameLogic/diy.js; a
  *   补位 stand-in's — gameLogic/standIn.js: drawn with a small 「替补」 mark in the corner)
  */
+/** The summon outfit this viewer may see (#876; round-54 audit): read without hooks — thumbnails and the detail head are
+ * also rendered as plain functions — and only when there is a skin to gate. */
+function shownTokenSkin(skin, ownerId) {
+  if (!skin) return null;
+  return tokenSkinShown(skin, { ownerId, myId: store.get()?.me?.playerId ?? null, otherSkins: settingsStore.get()?.otherSkins !== false });
+}
+
+/** A summon's avatar in its owner's outfit (#876) under the operators' 显示其他玩家的皮肤 gate (round-54 audit). */
+export function TokenAvatar({ m, tokenId, ownerId = null, skin = null, fallback = null }) {
+  return html`<${Img} src=${tokenAvatarUrl(m, tokenId, { skin: shownTokenSkin(skin, ownerId) })} fallback=${fallback} />`;
+}
+
 export function UnitThumb({ kind = 'chess', id, golden, size = 'md', tier, showTier = true, class: cls, dim = false, badge = null, title, rec = null, ownerId, skin = null }) {
   const m = data.get('assets');
+  // a summon wears its owner's outfit (#876) under the operators' 显示其他玩家的皮肤 gate (round-54 audit)
+  const tokenSkin = kind === 'token' ? shownTokenSkin(skin, ownerId) : null;
   let src = null;
   let name = '';
   let t = tier;
@@ -146,7 +168,7 @@ export function UnitThumb({ kind = 'chess', id, golden, size = 'md', tier, showT
     golden = golden ?? !!it?.isGolden;
   } else if (kind === 'token') {
     const tk = data.lookup('tokens', id);
-    src = tokenAvatarUrl(m, id);
+    src = tokenAvatarUrl(m, id, { skin: tokenSkin });
     name = tk?.name || '';
   } else if (kind === 'enemy') {
     const e = data.lookup('enemies', id);

@@ -16,6 +16,10 @@ export class FreezeScheduler {
   now() { return this.source.now(); }
   gameNow() { return this.frozen ? this.frozenAt : this.now(); }
 
+  // Upstream's external-advisor runner advances the injected virtual clock through m.sched.
+  // Keep the emergency wrapper in that path: a frozen or disposed match must not advance callbacks.
+  runNext() { return !this.disposed && !this.frozen && this.virtual ? this.source.runNext() : false; }
+
   _create(fn, ms, every = 0) {
     if (this.disposed || typeof fn !== 'function') return null;
     const value = Number(ms);

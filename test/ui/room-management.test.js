@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Button } from '../../public/js/ui/components.js';
-import { roomFacts, SeatCard, MatchmakingControl, SeatExchangeButton, SeatRequestNotice } from '../../public/js/screens/room.js';
+import { roomFacts, SeatCardView as SeatCard, MatchmakingControl, SeatExchangeButton, SeatRequestNotice } from '../../public/js/screens/room.js';
 
 function* walk(node) {
   if (Array.isArray(node)) { for (const child of node) yield* walk(child); return; }
@@ -14,6 +14,8 @@ const host = { seat: 0, playerId: 'host', name: 'Host', connected: true, ready: 
 const guest = { seat: 1, playerId: 'guest', name: 'Guest', connected: true, ready: true, isBot: false };
 const bot = { seat: 2, playerId: 'bot', name: 'AI', connected: true, ready: true, isBot: true };
 const room = (changes = {}) => ({ hostId: host.playerId, mode: 'coop', capacity: 4, inMatch: false, seats: [host, guest, bot, null], ...changes });
+const memberControls = (card) => [...walk(card)].filter(n => n.type === Button || n.type === 'button' && n.props.class === 'rseat__kick')
+  .sort((a, b) => Number(b.props.icon === 'crown') - Number(a.props.icon === 'crown'));
 
 test('seat exchange controls distinguish empty/AI/human seats and prevent offline or duplicate actions', () => {
   const source = room(), calls = [], facts = roomFacts(source, 'host');
@@ -123,20 +125,22 @@ test('member controls render transfer beside kick, preserve confirmed identities
   const calls = [];
   const props = { seat: guest, index: 1, room: source, facts: roomFacts(source, 'host'), myId: 'host', busy: null,
     onTransferHost: (...args) => calls.push(args), onKick: (...args) => calls.push(args) };
-  const buttons = [...walk(SeatCard(props))].filter((n) => n.type === Button);
-  assert.deepEqual(buttons.map((n) => n.props.icon), ['crown', 'close']);
+  const buttons = memberControls(SeatCard(props));
+  assert.equal(buttons.length, 2);
+  assert.equal(buttons[0].props.icon, 'crown');
+  assert.equal(buttons[1].props['aria-label'], '移出该博士');
   assert.equal(buttons[0].props['aria-label'], '转让房主给该博士');
   buttons[0].props.onClick();
   buttons[1].props.onClick();
   assert.deepEqual(calls, [[1, 'Guest', 'guest'], [1, 'Guest', 'guest']]);
-  assert.ok([...walk(SeatCard({ ...props, busy: 'transfer1' }))].filter((n) => n.type === Button).every((n) => n.props.disabled));
+  assert.ok(memberControls(SeatCard({ ...props, busy: 'transfer1' })).every((n) => n.props.disabled));
   const botCard = SeatCard({ ...props, seat: bot, index: 2, onRemoveBot: (...args) => calls.push(args) });
-  const botButtons = [...walk(botCard)].filter((n) => n.type === Button);
+  const botButtons = memberControls(botCard);
   assert.equal(botButtons.length, 1);
   botButtons[0].props.onClick();
   assert.deepEqual(calls.at(-1), [2, 'bot']);
-  assert.equal([...walk(SeatCard({ ...props, seat: { ...guest, connected: false } }))].filter((n) => n.type === Button).length, 1);
-  assert.equal([...walk(SeatCard({ ...props, myId: 'guest', facts: roomFacts(source, 'guest') }))].filter((n) => n.type === Button).length, 0);
+  assert.equal(memberControls(SeatCard({ ...props, seat: { ...guest, connected: false } })).length, 1);
+  assert.equal(memberControls(SeatCard({ ...props, myId: 'guest', facts: roomFacts(source, 'guest') })).length, 0);
 });
 
 test('empty seats explain server AI limit and block repeated or conflicting additions', () => {

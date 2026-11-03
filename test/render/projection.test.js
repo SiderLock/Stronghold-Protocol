@@ -7,7 +7,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   Camera, fitCamera, presetCamera, lerpCamera, pickTile, tileQuad, normRect, CAMERA_PRESETS, easeInOutCubic,
-  OFFICIAL, OFFICIAL_PARAMS, officialCamera, parseCameraParam, threeCameraParams, syncThreeCamera, clearHud,
+  OFFICIAL, OFFICIAL_PARAMS, officialCamera, parseCameraParam, threeCameraParams, syncThreeCamera, clearHud, clearTeamHud,
 } from '../../public/js/render/projection.js';
 import * as THREE from 'three';
 
@@ -354,6 +354,23 @@ describe('HUD clearance of the prep views (user playtest #5 item 9)', () => {
       for (const v of Object.values(out.params())) assert.ok(Number.isFinite(v));
     }
     assert.equal(clearHud(cam, hud, null, vp), cam);
+  });
+
+  test('a narrow landscape prep view pans around the team panel without shrinking or cropping the other edge', () => {
+    const viewport = { width: 800, height: 600 }, left = 140;
+    for (const [kind, side, c0, c1] of [['prep', 'L', -0.5, 10.5], ['bossPrep', 'L', -0.5, 10.5], ['bossPrep', 'R', 9.5, 20.5]]) {
+      const keep = CAMERA_PRESETS[kind].keep, base = presetCamera(kind, viewport, { side });
+      const cam = clearTeamHud(base, { left }, keep, viewport, side);
+      const xs = (c) => [cam.project(c, keep.near, keep.zNear).x, cam.project(c, keep.far, keep.zFar).x];
+      assert.ok(Math.min(...xs(c0)) >= left, `${kind}/${side}: left edge clears the panel`);
+      assert.ok(Math.max(...xs(c1)) <= viewport.width, `${kind}/${side}: right edge remains visible`);
+      assert.equal(cam.scale, base.scale, `${kind}/${side}: no zoom`);
+      assert.equal(cam.cy, base.cy, `${kind}/${side}: no vertical movement`);
+      assert.equal(clearTeamHud(base, {}, keep, viewport, side), base, 'no panel leaves the camera untouched');
+      const constrained = clearTeamHud(base, { left: 10000 }, keep, viewport, side);
+      const right = Math.max(...[constrained.project(c1, keep.near, keep.zNear).x, constrained.project(c1, keep.far, keep.zFar).x]);
+      assert.ok(right <= viewport.width + 1e-6, 'a panel wider than the available space never pushes the board off screen');
+    }
   });
 
   test('an adjusted camera picks, projects and lerps like any other (bench, raised and low tiles; three.js too)', () => {

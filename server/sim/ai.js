@@ -39,7 +39,6 @@
 
 import { ATTACK_PAUSE, ALLY_COLLIDER_RADIUS, MOVE_SCALE, PROJECTILE_SPEEDS, PROJECTILE_SPEED, BOOMERANG_RETURN_SPEED, COLS, CHAIN_RADIUS } from './constants.js';
 import { sortEnemyTargets, sortAllyTargets, canTargetEnemy, canTargetAlly, tileKeyOf } from './targeting.js';
-import { reduceElement } from './damage.js';
 import { straightClear } from './grid.js';
 import { moveFeared, endFear } from './fear.js';
 import { hypot, powi } from './detmath.js';
@@ -161,6 +160,7 @@ export function noteAttackCommit(b, dt) {
   const allies = b.allyUnits;
   if (!allies || !allies.length) return;
   let map = null;
+  const meleeState = { fortressMelee: false };
   for (let i = 0; i < allies.length; i++) {
     const u = allies[i];
     if (!u.alive || !u.deployed || !u.canAct || !u.profile) continue;
@@ -174,8 +174,10 @@ export function noteAttackCommit(b, dt) {
     if (prof.heal && prof.dmgType === 'heal') continue;
     if (prof.allInRange || prof.rangeAoe) continue;
     if (prof.canAttack && !prof.canAttack(b, u)) continue;
-    // acquireTargets writes `_fortressMelee` on the profile it is given; keep that off the live profile
-    const targets = acquireTargets(b, u, Object.assign({}, prof));
+    // The fortress melee/ranged switch is a per-search answer, not profile state: `acquireTargets` reports it in this
+    // scratch object instead of writing `_fortressMelee` on the live profile (a hook that runs during the search must
+    // never see it). Reused across calls — one object per battle, no copy per ally per tick.
+    const targets = acquireTargets(b, u, prof, meleeState);
     if (!targets.length) continue;
     (map ??= new Map()).set(u.id, targets.filter((t) => t && t.alive));
   }
@@ -192,8 +194,16 @@ function committedAttackTargets(b, u, prof) {
   return out;
 }
 
-/** Collect targets for an ally with profile `prof`. */
-export function acquireTargets(b, u, prof) {
+/** Write the fortress switch where the caller expects it: a scratch object when one was given, else the profile. */
+function setFortressMelee(prof, state, v) {
+  if (state) state.fortressMelee = v; else prof._fortressMelee = v;
+}
+
+/**
+ * Collect targets for an ally with profile `prof`. `state` (optional) receives the fortress switch instead of it being
+ * written on `prof`: `{fortressMelee}` — a caller that must not touch the live profile passes a scratch object.
+ */
+export function acquireTargets(b, u, prof, state = null) {
   // a heal attack (医师 / 群愈师 / 疗养师 / 链愈师 / 行医, a skill attack turned into a heal) selects injured allies only,
   // never the enemies its unit blocks — a blocking healer keeps healing: PRTS 卫戍协议/帮助 "对于医疗干员（咒愈师分支除外），
   // 攻击目标为需要治疗的单位" (the blocked-first rule below is for attackers of enemies; community feedback after 0.1.0, E2)
@@ -210,10 +220,10 @@ export function acquireTargets(b, u, prof) {
   if (prof.fortress) {
     if (u.blocking.length) {
       const t = u.blocking.filter((e) => canTargetEnemy(u, e, { canHitFly: false }));
-      prof._fortressMelee = true;
+      setFortressMelee(prof, state, true);
       return t.slice(0, 1);
     }
-    prof._fortressMelee = false;
+    setFortressMelee(prof, state, false);
   }
   const cands = b.enemiesInKeys(u.rangeKeys, u, prof);
   // "可以选择且优先选择阻挡单位" (PRTS 选择器): the enemies a unit blocks are always selectable by it — the block radius
@@ -228,7 +238,7 @@ export function acquireTargets(b, u, prof) {
     const here = [u.tileR * COLS + u.tileC];
     const near = b.enemiesInKeys(here, u, prof);
     if (!near.length && b._allyTargets?.size) near.push(...b.allyTargetsInKeys(here, u));
-    prof._fortressMelee = near.length > 0;
+    setFortressMelee(prof, state, near.length > 0);
     sortEnemyTargets(b, u, near, prof.priority);
     return near.slice(0, 1);
   }
@@ -478,7 +488,7 @@ function doHeal(b, u, prof, t) {
   const h = prof.heal || { mode: 'single' };
   let amount = atk * scale;
   if (h.farMul && Math.max(Math.abs(t.tileR - u.tileR), Math.abs(t.tileC - u.tileC)) > (h.nearDist ?? 2)) amount *= h.farMul;
-  if (h.elementHealRatio) reduceElement(t, atk * h.elementHealRatio);
+  if (h.elementHealRatio) b.healElement({ target: t, amount: atk * h.elementHealRatio });
   b.heal(u, t, amount);
   if (h.mode === 'chain') {
     const seen = new Set([t.id]);
@@ -675,11 +685,13 @@ export function updateEnemy(b, e, dt) {
   }
   if (!e.hidden && b._checkBlock(e)) return;
   if (b.time < e.pauseUntil) return;
-  // standing for an attack clip (attackStand, GitHub #58): only the walking waits — a checkpoint's WAIT keeps running
-  // and DISAPPEAR / APPEAR legs still happen (advanceRoute); drawn idle (the client plays the clip, then Move again);
-  // a 恐惧 runs at once (it cannot attack). 失衡 holds the walking too — under 恐惧 / 诱导 as well (失衡免疫 says 「失衡期间
-  // 无法自主移动」; no source exempts a fear)
-  const standing = winding || unbalanced || (b.time < e.atkStandUntil && !e.s.flags.fear);
+  // standing for an attack clip (attackStand, GitHub #58) or a 持续施法 (channel, SIM.md §移动): only the walking waits — a
+  // checkpoint's WAIT keeps running and DISAPPEAR / APPEAR legs still happen (advanceRoute); drawn idle (the client plays the
+  // clip, then Move again); a 恐惧 runs at once (it cannot attack). 失衡 holds the walking too — under 恐惧 / 诱导 as well
+  // (失衡免疫 says 「失衡期间无法自主移动」; no source exempts a fear). A channel is read from its buff, not a `noMove` flag:
+  // `noMove` would also freeze a route WAIT / a portal, the leak and a 恐惧 — a channel only holds the walking.
+  const channeling = !!e.findBuff('ab:channel');
+  const standing = winding || unbalanced || (channeling && !e.s.flags.fear) || (b.time < e.atkStandUntil && !e.s.flags.fear);
   if (e.s.flags.noMove) { e.moving = false; return; }   // standing (a 重生, a form change): drawn idle, not walking
   // 恐惧 (ba.fear "无法被阻挡并四散逃跑"; PRTS 诱发移动: 恐惧 outranks 诱导): runs to random tiles of the fan away from
   // its source — a self-inflicted fear flutters inside its own tile (fear.js); the route re-plans once it ends

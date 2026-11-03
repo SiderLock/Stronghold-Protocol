@@ -63,7 +63,8 @@ export class BattlePlayers {
       t.ownerUnit = owner;
       // 召唤物换装 (P1): the token was built before its owner (a board lists top→bottom), so `_makeAlly` had no owner to
       // inherit the outfit from — take it now. A skin the piece carried itself still wins (none does today).
-      if (!t.skin) t.skin = owner.skin;
+      // the appearance follows the owner too, now that the owner is known (docs/SKINS.md; display only)
+      if (!t.skin) t.skin = owner.skin ?? null;
       const def = inp.def ? null : this._tokenDef(inp.tokenId ?? inp.chessId, owner, null);
       if (!def || def === t.def) continue;
       const st = def.stats;
@@ -144,7 +145,8 @@ export class BattlePlayers {
       const owner = inp.ownerUid != null ? ps.units.find((x) => x.uid === inp.ownerUid) : null;
       const def = this._tokenDef(inp.tokenId ?? inp.chessId, owner, inp.def);
       if (!def) { this.log(`unknown token ${inp.tokenId}`); return null; }
-      const u = this._makeAlly(ps, def, 'token', r, c, { uid: inp.uid, ownerUnit: owner, dir });
+      // 召唤物皮肤 (docs/SKINS.md): a summon wears the appearance its owner's outfit brings (Unit.skin, display only).
+      const u = this._makeAlly(ps, def, 'token', r, c, { uid: inp.uid, ownerUnit: owner, dir, skin: owner?.skin ?? null });
       u.carry = inp.carryState ?? null;
       return u;
     }
@@ -164,6 +166,7 @@ export class BattlePlayers {
     if (def.raw?.isDiy && !def.diyFor) { this.log(`自选 slot ${inp.chessId} without a pick`); return null; }
     const u = this._makeAlly(ps, def, 'op', r, c, { uid: inp.uid, dir, skin: inp.skin });
     u.items = [...(inp.items ?? [])];
+    if (inp.itemProgress) u.itemProgress = inp.itemProgress.map(p => ({ ...p }));
     u.carry = inp.carryState ?? null;
     // 练度 (自持有, 0.2.2): the owned operator's ×ATK / ×DEF / ×max HP (units.js Πmul) — never a 补位 stand-in's nor a
     // prototype 自选 pick's (another character than the one the player owns)

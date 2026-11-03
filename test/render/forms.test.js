@@ -61,6 +61,35 @@ const clip = (v) => v.actor.current;
 const sample = (flags = 0, anim = 0) => ({ x: 8, y: 9, hp: 1000, maxHp: 1000, sp: 0, spMax: 0, flags, anim, vx: 0 });
 const frames = (v, n, dt = 1 / 60) => { for (let i = 0; i < n; i++) v.update(dt, cam(), i * dt); };
 
+describe('水遁忍者 漩涡形态', () => {
+  test('entry, moving/blocked loop and exit use its own clips; a late-loaded view keeps the spin', async () => {
+    const id = 'enemy_10116_ymgtop';
+    const v = new UnitView(fakeViewCtx(fake.P, { assets: store(id), cam }), { id: 91, side: 'enemy', kind: 'enemy',
+      defId: id, spine: id, x: 8, y: 9, maxHp: 1000, form: 'spin' });
+    await tick(); await tick();
+    assert.equal(clip(v), 'Skill_Loop', 'entering a field mid-spin needs no old effect event');
+    v.sync(sample(0, ANIM.MOVE), 1);
+    frames(v, 10);
+    assert.equal(clip(v), 'Skill_Loop', 'movement never replaces spinning with Move');
+    v.setForm('spinStop');
+    assert.equal(clip(v), 'Skill_End');
+    frames(v, 40);
+    assert.equal(clip(v), 'Move');
+    v.setForm('spin');
+    assert.equal(clip(v), 'Skill_Begin');
+    frames(v, 40);
+    assert.equal(clip(v), 'Skill_Loop');
+    v.sync(sample(UF.STUN, ANIM.STUN), 2);
+    frames(v, 5);
+    v.setForm('spinStop');
+    frames(v, 40);
+    v.sync(sample(0, ANIM.MOVE), 3);
+    frames(v, 40);
+    assert.equal(clip(v), 'Move', 'stun/exit cannot strand the actor in its loop');
+    v.destroy();
+  });
+});
+
 describe('掠海漂移体 爬行模式 (FORMS)', () => {
   test('the crawl set exists in the skeleton the manifest lists', () => {
     const f = FORMS[SYUFO].crawl;
@@ -637,4 +666,16 @@ test('镜膜: first silence switches all clips to the stopped B form, including 
       assert.equal(clip(v), 'B_Die');
     } finally { v.destroy(); }
   }
+});
+
+describe('a second form leaves its skill slot\'s clip to the cast (DESIGN §35.48)', () => {
+  // 杰斯顿·威廉姆斯's form2 keeps its clip set: its C2_Skill is a `strike` slot played by the attack itself
+  // (test/render/enemy-strike-clip.test.js)
+  test('锏 form2: no `skill` role, so B_Skill2 (anims.skills) plays the casts', () => {
+    for (const key of ['enemy_1525_blkswb']) {
+      const roles = FORMS[key].form2.roles;
+      assert.ok(!Object.hasOwn(roles, 'skill'), `${key}: no form skill role`);
+      assert.ok(roles.attack && roles.idle, `${key}: its own attack and idle clips stay`);
+    }
+  });
 });

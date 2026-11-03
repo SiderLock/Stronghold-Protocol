@@ -1,7 +1,7 @@
 /* Independent text conversation. The game-specific corner sets the anchor; no global button/layout overrides. */
 .mchat-toggle {
-  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: max(.08rem, 4px);
-  min-width: max(1.05rem, 76px); min-height: max(.48rem, 34px); padding: .06rem .12rem; flex: none;
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: max(.08rem, calc(4px * var(--sp-ui, 1)));
+  min-width: max(1.05rem, calc(76px * var(--sp-ui, 1)), 32px); min-height: max(.48rem, calc(34px * var(--sp-ui, 1)), 32px); padding: .06rem .12rem; flex: none;
   background: rgba(8, 16, 13, .96); border: 1px solid var(--mint-700); border-radius: .04rem;
   color: var(--mint-400); font-size: max(calc(.16 * var(--t)), 12px); font-weight: 700; line-height: 1.2;
   transition: background var(--t-fast), border-color var(--t-fast);
@@ -16,17 +16,17 @@
 }
 .mchat-panel {
   position: fixed; z-index: 75; left: var(--mchat-left, max(.24rem, var(--sa-l, 0px)));
-  bottom: var(--mchat-bottom, max(1.64rem, 90px)); width: min(max(5rem, 360px), calc(100vw - 24px));
-  max-height: min(5.35rem, calc(100vh - var(--mchat-bottom, max(1.64rem, 90px)) - max(.2rem, 10px) - var(--sa-t, 0px)));
+  bottom: var(--mchat-bottom, max(1.64rem, calc(90px * var(--sp-ui, 1)))); width: min(max(5rem, calc(360px * var(--sp-ui, 1)), 32px), calc(100vw - 24px));
+  max-height: min(5.35rem, calc(100vh - var(--mchat-bottom, max(1.64rem, calc(90px * var(--sp-ui, 1)))) - max(.2rem, calc(10px * var(--sp-ui, 1))) - var(--sa-t, 0px)));
   display: flex; flex-direction: column; padding: 0; overflow: hidden;
   border: 1px solid var(--mint-700); border-radius: .05rem; background: rgba(8, 15, 12, .98);
   box-shadow: 0 .1rem .32rem rgba(0, 0, 0, .62); color: var(--text-hi); pointer-events: auto;
 }
 @supports (height: 100dvh) {
-  .mchat-panel { max-height: min(5.35rem, calc(100dvh - var(--mchat-bottom, max(1.64rem, 90px)) - max(.2rem, 10px) - var(--sa-t, 0px))); }
+  .mchat-panel { max-height: min(5.35rem, calc(100dvh - var(--mchat-bottom, max(1.64rem, calc(90px * var(--sp-ui, 1)))) - max(.2rem, calc(10px * var(--sp-ui, 1))) - var(--sa-t, 0px))); }
 }
 .mchat-panel__head {
-  display: flex; flex: none; align-items: center; justify-content: space-between; gap: .1rem; padding: max(.06rem, 4px) max(.12rem, 8px);
+  display: flex; flex: none; align-items: center; justify-content: space-between; gap: .1rem; padding: max(.06rem, calc(4px * var(--sp-ui, 1))) max(.12rem, calc(8px * var(--sp-ui, 1)));
   border-bottom: 1px solid var(--mint-900); background: rgba(35, 67, 52, .36);
 }
 .mchat-panel__head > b { display: flex; align-items: center; gap: .08rem; font-size: max(calc(.18 * var(--t)), 12px); }
@@ -37,10 +37,10 @@
 }
 .mchat-panel__messages {
   flex: 1 1 auto; min-height: 44px; min-height: min(1.05rem, 54px); overflow: auto; overscroll-behavior: contain;
-  padding: max(.06rem, 5px) max(.12rem, 8px); scrollbar-width: thin; user-select: text; -webkit-user-select: text;
+  padding: max(.06rem, calc(5px * var(--sp-ui, 1))) max(.12rem, calc(8px * var(--sp-ui, 1))); scrollbar-width: thin; user-select: text; -webkit-user-select: text;
 }
-.mchat-line { margin-bottom: max(.08rem, 5px); font-size: max(calc(.15 * var(--t)), 11px); line-height: 1.34; }
-.mchat-line__who { display: flex; align-items: center; gap: max(.04rem, 3px); min-width: 0; }
+.mchat-line { margin-bottom: max(.08rem, calc(5px * var(--sp-ui, 1))); font-size: max(calc(.15 * var(--t)), 11px); line-height: 1.34; }
+.mchat-line__who { display: flex; align-items: center; gap: max(.04rem, calc(3px * var(--sp-ui, 1))); min-width: 0; }
 .mchat-line__avatar { --pa: max(.3rem, 22px); }
 .mchat-line__group {
   display: inline-grid; place-items: center; flex: none; min-width: max(.18rem, 14px); height: max(.18rem, 14px); padding: 0 .025rem;
@@ -50,35 +50,35 @@
 .mchat-line__who > b { min-width: 0; overflow-wrap: anywhere; color: var(--mint-500); font-size: max(calc(.12 * var(--t)), 10px); }
 .mchat-line__seat { flex: none; font-size: max(calc(.10 * var(--t)), 9px); color: var(--text-dim); }
 .mchat-line.is-spectator .mchat-line__who > b { color: var(--ice); }
-.mchat-line > p { margin: max(.01rem, 1px) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-.mchat-panel__empty { margin: max(.25rem, 12px) 0; color: var(--text-dim); text-align: center; font-size: max(calc(.15 * var(--t)), 12px); }
-.mchat-panel__foot { flex: none; padding: max(.06rem, 5px) max(.12rem, 8px); border-top: 1px solid var(--mint-900); }
-.mchat-panel__compose { display: flex; align-items: stretch; gap: max(.08rem, 5px); }
+.mchat-line > p { margin: max(.01rem, calc(1px * var(--sp-ui, 1))) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mchat-panel__empty { margin: max(.25rem, calc(12px * var(--sp-ui, 1))) 0; color: var(--text-dim); text-align: center; font-size: max(calc(.15 * var(--t)), 12px); }
+.mchat-panel__foot { flex: none; padding: max(.06rem, calc(5px * var(--sp-ui, 1))) max(.12rem, calc(8px * var(--sp-ui, 1))); border-top: 1px solid var(--mint-900); }
+.mchat-panel__compose { display: flex; align-items: stretch; gap: max(.08rem, calc(5px * var(--sp-ui, 1))); }
 .mchat-panel__compose textarea {
-  display: block; flex: 1 1 auto; min-width: 0; height: max(.58rem, 40px); resize: none;
-  padding: max(.06rem, 5px) max(.08rem, 6px); border: 1px solid var(--line-2); border-radius: .03rem;
+  display: block; flex: 1 1 auto; min-width: 0; height: max(.58rem, calc(40px * var(--sp-ui, 1)), 32px); resize: none;
+  padding: max(.06rem, calc(5px * var(--sp-ui, 1))) max(.08rem, calc(6px * var(--sp-ui, 1))); border: 1px solid var(--line-2); border-radius: .03rem;
   background: #070d0a; color: var(--text-hi); font: inherit; font-size: max(calc(.15 * var(--t)), 11px); line-height: 1.3;
   user-select: text; -webkit-user-select: text;
 }
 .mchat-panel__compose textarea:focus { outline: 1px solid var(--mint-500); border-color: var(--mint-500); }
 .mchat-panel__send {
-  min-width: max(.62rem, 46px); padding: .06rem .08rem; border: 1px solid var(--mint-600); border-radius: .03rem;
+  min-width: max(.62rem, calc(46px * var(--sp-ui, 1)), 32px); padding: .06rem .08rem; border: 1px solid var(--mint-600); border-radius: .03rem;
   background: var(--mint-900); color: var(--mint-400); font-size: max(calc(.14 * var(--t)), 11px); font-weight: 700;
 }
 .mchat-panel__send:disabled { opacity: .45; cursor: not-allowed; }
-.mchat-panel__hint { display: flex; justify-content: space-between; gap: .08rem; margin-top: max(.05rem, 3px); color: var(--text-dim); font-size: max(calc(.10 * var(--t)), 9px); }
+.mchat-panel__hint { display: flex; justify-content: space-between; gap: .08rem; margin-top: max(.05rem, calc(3px * var(--sp-ui, 1))); color: var(--text-dim); font-size: max(calc(.10 * var(--t)), 9px); }
 .mchat-panel__hint .is-over { color: var(--red); }
-.mchat-panel__latest { padding: max(.06rem, 4px); flex: none; background: var(--mint-900); border: 0; border-top: 1px solid var(--mint-700); color: var(--mint-400); font-size: max(calc(.12 * var(--t)), 11px); }
+.mchat-panel__latest { padding: max(.06rem, calc(4px * var(--sp-ui, 1))); flex: none; background: var(--mint-900); border: 0; border-top: 1px solid var(--mint-700); color: var(--mint-400); font-size: max(calc(.12 * var(--t)), 11px); }
 .sp-coarse .mchat-toggle { min-height: 44px; }
 .sp-coarse .mchat-panel__compose textarea { font-size: max(calc(.16 * var(--t)), 16px); }
 /* Preserve the original bottom row. Only the independent chat entry occupies a new row above its emote column. */
 .gm.has-chat {
-  --chat-entry-height: max(.48rem, 34px); --chat-gear-height: .56rem;
-  --chat-corner-top: calc(.34rem + max(1.51rem, 72px) * 55 / 151 + var(--chat-entry-height));
+  --chat-entry-height: max(.48rem, calc(34px * var(--sp-ui, 1)), 32px); --chat-gear-height: .56rem;
+  --chat-corner-top: calc(.34rem + max(1.51rem, calc(72px * var(--sp-ui, 1)), 32px) * 55 / 151 + var(--chat-entry-height));
 }
-.sp-coarse .gm.has-chat { --chat-entry-height: max(.48rem, 44px); }
+.sp-coarse .gm.has-chat { --chat-entry-height: max(.48rem, calc(44px * var(--sp-ui, 1)), 32px); }
 .gm.has-chat .gm__corner {
-  display: grid; grid-template-columns: max(1.51rem, 72px) repeat(3, .56rem);
+  display: grid; grid-template-columns: max(1.51rem, calc(72px * var(--sp-ui, 1)), 32px) repeat(3, .56rem);
   grid-template-areas: "chat . . ." "emote gear guide fs"; gap: .1rem; align-items: end; width: auto;
 }
 .gm.has-chat .gm__chat { grid-area: chat; min-width: 0; width: 100%; }
@@ -97,38 +97,38 @@
 .mchat-brief-entry { margin-right: auto; }
 .mchat-draft-entry { width: 100%; }
 @media (max-height: 600px) and (pointer: coarse), (max-height: 600px) and (any-pointer: coarse) {
-  .gm.has-chat { --chat-corner-top: calc(.34rem + max(1.51rem, 96px) * 55 / 151 + 44px); }
-  .gm.has-chat { --chat-gear-height: max(.56rem, 34px); }
-  .gm.has-chat .gm__corner { grid-template-columns: max(1.51rem, 96px) repeat(3, max(.56rem, 34px)); }
-  .gm.has-chat.is-spectator .gm__corner { grid-template-columns: repeat(3, max(.56rem, 34px)); }
+  .gm.has-chat { --chat-corner-top: calc(.34rem + max(1.51rem, calc(96px * var(--sp-ui, 1)), 32px) * 55 / 151 + 44px); }
+  .gm.has-chat { --chat-gear-height: max(.56rem, calc(34px * var(--sp-ui, 1)), 32px); }
+  .gm.has-chat .gm__corner { grid-template-columns: max(1.51rem, calc(96px * var(--sp-ui, 1)), 32px) repeat(3, max(.56rem, calc(34px * var(--sp-ui, 1)), 32px)); }
+  .gm.has-chat.is-spectator .gm__corner { grid-template-columns: repeat(3, max(.56rem, calc(34px * var(--sp-ui, 1)), 32px)); }
 }
 @media (max-width: 767px) {
-  .gm.has-chat { --chat-corner-top: calc(.44rem + max(1.51rem, 72px) * 55 / 151 + .56rem + max(.48rem, 34px)); }
+  .gm.has-chat { --chat-corner-top: calc(.44rem + max(1.51rem, calc(72px * var(--sp-ui, 1)), 32px) * 55 / 151 + .56rem + max(.48rem, calc(34px * var(--sp-ui, 1)), 32px)); }
   .gm.has-chat .gm__corner {
     grid-template-columns: repeat(3, .56rem); grid-template-areas: "chat chat chat" "gear guide fs" "emote emote emote";
-    width: max(72px, calc(3 * .56rem + .2rem));
+    width: max(calc(72px * var(--sp-ui, 1)), 32px, calc(3 * .56rem + .2rem));
   }
   .gm.has-chat .gm__corner > .ewheel { width: max-content; }
   .gm.has-chat .ewheel__panel { bottom: calc(100% + .32rem + var(--chat-entry-height) + var(--chat-gear-height)); }
   .gm.has-chat.is-spectator .gm__corner { grid-template-areas: "chat chat chat" "gear guide fs"; }
 }
 @media (max-width: 767px) and (pointer: coarse), (max-width: 767px) and (any-pointer: coarse) {
-  .gm.has-chat { --chat-corner-top: calc(.44rem + max(1.51rem, 96px) * 55 / 151 + max(.56rem, 34px) + 44px); }
-  .gm.has-chat .gm__corner { grid-template-columns: repeat(3, max(.56rem, 34px)); width: max(96px, calc(3 * max(.56rem, 34px) + .2rem)); }
+  .gm.has-chat { --chat-corner-top: calc(.44rem + max(1.51rem, calc(96px * var(--sp-ui, 1)), 32px) * 55 / 151 + max(.56rem, calc(34px * var(--sp-ui, 1)), 32px) + 44px); }
+  .gm.has-chat .gm__corner { grid-template-columns: repeat(3, max(.56rem, calc(34px * var(--sp-ui, 1)), 32px)); width: max(calc(96px * var(--sp-ui, 1)), 32px, calc(3 * max(.56rem, calc(34px * var(--sp-ui, 1)), 32px) + .2rem)); }
 }
 /* Folding the shop restores its original single bottom row on narrow screens. Keeping three rows here would
    reserve more board height than the open shop, making the folded camera shrink rather than grow. */
 @media (max-width: 767px) {
-  .gm.has-chat.is-collapsed { --chat-corner-top: calc(.34rem + max(1.51rem, 72px) * 55 / 151 + var(--chat-entry-height)); }
+  .gm.has-chat.is-collapsed { --chat-corner-top: calc(.34rem + max(1.51rem, calc(72px * var(--sp-ui, 1)), 32px) * 55 / 151 + var(--chat-entry-height)); }
   .gm.has-chat.is-collapsed .gm__corner {
-    grid-template-columns: max(1.51rem, 72px) repeat(3, .56rem);
+    grid-template-columns: max(1.51rem, calc(72px * var(--sp-ui, 1)), 32px) repeat(3, .56rem);
     grid-template-areas: "chat . . ." "emote gear guide fs"; width: auto;
   }
   .gm.has-chat.is-collapsed .ewheel__panel { bottom: calc(100% + .22rem + var(--chat-entry-height)); }
 }
 @media (max-width: 767px) and (pointer: coarse), (max-width: 767px) and (any-pointer: coarse) {
-  .gm.has-chat.is-collapsed { --chat-corner-top: calc(.34rem + max(1.51rem, 96px) * 55 / 151 + var(--chat-entry-height)); }
-  .gm.has-chat.is-collapsed .gm__corner { grid-template-columns: max(1.51rem, 96px) repeat(3, max(.56rem, 34px)); }
+  .gm.has-chat.is-collapsed { --chat-corner-top: calc(.34rem + max(1.51rem, calc(96px * var(--sp-ui, 1)), 32px) * 55 / 151 + var(--chat-entry-height)); }
+  .gm.has-chat.is-collapsed .gm__corner { grid-template-columns: max(1.51rem, calc(96px * var(--sp-ui, 1)), 32px) repeat(3, max(.56rem, calc(34px * var(--sp-ui, 1)), 32px)); }
 }
 @media (max-height: 460px) {
   .mchat-panel { width: min(360px, calc(100vw - 24px)); }

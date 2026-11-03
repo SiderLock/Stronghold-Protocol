@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { link as linkFixture, unlink as unlinkFixture } from '../helpers/links.js';
 import { deflateSync } from 'node:zlib';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
@@ -16,6 +17,7 @@ import { editMediaDraft } from '../../server/studio/mediaDraft.js';
 import { createCandidate } from '../../server/studio/candidate.js';
 import { writeTrialDraftFile } from '../../server/studio/trialDraft.js';
 import { checkCandidate } from '../../server/studio/check.js';
+import { PLUGIN_MAX_BYTES } from '../../shared/plugins/manifest.js';
 import { validatePng } from '../../server/studio/mediaValidation.js';
 import { emptyBook, presentationOptions } from '../../public/studio/js/presentation.js';
 import { options as preact } from '../../public/vendor/preact.module.js';
@@ -137,9 +139,9 @@ test('P2: external overlay effect sheets enforce decoding and FX subset, ordinar
 });
 
 test('candidates refuse hidden links before staging, use clone fallback, and clean failed edits/timeouts', async t => {
-  const m = setup(t); fs.symlinkSync(m.dir, path.join(m.dir, '.hidden'));
+  const m = setup(t); linkFixture(m.dir, path.join(m.dir, '.hidden'));
   await assert.rejects(editMediaDraft(m.files, m.id, () => assert.fail('must not stage'), { dataDir: path.resolve('data') }), { code: 'PLUGIN_STUDIO_PATH' });
-  noCandidates(m); fs.unlinkSync(path.join(m.dir, '.hidden'));
+  noCandidates(m); unlinkFixture(path.join(m.dir, '.hidden'));
   const link = fs.linkSync, copy = fs.copyFileSync; let cloned = 0;
   fs.linkSync = () => { throw Object.assign(new Error('cross-device'), { code: 'EXDEV' }); };
   fs.copyFileSync = (from, to, flags) => { assert.equal(flags, fs.constants.COPYFILE_FICLONE); cloned++; return copy(from, to, flags); };
@@ -194,7 +196,7 @@ test('no-new-problems compares locations as well as codes and aggregate caps sti
   raw.assets.chars.char_102_texas.skins['outfit-1'].portrait = 'b.png';
   assert.equal((await m.api('files/plugin.json', Buffer.from(JSON.stringify(raw)), 'PUT')).status, 400);
   assert.deepEqual(fs.readFileSync(path.join(m.dir, 'plugin.json')), before);
-  fs.writeFileSync(path.join(m.dir, 'big.ogg'), ''); fs.truncateSync(path.join(m.dir, 'big.ogg'), 200 * 1024 * 1024);
+  fs.writeFileSync(path.join(m.dir, 'big.ogg'), ''); fs.truncateSync(path.join(m.dir, 'big.ogg'), PLUGIN_MAX_BYTES);
   const response = await m.api('files/a.png', png(), 'PUT');
   assert.equal(response.status, 413, JSON.stringify(response)); assert.equal(fs.existsSync(path.join(m.dir, 'a.png')), false); noCandidates(m);
 });

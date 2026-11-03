@@ -32,3 +32,35 @@ class ModeAuraTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SkinFxPublishTests(unittest.TestCase):
+    """`skinfx.py merge`: an index only publishes replacements it actually holds."""
+
+    def test_dangling_replacements_are_dropped_and_reported(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from skinfx import merge
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'index.json'
+            path.write_text(json.dumps({'prefabs': {'base_hit': {}, 'skin_hit': {}}, 'units': {}}), encoding='utf-8')
+            skins = {
+                'char_a@skin#1': {'replace': {'base_hit': 'skin_hit', 'base_buff': 'missing_buff'}},
+                # nothing left to replace: the outfit keeps its base effects and leaves the section out
+                'char_b@skin#2': {'replace': {'base_buff': 'missing_buff'}},
+                # a fake projectile is kept even without replacements (reported, not exported)
+                'char_c@skin#3': {'replace': {}, 'fakeProjectiles': [{'graphicProjectileKey': 'p_x'}]},
+            }
+            written, missing, dropped = merge(path, skins)
+            index = json.loads(path.read_text(encoding='utf-8'))
+            self.assertEqual(written, 2)
+            self.assertEqual(index['skinFx']['char_a@skin#1']['replace'], {'base_hit': 'skin_hit'})
+            self.assertNotIn('char_b@skin#2', index['skinFx'])
+            self.assertIn('char_c@skin#3', index['skinFx'])
+            self.assertEqual(missing, ['missing_buff'])
+            self.assertEqual(len(dropped), 2)
+            for rec in index['skinFx'].values():
+                for target in rec['replace'].values():
+                    self.assertIn(target, index['prefabs'])

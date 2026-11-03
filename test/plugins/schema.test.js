@@ -119,6 +119,10 @@ const OVERLAYS = [
       spine: { front: { skel: 'm/t.skel', atlas: 'm/t.atlas', textures: ['m/t.png', 'm/t2.png'], pma: true }, back: { skel: 'b/t.skel', anims: 'auto' } } },
     char_4058_pepe_sightseer_2: { ref: 'char_112_siege', name: 'stem form' } } } } }],
   ['an enemy, a summon', { enemies: { enemy_1007_slime: { icon: 'e.png', spine: { skel: 'e/s.skel' } } }, tokens: { token_x: { avatar: 't.png', spine: { ref: 'token_y' } } } }],
+  ['a summon and the appearances its owner\'s outfits bring', { tokens: { token_10006_vodfox_doll: { avatar: 't.png', skins: {
+    'char_498_inside@kitchen#2': { name: '厨房', group: '罗德厨房', avatar: 't2.png', illust: 't3.png',
+      spine: { front: { skel: 'm/t.skel', atlas: 'm/t.atlas', textures: ['m/t.png'], pma: false } } },
+    token_10006_vodfox_doll_kitchen_2: { name: 'stem form', avatar: 't4.png' } } } } }],
   ['a skin key of exactly 64 characters, a series left empty', { chars: { char_102_texas: { skins: { ['s'.repeat(64)]: { name: 'x', group: '' }, s: { name: 'y', group: '时代/VII' } } } } }],
   ['a skin that restyles its summons, a token id of exactly 128 characters', { chars: { char_102_texas: { skins: { outfit: { name: 'Outfit', tokens: {
     token_10031_swire2_gdtrap: { tokenSkinId: 'token_10031_swire2_gdtrap_epoque',
@@ -147,6 +151,7 @@ const OVERLAYS = [
   ['clip data by hand', { chars: { char_102_texas: { spine: { front: { skel: 'm/t.skel', animations: { Idle: 1 } } } } } }],
   ['anims other than auto', { enemies: { e: { spine: { skel: 'm/t.skel', anims: { idle: 'Idle' } } } } }],
   ['a model without its skeleton', { enemies: { e: { spine: { atlas: 'm/t.atlas' } } } }],
+  ['a summon skin key with a slash', { tokens: { token_x: { skins: { 'bad/key': { name: 'x' } } } } }],
   ['no pages', { enemies: { e: { spine: { skel: 'm/t.skel', textures: [] } } } }],
   ['pma that is no boolean', { enemies: { e: { spine: { skel: 'm/t.skel', pma: 'yes' } } } }],
   ['a field reference with another key', { chars: { char_102_texas: { avatar: { ref: 'char_112_siege', x: 1 } } } }],

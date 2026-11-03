@@ -19,6 +19,8 @@
 // A tap on the ground itself emits tileClick { row, col } like render/app.js does, so a special terrain tile
 // explains itself on this board too (GitHub issue #184).
 
+import { resourceFloat } from '../render/resourceNumbers.js';
+import { pieceItemProgress, progressLabel } from '../itemProgress.js';
 import { render } from '../../vendor/preact.module.js';
 import { html, TierChip } from './components.js';
 import { GEO } from '../../../shared/constants.js';
@@ -36,7 +38,16 @@ export function unitArt(m, info, appearance = {}) {
   const id = info?.avatar || info?.defId;
   if (!m || !id) return null;
   if (info.side === 'enemy' || String(id).startsWith('enemy_')) return enemyIconUrl(m, id);
-  if (String(id).startsWith('token_')) return tokenAvatarUrl(m, id);
+  if (String(id).startsWith('token_')) {
+    // 召唤物皮肤 (docs/SKINS.md): the same switch as an operator's: another seat's outfit is hidden when off. With its
+    // owner's operator known (UnitInfo ownerCharId, #876) the summon follows that operator's CURRENT outfit like the Pixi
+    // board does — the spawn-time info.skin missed a change made during the battle (round-54 audit)
+    const mine = info.ownerId == null || info.ownerId === appearance.myId;
+    const skin = info.ownerCharId && info.ownerId != null
+      ? ownerSkin(info.ownerCharId, { ...appearance, ownerId: info.ownerId, skin: info.skin })
+      : (mine || appearance.otherSkins !== false ? info.skin : null);
+    return tokenAvatarUrl(m, id, { skin });
+  }
   // Same golden rule as chessAvatarUrl: a character-key avatar uses avatarE2 on a golden piece.
   const charId = info.diy?.charId || info.spine || String(id).replace(/_[12]$/, '');
   const skin = ownerSkin(charId, { ...appearance, ownerId: info.ownerId ?? null, skin: info.skin });
@@ -71,6 +82,7 @@ export function fallbackTileClass(stage, row, col) {
  */
 export function fallbackFloat(e, settings) {
   if (!settings?.damageNumbers || !Array.isArray(e)) return null;
+  if (e[0] === 'resource') return resourceFloat(e, settings);
   if (settings.officialDamageNumbers === true) {
     if (e[0] === 'fx' && e[1] === 'dodge' && e[4] && e[4].num === 'm') return { id: e[4].id, text: 'MISS', type: 'miss' };
     if (e[0] !== 'dmg' || e[4] !== 'r') return null;
@@ -88,7 +100,7 @@ export function fallbackFloat(e, settings) {
 /**
  * Create the DOM fallback view.
  * @param {HTMLElement} host
- * @param {{ data: any, assets?: any, settings?: any }} opts
+ * @param {{ data: any, assets?: any, settings?: any, hud?: (kind:string, size:{width:number,height:number}, options:{shop:boolean}) => {top:number,bottom:number,left?:number}|null }} opts
  */
 export function createFallbackView(host, opts = {}) {
   const dataStore = opts.data;
@@ -128,7 +140,51 @@ export function createFallbackView(host, opts = {}) {
     const cols = r.c1 - r.c0 + 1;
     const prep = st.mode === 'prep';
     const hasTemp = prep && Array.isArray(st.priv?.temp) && st.priv.temp.some(Boolean);
-    const rows = r.r1 - r.r0 + 1 + (prep ? 2.6 + (hasTemp ? 1.2 : 0) : 0); // + gap + hand (+ temp) rows
+    const boardRows = r.r1 - r.r0 + 1;
+    const rows = boardRows + (prep ? 2.6 + (hasTemp ? 1.2 : 0) : 0); // + gap + hand (+ temp) rows
+    // [ASSUMED] Fit the simplified prep board into the same real HUD bands as the rendered field. Count only the
+    // occupied rows: .6 gap + 1 hand, plus .12 gap + 1 temporary row when present. The old 24 px floor put the
+    // back row under the bond strip on short landscape screens, even though the remaining space could fit the board.
+    const bands = prep && typeof opts.hud === 'function' ? opts.hud(st.deployField === 'normal' ? 'prep' : 'bossPrep',
+      { width: w, height: h }, { shop: true }) : null;
+    if (bands) {
+      const count = boardRows + 1.6 + (hasTemp ? 1.12 : 0);
+      const style = getComputedStyle(document.documentElement);
+      const ui = parseFloat(style.getPropertyValue('--sp-ui')) || 1;
+      const field = host.getBoundingClientRect(), hud = document.querySelector('.gm__hud')?.getBoundingClientRect();
+      const insetLeft = Math.max(0, (hud?.left || 0) - field.left);
+      const insetRight = Math.max(0, field.right - (hud?.right || field.right));
+      const leftBand = Math.max(bands.left || 0, insetLeft + rem * 0.22 + Math.max(rem * 3.1, 130 * ui));
+      const coarse = document.documentElement.classList.contains('sp-coarse');
+      // The effects column sits .3rem from the right; on touch its .5rem icon has a centred 44 px hit area.
+      const effectHit = coarse ? Math.max(rem * 0.5, 44) : rem * 0.5;
+      const rightBand = insetRight + Math.max(rem * 0.9, rem * 0.3 + (rem * 0.5 + effectHit) / 2 + 1);
+      const availW = Math.max(1, w - leftBand - rightBand);
+      const availH = Math.max(1, h - bands.top - bands.bottom);
+      let tile = Math.max(1, Math.floor(Math.min(availW / cols, availH / count)));
+      const placement = () => ({ left: Math.round(leftBand + (availW - tile * cols) / 2),
+        top: Math.round(bands.top + (availH - tile * count) / 2) });
+      let { left, top } = placement();
+      // Refresh / freeze sit above the shop, not inside its bottom band. If their hit areas cross a hand or temp row,
+      // use the free space on the left first, and shrink only when the available width cannot fit the row otherwise.
+      const limits = [];
+      for (const button of document.querySelectorAll('.shopbar__tools > button')) {
+        const b = button.getBoundingClientRect();
+        if (!(b.width > 0 && b.height > 0)) continue;
+        const dx = coarse ? Math.max(0, (44 - b.width) / 2) : 0, dy = coarse ? Math.max(0, (44 - b.height) / 2) : 0;
+        const hitLeft = b.left - dx - field.left, hitRight = b.right + dx - field.left;
+        const hitTop = b.top - dy - field.top, hitBottom = b.bottom + dy - field.top;
+        for (const [row, end] of [[boardRows + 0.6, GEO.HAND_SIZE], ...(hasTemp ? [[boardRows + 1.72, GEO.TEMP_C0 + GEO.TEMP_SIZE]] : [])]) {
+          if (hitTop < top + (row + 1) * tile && hitBottom > top + row * tile
+            && hitLeft > leftBand && left < hitRight && left + end * tile > hitLeft) limits.push({ hitLeft, end });
+        }
+      }
+      for (const { hitLeft, end } of limits) tile = Math.max(1, Math.min(tile, Math.floor((hitLeft - leftBand - 1) / end)));
+      ({ left, top } = placement());
+      for (const { hitLeft, end } of limits) left = Math.max(leftBand, Math.min(left, Math.floor(hitLeft - end * tile - 1)));
+      const bw = tile * cols, bh = tile * count;
+      return { tile, left, top, cols, rows: boardRows, bw, bh };
+    }
     // keep clear of the HUD: top bar + bond strip above, shop bar (prep) / switcher (combat) below
     const top0 = rem * 2.0;
     const bottom0 = h - rem * (prep ? 3.3 : 1.1);
@@ -150,7 +206,12 @@ export function createFallbackView(host, opts = {}) {
   function pieceArt(p) {
     const mm = m();
     if (p.kind === 'item') return itemIconUrl(mm, lookup('items', p.id));
-    if (p.kind === 'token') return tokenAvatarUrl(mm, p.id);
+    // 召唤物皮肤 (docs/SKINS.md): the summon wears its owner's outfit; 设置「显示其他玩家的皮肤」 off hides another
+    // seat's outfit
+    if (p.kind === 'token') {
+      const own = (st.priv?.playerId ?? st.myId) === st.myId || st.settings?.otherSkins !== false;
+      return tokenAvatarUrl(mm, p.id, { skin: own ? p.skin : null });
+    }
     const chess = lookup('chess', p.id);
     const body = ownSi(chess) || ownDiy(chess) || chess;
     const skin = ownerSkin(body?.charId, { ownerId: st.priv?.playerId ?? st.myId, skin: p.skin,
@@ -188,8 +249,14 @@ export function createFallbackView(host, opts = {}) {
       ${tier && p.kind !== 'token' ? html`<${TierChip} tier=${tier} golden=${golden} size="sm" class="ff-piece__tier" />` : null}
       ${p.kind === 'chess' && Array.isArray(p.items) && p.items.length ? html`<div class="ff-piece__items">${p.items.slice(0, 2).map((it) => html`<i key=${it.uid}></i>`)}</div>` : null}
       ${p.kind === 'token' && p.count > 1 ? html`<b class="ff-piece__count">×${p.count}</b>` : null}
+      <${EquipmentProgress} rows=${pieceItemProgress(p)} />
       ${wedge ? html`<i class="ff-piece__dir" aria-hidden="true"></i>` : null}
     </div>`;
+  }
+
+  function EquipmentProgress({ rows }) {
+    const labels = (rows || []).map(progressLabel).filter(Boolean);
+    return labels.length ? html`<span class="ff-progress">${labels.map((label, i) => html`<span key=${i}>${label}</span>`)}</span>` : null;
   }
 
   function onDown(e, p) {
@@ -289,6 +356,7 @@ export function createFallbackView(host, opts = {}) {
         onContextMenu=${(e) => { e.preventDefault(); emit('pieceClick', { unitId: id, uid: info.uid ?? null, unit: info, button: 2, clientX: e.clientX, clientY: e.clientY }); }}>
       <div class="ff-unit__art">${src ? html`<img src=${src} alt="" draggable=${false} />` : html`<span>${[...(info.name || '?')][0]}</span>`}</div>
       <div class="ff-unit__bars"><i class="hp" style=${`width:${hpPct}%`}></i>${!enemy && spMax > 0 ? html`<i class="sp" style=${`width:${spPct}%`}></i>` : null}</div>
+      ${!dead ? html`<${EquipmentProgress} rows=${info.itemProgress} />` : null}
     </div>`;
   }
 

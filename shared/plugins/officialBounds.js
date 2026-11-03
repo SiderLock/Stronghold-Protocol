@@ -199,6 +199,15 @@ export function exportOfficialBounds(bounds) {
 }
 
 /**
+ * The snapshot of `data`'s official maxima (exportOfficialBounds of a fresh scan) — an official version's own bounds
+ * (DESIGN §35.23: its match host and its pages install them). Never reads or fills the cache.
+ * @param {object} data
+ */
+export function officialBoundsOf(data) {
+  return exportOfficialBounds(scan(data));
+}
+
+/**
  * Install a snapshot computed from vanilla data. Does not scan `data` (a plugin must not raise its own cap).
  * @param {object} snapshot exportOfficialBounds result
  */
