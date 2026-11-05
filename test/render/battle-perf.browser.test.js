@@ -35,6 +35,19 @@ describe('battle perf page in headless Chrome', { skip }, () => {
     await srv?.close();
   });
 
+  test('low official FX reaches the real battle renderer and produces visible geometry', async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({ width: 960, height: 540, deviceScaleFactor: 1 });
+      await page.goto(`http://127.0.0.1:${srv.port}/dev/battle-perf.html?spec=hard-unite-r13&fx=low&panel=0`);
+      await page.waitForFunction(() => window.__perf?.ready && window.__perf.view.debug.ofx.stats().tier === 'low'
+        && window.__perf.view.debug.ofx.stats().draws > 0, { timeout: 60000 });
+      const stats = await page.evaluate(() => window.__perf.view.debug.ofx.stats());
+      assert.equal(stats.tier, 'low');
+      assert.ok(stats.draws > 0 && stats.tris > 0 && stats.particles > 0);
+    } finally { await page.close(); }
+  });
+
   test('official FX samples complete rendered frames and reports the window means and peaks', async () => {
     const page = await browser.newPage();
     try {

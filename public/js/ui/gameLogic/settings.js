@@ -40,15 +40,16 @@ export const FRAME_LIMITS = Object.freeze([30, 60, 0]); // 0 keeps the browser/d
  *  camera. #692 adds 'partial': keep the shop at 70%, with halfway camera offsets. [ASSUMED] this middle level.
  *  [ASSUMED] the label; only an explicit false turns it off (a missing or junk value stays on).
  *  adaptiveResolution: mobile canvas resolution follows sustained load when enabled; off restores the chosen quality.
- *  officialFx: 设置「官方特效」 (0.3.0, render/vfx): 'auto' (完整 on a desktop, 精简 on a touch device — render/vfx/tier.js),
- *  'off', 'lite' (精简), 'full' (完整); only shown when effects were extracted from the local client.
+ *  officialFx: 设置「官方特效」 (render/vfx): 'auto' (高 on a desktop, 中 on a touch device — render/vfx/tier.js),
+ *  'off', 'low' (低), 'lite' (中, the old 精简 profile), 'full' (高, the old 完整 profile).
+ *  Only shown when effects were extracted from the local client.
  *  otherSkins: 设置「显示其他玩家的皮肤」 (docs/SKINS.md), ON by default — draw the appearance another player chose instead
  *  of the operator's own model. A pure client preference (never sent): off, only this player's own pieces wear a skin.
  */
 export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceNative: false, voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, ammoEnergyCount: false, fullscreenWakeLock: false, bondTimers: false, combatMetrics: false, prepDeployFold: true, renderCache: false, adaptiveResolution: true, frameLimit: 0, quality: 'high', officialFx: 'auto', otherSkins: true, textSize: 'sm', keys: DEFAULT_HOTKEYS });
 const QUALITIES = ['high', 'medium', 'low'];
-/** The values of 设置「官方特效」 (render/vfx/tier.js OFFICIAL_FX). Display order in the dialog is low / medium / high. */
-export const OFFICIAL_FX_MODES = Object.freeze(['auto', 'off', 'lite', 'full']);
+/** The values of 设置「官方特效」 (render/vfx/tier.js OFFICIAL_FX). Display order is off / low / medium / high. */
+export const OFFICIAL_FX_MODES = Object.freeze(['auto', 'off', 'low', 'lite', 'full']);
 
 /**
  * The merged 显示弹药与能量数量 switch. A stored boolean wins. Otherwise on when either retired key was the boolean
@@ -64,7 +65,7 @@ function ammoEnergyCountOf(r) {
 /**
  * Sanitize persisted settings. Retired keys `ammoCount` and `mysticEnergy` are read here and never returned.
  * @param {any} raw
- * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en'|'kr', voiceNative: boolean, voiceOverrides: Record<string, string>, muted: boolean, damageNumbers: boolean, officialDamageNumbers: boolean, ammoEnergyCount: boolean, fullscreenWakeLock: boolean, bondTimers: boolean, combatMetrics: boolean, prepDeployFold: boolean|'partial', quality: 'high'|'medium'|'low', officialFx: 'auto'|'off'|'lite'|'full', otherSkins: boolean,
+ * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en'|'kr', voiceNative: boolean, voiceOverrides: Record<string, string>, muted: boolean, damageNumbers: boolean, officialDamageNumbers: boolean, ammoEnergyCount: boolean, fullscreenWakeLock: boolean, bondTimers: boolean, combatMetrics: boolean, prepDeployFold: boolean|'partial', quality: 'high'|'medium'|'low', officialFx: 'auto'|'off'|'low'|'lite'|'full', otherSkins: boolean,
  *   renderCache: boolean, adaptiveResolution: boolean, frameLimit: number, textSize: 'sm'|'md'|'lg'|'xl', keys: Record<'buy'|'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
  */
 export function sanitizeSettings(raw) {

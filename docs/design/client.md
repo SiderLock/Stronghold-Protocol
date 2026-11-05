@@ -308,17 +308,24 @@ history and the open points: DESIGN §32.14.25.
   'droneLock' / 'drone' drive her dispersed wolves (spread, chase, latch, hits, the trace and latched marks). Those kit
   fx (the light pillar, the reticle, the overload chevrons) are not drawn procedurally while the units' effects are
   there; without them the procedural look stays.
-- **Budget.** Tier 完整 (`full`: up to 220 effects and 6,000 particles, full-size textures) and 精简 (`lite`: 90 and
-  2,500, half-size textures, half the emission, the prefabs' FxLODSetting nodes off, no rim or distortion lookups).
+- **Budget.** 高 (`full`, the old 完整 profile) uses full-size textures and soft admission budgets of 220 effects /
+  6,000 particles. 中 (`lite`, the old 精简 profile) retains 90 / 2,500, half-size textures, half the emission,
+  FxLODSetting and simplified shaders. 低 (`low`) uses the same reduced textures / shaders, quarter emission and
+  budgets of 60 / 1,200 ([ASSUMED] engineering defaults). Low's normal and sub-emitter bursts keep at least one
+  particle when medium would have emitted one; authored zero, disabled emission and medium's rounded-away bursts
+  stay zero. The ratios describe emission, not exact live counts or frame-rate gains.
   Past the caps a new one-shot is dropped (loops and projectiles always start), and so is a one-shot whose prefab
   loads more than 0.6 s late; a one-shot nobody stops ends after its authored duration, a looping prefab nobody owns
   after 8 s at the latest, and an OnPlayEmitter's looping effect with the effect that played it; finished instances
   are pooled per prefab (up to its `_preloadCnt`, at most 12).
-- **Setting.** 设置「官方特效」 (`officialFx`: auto / off / lite / full; `tier.js resolveOfficialFx`: auto is 完整 on a
-  desktop and 精简 on a touch device) shows only when the served list names effects. The files are the server owner's
+- **Setting.** 设置「官方特效」 displays 关 / 低 / 中 / 高 (`officialFx`: auto / off / low / lite / full;
+  `tier.js resolveOfficialFx`: auto is 高 on a desktop and 中 on a touch device). Legacy saved full / lite values keep
+  their profiles. The setting is independent of graphics quality and frame limit and shows only when the served
+  list names effects. The files are the server owner's
   extraction (`tools/local-extract`), served to every player of that server: a remote player sees the host's effects,
   whatever client they have. The effects draw on the 3D board with WebGL2 only; the 2D board and the simplified board
-  keep the procedural effects. A tier switch clears the effects; the skill loops that should run start again quietly.
+  keep the procedural effects. A tier switch clears effects and their pool so emission parameters cannot leak across
+  profiles; the skill loops that should run start again quietly.
 - **Plugin effects** (0.3.1, [§34.18](../history/0.3.1.md#3418-plugin-operator-effects)). Explicit `fx.unit` requires
   an exact index key for both skills and attack/talent wiring; a miss skips `fx.skills` and keeps the old fallback.
   [ASSUMED] Borrowed talents use the borrower's equipped indices and active module. Author flipbooks draw on both

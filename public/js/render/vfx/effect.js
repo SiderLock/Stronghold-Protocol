@@ -271,7 +271,7 @@ let seq = 0;
 export class Effect {
   /**
    * @param {any} def compileEffect(...)
-   * @param {{ seed?: number, lite?: boolean, emission?: number, lib?: any, rngSeed?: number }} [opts]
+   * @param {{ seed?: number, lite?: boolean, emission?: number, minBurst?: boolean, lib?: any, rngSeed?: number }} [opts]
    */
   constructor(def, opts = {}) {
     this.def = def;
@@ -320,7 +320,8 @@ export class Effect {
       if (!def.ps[i]) continue;
       let e = emission;
       if (this.lite && def.lod && def.lod.hook.has(i)) e *= def.lod.hook.get(i);
-      this.sys[i] = new PSys(def.ps[i], { seed: (seed0 + i * 7919) >>> 0, emission: e, sub: def.subNodes.has(i) });
+      this.sys[i] = new PSys(def.ps[i], { seed: (seed0 + i * 7919) >>> 0, emission: e,
+        burstFloorScale: opts.minBurst ? e * 2 : 0, sub: def.subNodes.has(i) });
     }
     // sub-emitter wiring
     for (let i = 0; i < n; i++) {

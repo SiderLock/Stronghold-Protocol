@@ -13,7 +13,7 @@ import { FrameData, cameraBasis } from '../../public/js/render/vfx/geom.js';
 import { resolveOfficialFx } from '../../public/js/render/vfx/tier.js';
 import { FxWiring } from '../../public/js/render/vfx/wiring.js';
 import { listHasEffects } from '../../public/js/render/vfx/available.js';
-import { OfficialFx, LOOP_TTL } from '../../public/js/render/vfx/system.js';
+import { OfficialFx, LOOP_TTL, MAX_EFFECTS, MAX_PARTICLES } from '../../public/js/render/vfx/system.js';
 import { quatEuler, quatRotate } from '../../public/js/render/vfx/math.js';
 import { presetCamera } from '../../public/js/render/projection.js';
 
@@ -358,8 +358,71 @@ test('官方特效: auto is 完整 on a desktop and 精简 on touch; nothing wit
   assert.equal(resolveOfficialFx('auto', true, false), 'full');
   assert.equal(resolveOfficialFx('auto', true, true), 'lite');
   assert.equal(resolveOfficialFx('lite', true, false), 'lite');
+  assert.equal(resolveOfficialFx('low', true, false), 'low');
+  assert.equal(resolveOfficialFx('low', false, true), 'off');
   assert.equal(resolveOfficialFx('off', true, false), 'off');
   assert.equal(resolveOfficialFx('full', false, false), 'off');
+});
+
+describe('official FX quality profiles', () => {
+  function fixture(tier, burst = 40) {
+    const n = psNode(1, 0, { life: 10 });
+    n.particleSystem.EmissionModule.m_Bursts[0].countCurve = burst;
+    const def = compileEffect(desc([root([pe({})]), n]));
+    const lib = { available: true, has: key => key === 'test', def: () => def };
+    const ofx = new OfficialFx({ P: { Container: class {} }, cam: () => null, lib, tier });
+    return { ofx, def };
+  }
+
+  test('high and legacy medium retain their profiles; low reduces actual emitted particles', () => {
+    for (const [tier, scale, count, lite] of [['full', 1, 40, false], ['lite', 0.5, 20, true], ['low', 0.25, 10, true]]) {
+      const { ofx } = fixture(tier);
+      const h = ofx.spawn('test', {}, { seed: 7 });
+      ofx.update(1 / 60);
+      assert.equal(h.effect.sys[1].emissionScale, scale, tier);
+      assert.equal(h.effect.sys[1].count, count, tier);
+      assert.equal(ofx.lite, lite);
+      assert.equal(h.effect.def.material(0, ofx.lite).defs.lite, lite);
+      assert.equal(ofx.stats().particles, count);
+    }
+    const { ofx } = fixture('low', 1);
+    const h = ofx.spawn('test'); ofx.update(1 / 60);
+    assert.equal(h.effect.sys[1].count, 1, 'a one-particle cue survives low quality');
+  });
+
+  test('pooling reuses each profile and switching low / medium / high discards old emission parameters', () => {
+    const { ofx } = fixture('full');
+    let previous = null;
+    for (const tier of ['full', 'lite', 'low', 'lite', 'off', 'full']) {
+      ofx.setTier(tier);
+      assert.equal(ofx.pool.size, 0, `pool cleared on switching to ${tier}`);
+      if (tier === 'off') { assert.equal(ofx.spawn('test'), null); continue; }
+      const h = ofx.spawn('test');
+      assert.notEqual(h.effect, previous);
+      const count = tier === 'full' ? 40 : tier === 'lite' ? 20 : 10;
+      ofx.update(1 / 60); assert.equal(h.effect.sys[1].count, count);
+      const initial = h.effect;
+      h.kill(); ofx.update(0);
+      assert.equal(ofx.pool.get(initial.def).length, 1);
+      ofx.setTier(tier);
+      const reused = ofx.spawn('test');
+      assert.equal(reused.effect, initial, 'selecting the same tier keeps its pool');
+      ofx.update(1 / 60); assert.equal(reused.effect.sys[1].count, count);
+      previous = reused.effect;
+    }
+  });
+
+  test('each tier uses its soft admission budgets while important effects can still start', () => {
+    for (const tier of ['low', 'lite', 'full']) {
+      const { ofx } = fixture(tier);
+      for (let i = 0; i < MAX_EFFECTS[tier]; i++) assert.ok(ofx.spawn('test'));
+      assert.equal(ofx.spawn('test'), null, `${tier}: effect admission budget`);
+      assert.ok(ofx.spawn('test', {}, { important: true }));
+      ofx.clear(); ofx.particles = MAX_PARTICLES[tier];
+      assert.equal(ofx.spawn('test'), null, `${tier}: particle admission budget`);
+      assert.ok(ofx.spawn('test', {}, { loop: true }), 'persistent cues retain the existing exemption');
+    }
+  });
 });
 
 describe('wiring', () => {

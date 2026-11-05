@@ -5,7 +5,8 @@
 //
 //   const ofx = new OfficialFx({ P, renderer, assets, cam, heightAt })
 //   ofx.ground / ofx.over                       Pixi containers to add to the layers (they draw through raw GL)
-//   ofx.setTier('off' | 'lite' | 'full')        精简 = half-size textures, emission × 0.5, FxLODSetting, exotic
+//   ofx.setTier('off' | 'low' | 'lite' | 'full')  高=full; 中=lite (half-size textures, emission ×0.5); 低=low (×0.25).
+//                                                Both reduced tiers use FxLODSetting and simplified
 //                                                shaders fall back (render/vfx/materials.js)
 //   await ofx.init() → ofx.available             the extracted effects exist (data/local-fx.json lists prefabs)
 //   ofx.spawn(key, place, opts) → handle         handle.effect (once loaded), handle.stop(o), handle.kill(), handle.place(o)
@@ -24,9 +25,10 @@ import { Effect } from './effect.js';
 import { FrameData, cameraBasis } from './geom.js';
 import { mat4, mat4Mul } from './math.js';
 
-export const TIERS = Object.freeze(['off', 'lite', 'full']);
-export const MAX_EFFECTS = Object.freeze({ lite: 90, full: 220 });
-export const MAX_PARTICLES = Object.freeze({ lite: 2500, full: 6000 });
+export const TIERS = Object.freeze(['off', 'low', 'lite', 'full']);
+// [ASSUMED] Low-tier admission budgets: fewer decorative one-shots, with the existing important-effect exemptions.
+export const MAX_EFFECTS = Object.freeze({ low: 60, lite: 90, full: 220 });
+export const MAX_PARTICLES = Object.freeze({ low: 1200, lite: 2500, full: 6000 });
 /** Battle seconds a pending one-shot may start late (its prefab still loading) before it is dropped. */
 export const LATE_START = 0.6;
 /** Finished instances kept per prefab for reuse (at most; `_preloadCnt` sets the share of each). */
@@ -159,16 +161,15 @@ export class OfficialFx {
   /** Effects are drawn: a tier is on, the files exist and the context is WebGL2. */
   get active() { return this.tier !== 'off' && !this.unsupported && this.lib.available; }
 
-  get lite() { return this.tier === 'lite'; }
+  get lite() { return this.tier === 'lite' || this.tier === 'low'; }
 
   setTier(t) {
     const tier = TIERS.includes(t) ? t : 'off';
     if (tier === this.tier) return;
-    const wasLite = this.tier === 'lite';
     this.tier = tier;
-    if (tier === 'off') this.clear();
-    else if (wasLite !== (tier === 'lite')) this.clear(); // the instances were built for the other tier
-    if (wasLite !== (tier === 'lite')) this.pool.clear();
+    // Low and medium share shaders / textures, but their systems retain different emission and burst settings.
+    this.clear();
+    this.pool.clear();
   }
 
   /**
@@ -450,7 +451,9 @@ export class FxHandle {
   _start(def) {
     const s = this.sys;
     const seed = this.opts.seed ?? ((s.seed = (s.seed * 1103515245 + 12345) >>> 0) || 1);
-    const fx = s._take(def, seed) || new Effect(def, { lite: s.lite, lib: s.lib, seed });
+    // [ASSUMED] Low applies one more half after lite's ×0.5, preserving bursts visible in the medium profile.
+    const fx = s._take(def, seed) || new Effect(def, { lite: s.lite, emission: s.tier === 'low' ? 0.5 : 1,
+      minBurst: s.tier === 'low', lib: s.lib, seed });
     fx.place(this.placeArgs);
     fx.track = this.opts.track || null;
     fx.owner = this.opts.owner ?? null;

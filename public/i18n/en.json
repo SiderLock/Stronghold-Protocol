@@ -169,6 +169,7 @@
   "只显示达到官方暴击条件的红色数字。关闭时仍显示每一次命中。": "Show only red numbers that meet the official crit rule. While off, every hit still shows a number.",
   "弹药数量": "Ammo Count",
   "官方特效": "Official Effects",
+  "官方特效使用服主提供的素材，仅在 3D 棋盘上显示。高：完整贴图与粒子；中：半分辨率贴图、粒子发射量约减半；低：半分辨率贴图、粒子发射量约为高档的四分之一，同时播放的特效更少。档位独立于画面质量和帧率，不改变战斗速度。": "Official effects use assets provided by the server owner and appear on the 3D board only. High: full textures and particles. Medium: half-resolution textures and roughly half the particle emission. Low: half-resolution textures, roughly one quarter of High's particle emission, and fewer simultaneous effects. This setting is independent of graphics quality and frame rate, and does not change battle speed.",
   "关": "Off",
   "精简": "Lite",
   "完整": "Full",

@@ -759,7 +759,7 @@ describe('keyboard & settings', () => {
     // 官方特效 (0.3.0): 'auto' by default (完整 on a desktop, 精简 on a touch device); unknown values fall back to it
     assert.equal(DEFAULT_SETTINGS.officialFx, 'auto');
     assert.equal(sanitizeSettings({ bgm: 0.5 }).officialFx, 'auto', 'a profile saved before 官方特效 gets the default');
-    for (const v of ['off', 'lite', 'full', 'auto']) assert.equal(sanitizeSettings({ officialFx: v }).officialFx, v);
+    for (const v of ['off', 'low', 'lite', 'full', 'auto']) assert.equal(sanitizeSettings({ officialFx: v }).officialFx, v);
     assert.equal(sanitizeSettings({ officialFx: 'ultra' }).officialFx, 'auto');
     assert.equal(sanitizeSettings({ combatMetrics: 'yes' }).combatMetrics, false, 'a non-boolean stays off');
     assert.equal(sanitizeSettings({ voiceLang: 'jp' }).voiceLang, 'jp');

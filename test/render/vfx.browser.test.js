@@ -136,6 +136,13 @@ describe('official battle effects in headless Chrome', { skip }, () => {
     assert.equal(r.stats.tier, 'lite');
   });
 
+  test('low quality keeps the basic hit visible with the reduced material / texture path', async () => {
+    const r = await shot('magic-hit-low', { key: 'common_magic_hit_01', tier: 'low', frames: 3 });
+    assert.equal(r.stats.tier, 'low');
+    assert.ok(r.stats.particles > 0 && r.stats.draws > 0);
+    assert.ok(region(r.img, r.a.x, r.a.y, 60).changed > 50, 'the hit cue stays visible');
+  });
+
   test('the console stays clean', async () => {
     const fallbacks = await page.evaluate(() => window.__fx.fallbacks());
     writeFileSync(path.join(OUT, 'vfx-fallbacks.json'), JSON.stringify(fallbacks, null, 1));

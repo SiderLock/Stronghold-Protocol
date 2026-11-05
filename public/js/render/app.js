@@ -68,7 +68,7 @@
 //   view.setSettings({ damageNumbers, officialDamageNumbers, ammoEnergyCount, officialFx, quality: 'high'|'medium'|'low' }) ; view.resize() ; view.destroy()
 //                                               (ammoEnergyCount: 设置「显示弹药与能量数量」, the count under an ammo skill's
 //                                                bar and a 秘术师's stored/cap — PR #552 / PR #636, one switch since 0.3.1;
-//                                                officialFx: 设置「官方特效」 'auto'|'off'|'lite'|'full', the official battle
+//                                                officialFx: 设置「官方特效」 'auto'|'off'|'low'|'lite'|'full', the official battle
 //                                                effects on the 3D board — render/vfx, DESIGN §9 "Official battle effects")
 //   view.stats() → { fps, frameMs, cpuMs, renderMs, units, particles, impostor, impostorAtlas, boardArt, pen, penHidden, … }
 //                                               (dev / perf; pen = the pen's figures, penHidden = the camera hides them)

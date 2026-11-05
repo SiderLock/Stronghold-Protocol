@@ -250,7 +250,7 @@ async function main() {
     if (!r.ok) throw new Error(`战斗数据 ${specName} 加载失败（HTTP ${r.status}）。请确认该文件位于 public/dev/perf/。`);
     return r.json();
   });
-  const officialFx = ['off', 'lite', 'full', 'auto'].includes(q.get('fx')) ? q.get('fx') : 'off';
+  const officialFx = ['off', 'low', 'lite', 'full', 'auto'].includes(q.get('fx')) ? q.get('fx') : 'off';
   const frameLimit = [30, 60].includes(Number(q.get('fps'))) ? Number(q.get('fps')) : 0;
   const view = await createFieldView($('field'), { data, assets, board: q.get('board'), settings: { quality, damageNumbers: true, officialFx, frameLimit } });
   view.setStage(data.lookup('stages', msg.spec.stageId));

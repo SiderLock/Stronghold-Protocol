@@ -1,8 +1,9 @@
-// render/vfx/tier.js — 设置「官方特效」 (settings `officialFx`): 'auto' | 'off' | 'lite' | 'full' → the tier the
-// official battle effects run at. 'auto' (the default) is 完整 on a desktop and 精简 on a touch device; nothing runs
+// render/vfx/tier.js — 设置「官方特效」 (settings `officialFx`): 'auto' | 'off' | 'low' | 'lite' | 'full' → the tier the
+// official battle effects run at. full / lite retain the old 完整 / 精简 profiles, displayed as 高 / 中; low is 低.
+// 'auto' (the default) is 高 on a desktop and 中 on a touch device; nothing runs
 // when no effects were extracted from the local client (the setting is hidden then, ui/settings.js).
 
-export const OFFICIAL_FX = Object.freeze(['auto', 'off', 'lite', 'full']);
+export const OFFICIAL_FX = Object.freeze(['auto', 'off', 'low', 'lite', 'full']);
 
 /** A touch-first device (coarse pointer, no fine one): the light tier by default. */
 export function touchDevice() {
@@ -13,9 +14,9 @@ export function touchDevice() {
   } catch { return false; }
 }
 
-/** The effective tier of a setting value ('off' | 'lite' | 'full'). */
+/** The effective tier of a setting value ('off' | 'low' | 'lite' | 'full'). */
 export function resolveOfficialFx(value, available = true, touch = touchDevice()) {
   if (!available) return 'off';
-  if (value === 'off' || value === 'lite' || value === 'full') return value;
+  if (value === 'off' || value === 'low' || value === 'lite' || value === 'full') return value;
   return touch ? 'lite' : 'full';
 }

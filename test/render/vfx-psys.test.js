@@ -34,6 +34,21 @@ function run(ps, seconds, frame = ID, dt = 1 / 60) {
 }
 
 describe('emission', () => {
+  test('low quality preserves positive one-particle bursts and sub-emitters without reviving authored zero or disabled emission', () => {
+    for (const [count, emission, probability, expected] of [[1, 0.25, 1, 1], [8, 0.25, 1, 2], [0, 0.25, 1, 0], [1, 0, 1, 0], [1, 0.25, 0, 0], [0.4, 0.25, 1, 0], [1, 0.1, 1, 0]]) {
+      const def = compileSystem(sys({ E: { m_Bursts: [{ time: 0, countCurve: count, cycleCount: 1, probability }] } }));
+      const ps = new PSys(def, { emission, burstFloorScale: emission * 2 });
+      ps.play(ID); run(ps, 1 / 60);
+      assert.equal(ps.count, expected, `normal burst count=${count} scale=${emission} probability=${probability}`);
+      const sub = new PSys(def, { emission, burstFloorScale: emission * 2, sub: true });
+      sub.setFrame(ID); sub.trigger(1, 2, 3, null);
+      assert.equal(sub.count, expected, 'sub-emitter uses the same low-tier floor');
+    }
+    const legacy = new PSys(compileSystem(sys({ E: { m_Bursts: [{ time: 0, countCurve: 1, cycleCount: 1 }] } })), { emission: 0.25 });
+    legacy.play(ID); run(legacy, 1 / 60);
+    assert.equal(legacy.count, 0, 'the new floor is opt-in; legacy profiles retain their rounding');
+  });
+
   test('rate over time emits rate × duration particles, then stops (non-looping)', () => {
     const ps = new PSys(compileSystem(sys({ E: { rateOverTime: 20 } })), {});
     ps.play(ID);

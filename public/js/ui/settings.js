@@ -118,17 +118,17 @@ function Toggle({ label, micro, value, onChange, testId }) {
 }
 
 const DEPLOY_FOLD = [[false, N_('关闭')], ['partial', N_('适度缩小')], [true, N_('完全收起')]];
-/** Display order only: 低 / 中 / 高, the same direction as 官方特效 关 / 精简 / 完整. Stored values stay high | medium | low. */
+/** Display order only: 低 / 中 / 高, the same direction as 官方特效 关 / 低 / 中 / 高. */
 const QUALITY = [['low', N_('低')], ['medium', N_('中')], ['high', N_('高')]];
 const FRAME_LIMIT = [[30, '30 FPS'], [60, '60 FPS'], [0, N_('不限')]];
 /**
  * 官方特效 (0.3.0, render/vfx): the official battle effects the server's owner extracted from their own client (the
  * server serves them: every player of that server sees the owner's extraction) — normal attacks, projectiles, hits,
- * statuses, deaths, deploys, the operators' skills and a 秘术师's stored energies; 关 / 精简 / 完整. The stored default
- * 'auto' shows as the tier it resolves to (完整 on a desktop, 精简 on a touch device, render/vfx/tier.js); the row is
+ * statuses, deaths, deploys, the operators' skills and a 秘术师's stored energies; 关 / 低 / 中 / 高. The stored default
+ * 'auto' shows as the tier it resolves to (高 on a desktop, 中 on a touch device, render/vfx/tier.js); the row is
  * left out when no effects were extracted (data/local-fx.json lists none).
  */
-const OFFICIAL_FX = [['off', N_('关')], ['lite', N_('精简')], ['full', N_('完整')]];
+const OFFICIAL_FX = [['off', N_('关')], ['low', N_('低')], ['lite', N_('中')], ['full', N_('高')]];
 /**
  * 文字大小: one step of TEXT_SIZES (ui/gameLogic/settings.js) with its label — 小 is the design's own sizes, the others
  * raise the text root `--t` (css/theme.css) and with it every readable font-size; the board and the HUD's boxes stay.
@@ -570,7 +570,7 @@ export function SettingsModal({ open, onClose }) {
             class=${fxTier === id ? 'is-on' : ''} onClick=${() => updateSettings({ officialFx: id })}>${t(label)}</button>`)}
         </div>
       </div>
-      <p class="set-hint">${t('使用服主从自己的游戏客户端提取的官方战斗特效（普攻、弹道、命中、状态、阵亡、部署，干员、召唤物和敌人的技能与天赋，以及秘术师储存的能量），连到这台服务器的玩家看到的都是服主提取的这一份；提取里没有的或对战中没有时机的（如只在游戏内部条件下触发的天赋效果）仍为本作的特效。精简：半分辨率贴图、粒子减半，适合手机。只在 3D 棋盘上显示。')}</p>` : null}
+      <p class="set-hint">${t('官方特效使用服主提供的素材，仅在 3D 棋盘上显示。高：完整贴图与粒子；中：半分辨率贴图、粒子发射量约减半；低：半分辨率贴图、粒子发射量约为高档的四分之一，同时播放的特效更少。档位独立于画面质量和帧率，不改变战斗速度。')}</p>` : null}
       <div class="set-row">
         <span class="set-row__label">${t('文字大小')}<${MicroLabel}>TEXT SIZE<//></span>
         <div class="set-seg set-textsize" role="radiogroup" aria-label=${t('文字大小')} data-testid="text-size">

@@ -156,12 +156,12 @@ describe('文字大小: the setting', () => {
       'four steps fit the row on a phone (1rem = 40 px)');
   });
 
-  test('画面质量 is listed 低 / 中 / 高, the same direction as 官方特效 关 / 精简 / 完整', () => {
+  test('画面质量 and 官方特效 list increasing quality, retaining legacy stored FX values', () => {
     const src = read('public/js/ui/settings.js');
     assert.match(src, /const QUALITY = \[\['low', N_\('低'\)\], \['medium', N_\('中'\)\], \['high', N_\('高'\)\]\];/);
     const fx = src.indexOf('const OFFICIAL_FX');
     assert.ok(fx > src.indexOf('const QUALITY'));
-    assert.match(src.slice(fx, fx + 120), /const OFFICIAL_FX = \[\['off', N_\('关'\)\], \['lite', N_\('精简'\)\], \['full', N_\('完整'\)\]\];/);
+    assert.match(src.slice(fx, fx + 120), /const OFFICIAL_FX = \[\['off', N_\('关'\)\], \['low', N_\('低'\)\], \['lite', N_\('中'\)\], \['full', N_\('高'\)\]\];/);
   });
 
   test('语音语言 wraps four across or two by two (never 3 + 1) and 本土语言 stays beside it, without a container query', () => {
