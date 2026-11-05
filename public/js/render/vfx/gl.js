@@ -149,9 +149,9 @@ export class FxGL {
       if (nm === '_vp' || nm === '_Time' || nm === '_WorldSpaceCameraPos') continue;
       if (u.unit >= 0) {
         const t = mat.textures.find((x) => x.name === nm);
-        p.tex.push({ loc: u.loc, unit: u.unit, key: t && t.key ? t.key : null, fallback: this.defaults[t?.def || 'white'] || this.defaults.white, glTex: null });
-      } else if (u.type === gl.FLOAT) p.f.push({ loc: u.loc, name: nm, value: mat.floats[nm] ?? UNIFORM_DEFAULTS[nm] ?? 0 });
-      else if (u.type === gl.FLOAT_VEC4) p.v.push({ loc: u.loc, name: nm, value: mat.vecs[nm] || (nm.endsWith('_ST') ? ST1 : nm.startsWith('_Rotation') ? ROT1 : V0) });
+        p.tex.push({ loc: u.loc, uniform: u, unit: u.unit, key: t && t.key ? t.key : null, fallback: this.defaults[t?.def || 'white'] || this.defaults.white, glTex: null });
+      } else if (u.type === gl.FLOAT) p.f.push({ loc: u.loc, uniform: u, name: nm, value: mat.floats[nm] ?? UNIFORM_DEFAULTS[nm] ?? 0 });
+      else if (u.type === gl.FLOAT_VEC4) p.v.push({ loc: u.loc, uniform: u, name: nm, value: mat.vecs[nm] || (nm.endsWith('_ST') ? ST1 : nm.startsWith('_Rotation') ? ROT1 : V0) });
     }
     rec.plans.set(mat, p);
     return p;
@@ -317,10 +317,26 @@ export class FxGL {
     // a mask up the Pixi tree may have scissor / stencil on: kept as they are (the effects layers are never masked)
     gl.enable(gl.BLEND);
     gl.frontFace(gl.CW);
-    let lastProg = null, lastState = null;
+    let lastProg = null, lastState = null, lastFamily = null;
+    const stateCache = {}; // actual GL values, valid only inside this uninterrupted pass
     const time = frame.time;
     const tv = [time / 20, time, time * 2, time * 3];
     let lastMat = null, lastOv = null;
+    // Programs retain uniforms across material switches. Copy vector components so animated arrays stay live.
+    const setFloat = (e, value) => {
+      const u = e.uniform || e;
+      if (u.lastPass === stateCache && Object.is(u.last0, value)) return;
+      gl.uniform1f(e.loc, value);
+      u.lastPass = stateCache; u.last0 = value;
+    };
+    const setVector = (e, value) => {
+      const u = e.uniform || e;
+      const x = value[0], y = value[1], z = value[2], w = value[3];
+      if (u.lastPass === stateCache && Object.is(u.last0, x) && Object.is(u.last1, y)
+        && Object.is(u.last2, z) && Object.is(u.last3, w)) return;
+      gl.uniform4f(e.loc, x, y, z, w);
+      u.lastPass = stateCache; u.last0 = x; u.last1 = y; u.last2 = z; u.last3 = w;
+    };
     // Local to this pass: Pixi owns the same context between passes. A lazy upload also invalidates the bindings.
     const boundTextures = [];
     let textureEpoch = this.textureEpoch || 0, activeUnit = -1;
@@ -364,15 +380,22 @@ export class FxGL {
       // another frame's upload may have rebound a unit)
       const ov = it.ov;
       if (mat !== lastMat) {
-        for (const e of plan.tex) { bind(e); gl.uniform1i(e.loc, e.unit); }
+        for (const e of plan.tex) {
+          bind(e);
+          const u = e.uniform || e;
+          if (u.lastPass !== stateCache || u.last0 !== e.unit) {
+            gl.uniform1i(e.loc, e.unit);
+            u.lastPass = stateCache; u.last0 = e.unit;
+          }
+        }
         for (const e of plan.f) {
           const o = ov ? ov[e.name] : undefined;
-          gl.uniform1f(e.loc, typeof o === 'number' ? o : e.value);
+          setFloat(e, typeof o === 'number' ? o : e.value);
         }
         for (const e of plan.v) {
           const o = ov ? ov[e.name] : undefined;
           const v = Array.isArray(o) ? o : e.value;
-          gl.uniform4f(e.loc, v[0], v[1], v[2], v[3]);
+          setVector(e, v);
         }
         lastMat = mat; lastOv = ov;
       } else {
@@ -381,19 +404,22 @@ export class FxGL {
           for (const e of plan.f) {
             if (!(ov && e.name in ov) && !(lastOv && e.name in lastOv)) continue;
             const o = ov ? ov[e.name] : undefined;
-            gl.uniform1f(e.loc, typeof o === 'number' ? o : e.value);
+            setFloat(e, typeof o === 'number' ? o : e.value);
           }
           for (const e of plan.v) {
             if (!(ov && e.name in ov) && !(lastOv && e.name in lastOv)) continue;
             const o = ov ? ov[e.name] : undefined;
             const v = Array.isArray(o) ? o : e.value;
-            gl.uniform4f(e.loc, v[0], v[1], v[2], v[3]);
+            setVector(e, v);
           }
           lastOv = ov;
         }
       }
       const st = mat.state;
-      if (st !== lastState) { this._state(st, mat.family); lastState = st; }
+      if (st !== lastState || mat.family !== lastFamily) {
+        this._state(st, mat.family, stateCache);
+        lastState = st; lastFamily = mat.family;
+      }
       if (kind === 'quad') {
         gl.bindVertexArray(this.quadVao);
         gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf);
@@ -439,29 +465,43 @@ export class FxGL {
     gl.frontFace(gl.CCW);
   }
 
-  /** Render state of a material pass (see the header for the alpha factors). */
-  _state(st, family) {
+  /** Render state of a material pass (see the header for the alpha factors). @param {any} [cache] */
+  _state(st, family, cache = {}) {
     const gl = this.gl;
-    const f = (b) => GL_BLEND(gl, b);
-    let src = f(st.src), dst = f(st.dst), srcA, dstA;
+    let src = GL_BLEND(gl, st.src), dst = GL_BLEND(gl, st.dst), srcA, dstA;
     if (family === 'multiply' || st.src === BLEND.DstColor || (st.src === BLEND.Zero && st.dst === BLEND.SrcColor)) {
       src = gl.ZERO; dst = gl.SRC_COLOR; srcA = gl.ONE; dstA = gl.ONE_MINUS_SRC_ALPHA;
     } else if (st.dst === BLEND.OneMinusSrcAlpha || st.dst === BLEND.Zero) { srcA = gl.ONE; dstA = gl.ONE_MINUS_SRC_ALPHA; }
     else { srcA = gl.ZERO; dstA = gl.ONE; }
-    gl.blendFuncSeparate(src, dst, srcA, dstA);
+    if (cache.src !== src || cache.dst !== dst || cache.srcA !== srcA || cache.dstA !== dstA) {
+      gl.blendFuncSeparate(src, dst, srcA, dstA);
+      cache.src = src; cache.dst = dst; cache.srcA = srcA; cache.dstA = dstA;
+    }
     const op = st.op === 'Sub' ? gl.FUNC_SUBTRACT : st.op === 'RevSub' ? gl.FUNC_REVERSE_SUBTRACT : st.op === 'Min' ? gl.MIN : st.op === 'Max' ? gl.MAX : gl.FUNC_ADD;
-    gl.blendEquationSeparate(op, gl.FUNC_ADD);
-    if (st.zTest && this.hasDepth) {
-      gl.enable(gl.DEPTH_TEST);
-      gl.depthFunc(DEPTH_FUNC(gl, st.zTest));
-      gl.depthMask(!!st.zWrite);
-    } else { gl.disable(gl.DEPTH_TEST); gl.depthMask(false); }
-    if (st.cull === 'Back') { gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK); }
-    else if (st.cull === 'Front') { gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT); }
-    else gl.disable(gl.CULL_FACE);
+    if (cache.op !== op) { gl.blendEquationSeparate(op, gl.FUNC_ADD); cache.op = op; }
+    const depth = !!(st.zTest && this.hasDepth);
+    if (cache.depth !== depth) {
+      if (depth) gl.enable(gl.DEPTH_TEST); else gl.disable(gl.DEPTH_TEST);
+      cache.depth = depth;
+    }
+    if (depth) {
+      const func = DEPTH_FUNC(gl, st.zTest);
+      if (cache.depthFunc !== func) { gl.depthFunc(func); cache.depthFunc = func; }
+    }
+    const write = depth && !!st.zWrite;
+    if (cache.depthWrite !== write) { gl.depthMask(write); cache.depthWrite = write; }
+    const cull = st.cull === 'Back' ? gl.BACK : st.cull === 'Front' ? gl.FRONT : null;
+    if (cache.cull !== cull) {
+      if (cull === null) gl.disable(gl.CULL_FACE);
+      else {
+        if (cache.cull == null) gl.enable(gl.CULL_FACE);
+        gl.cullFace(cull);
+      }
+      cache.cull = cull;
+    }
     // alpha is always written: it is the effect canvas's coverage over the board (see the header)
-    const cm = st.colorMask;
-    gl.colorMask(!!(cm & 8), !!(cm & 4), !!(cm & 2), true);
+    const cm = st.colorMask & 14;
+    if (cache.colorMask !== cm) { gl.colorMask(!!(cm & 8), !!(cm & 4), !!(cm & 2), true); cache.colorMask = cm; }
   }
 
   /** Free GPU memory of textures not used for `ttl` frames (called by the system between battles). */

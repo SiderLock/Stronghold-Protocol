@@ -193,6 +193,8 @@ history and the open points: DESIGN §32.14.25.
   against a depth pre-pass of the board's tile heights. The Pixi canvas is transparent over the three.js board, so the
   blend factors are rewritten for premultiplied compositing: a straight alpha blend becomes (One, OneMinusSrcAlpha),
   additive blends keep the destination alpha, and the Multiply family darkens through (Zero, SrcColor).
+  Each uninterrupted raw GL pass reuses effective blend / depth / cull / colour-mask values and material uniforms.
+  Uniform snapshots are per program, compare copied vector components and are re-established on the next pass.
 - **Loading.** `vfx/library.js` shares an eight-job limit across prefab descriptors, meshes and images. Queued
   descriptors and meshes precede queued images, preserving FIFO order within each class. After mesh dependencies
   resolve, `load()` checks the compiled cache again so concurrent callers share one prefab definition.

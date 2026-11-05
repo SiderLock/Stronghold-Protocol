@@ -5,6 +5,7 @@ import { FxLibrary } from '../../public/js/render/vfx/library.js';
 import { FxGL, FX_TEXTURE_BYTES } from '../../public/js/render/vfx/gl.js';
 import { OfficialFx } from '../../public/js/render/vfx/system.js';
 import { FrameData } from '../../public/js/render/vfx/geom.js';
+import { BLEND } from '../../public/js/render/vfx/materials.js';
 import { pressureResolution } from '../../public/js/render/app/host.js';
 import { sanitizeSettings, DEFAULT_SETTINGS } from '../../public/js/ui/gameLogic/settings.js';
 
@@ -222,6 +223,117 @@ test('FX draw reuses texture bindings only within a pass and invalidates them af
   glr.texture = () => { if (++lookups === 2) glr.textureEpoch++; return 'a'; };
   FxGL.prototype.draw.call(glr, items.slice(0, 3), frame);
   assert.equal(binds.length, 4, 'a lazy upload invalidates the cached texture-unit state');
+});
+
+test('FX draw preserves effective material state while reusing GL calls inside each pass', () => {
+  const enabled = new Set(), calls = [], draws = [], gpu = {};
+  const gl = new Proxy({
+    enable(cap) { calls.push(['enable', cap]); enabled.add(cap); },
+    disable(cap) { calls.push(['disable', cap]); enabled.delete(cap); },
+    blendFuncSeparate(...values) { calls.push(['blend']); gpu.blend = values; },
+    blendEquationSeparate(rgb, alpha) { calls.push(['equation']); gpu.equation = [rgb, alpha]; },
+    depthFunc(value) { calls.push(['depthFunc']); gpu.depthFunc = value; },
+    depthMask(value) { calls.push(['depthMask']); gpu.write = value; },
+    cullFace(value) { calls.push(['cullFace']); gpu.cull = value; },
+    colorMask(...values) { calls.push(['colorMask']); gpu.mask = values; },
+    drawElementsInstanced() {
+      draws.push({ blend: gpu.blend, equation: gpu.equation, write: gpu.write, mask: gpu.mask,
+        depth: enabled.has('DEPTH_TEST') ? gpu.depthFunc : null, cull: enabled.has('CULL_FACE') ? gpu.cull : null });
+    },
+  }, { get: (o, key) => key in o ? o[key] : /^[A-Z_0-9]+$/.test(String(key)) ? key : () => {} });
+  const rec = { prog: {}, vp: {}, pass: -1 }, plan = { tex: [], f: [], v: [] };
+  const glr = Object.assign(Object.create(FxGL.prototype), { gl, hasDepth: true,
+    stats: { draws: 0, tris: 0 }, program: () => rec, _plan: () => plan });
+  const state = { src: BLEND.SrcAlpha, dst: BLEND.OneMinusSrcAlpha, op: 'Add', zTest: null, zWrite: false, cull: 'Off', colorMask: 15 };
+  const alpha = ['SRC_ALPHA', 'ONE_MINUS_SRC_ALPHA', 'ONE', 'ONE_MINUS_SRC_ALPHA'];
+  const multiply = ['ZERO', 'SRC_COLOR', 'ONE', 'ONE_MINUS_SRC_ALPHA'];
+  const additive = ['ONE', 'ONE', 'ZERO', 'ONE'];
+  const expected = { blend: alpha, equation: ['FUNC_ADD', 'FUNC_ADD'], write: false,
+    mask: [true, true, true, true], depth: null, cull: null };
+  const cases = [
+    { state, family: 'basic', expected },
+    { state: { ...state, colorMask: 14 }, family: 'basic', expected },
+    { state, family: 'basic', expected },
+    { state, family: 'multiply', expected: { ...expected, blend: multiply } },
+    { state: { ...state, src: BLEND.DstColor }, family: 'basic', expected: { ...expected, blend: multiply } },
+    { state: { ...state, src: BLEND.One, dst: BLEND.One, zTest: 'less', cull: 'Back', colorMask: 13 },
+      family: 'basic', expected: { ...expected, blend: additive, depth: 'LESS', cull: 'BACK', mask: [true, true, false, true] } },
+    { state: { ...state, zTest: 'less', zWrite: true, cull: 'Front', op: 'RevSub' },
+      family: 'basic', expected: { ...expected, depth: 'LESS', write: true, cull: 'FRONT', equation: ['FUNC_REVERSE_SUBTRACT', 'FUNC_ADD'] } },
+    { state: { ...state, zWrite: true, colorMask: 0 }, family: 'basic',
+      expected: { ...expected, mask: [false, false, false, true] } },
+    { state: { ...state, zTest: 'less' }, family: 'basic', expected: { ...expected, depth: 'LESS' } },
+  ];
+  const items = cases.map((row, i) => ({ kind: 'quad', mat: { state: row.state, family: row.family }, first: i, count: 1 }));
+  const frame = { pass: 1, time: 0, vp: [], cam: [], half: false };
+  glr.draw(items, frame);
+  assert.deepEqual(draws, cases.map(row => row.expected));
+  assert.equal(calls.filter(([name]) => name === 'blend').length, 4);
+  assert.equal(calls.filter(([name]) => name === 'depthFunc').length, 1, 'depth function survives disable / enable');
+  assert.equal(calls.filter(([name, cap]) => name === 'enable' && cap === 'CULL_FACE').length, 1, 'changing cull direction keeps culling enabled');
+  assert.equal(enabled.has('DEPTH_TEST'), false);
+  assert.equal(enabled.has('CULL_FACE'), false);
+  assert.equal(gpu.write, true);
+  assert.deepEqual(gpu.mask, [true, true, true, true]);
+  // Pixi may change every state between passes, so the first material must establish all of them again.
+  gpu.blend = ['foreign']; gpu.depthFunc = 'GREATER'; gpu.mask = [false, false, false, false];
+  enabled.add('DEPTH_TEST'); enabled.add('CULL_FACE');
+  glr.draw(items.slice(0, 1), { ...frame, pass: 2 });
+  assert.deepEqual(draws.at(-1), expected);
+  glr.hasDepth = false;
+  glr.draw([items.at(-1)], { ...frame, pass: 3 });
+  assert.deepEqual(draws.at(-1), expected, 'a context without depth remains depth-disabled');
+});
+
+test('FX uniforms retain material, animated-array and program changes while sharing equivalent values', () => {
+  const values = new Map(), calls = [], draws = [];
+  let program;
+  const animated = [9, 8, 7, 6];
+  const gl = new Proxy({
+    TEXTURE0: 100,
+    useProgram(value) { program = value; },
+    uniform1i(loc, value) { calls.push(['sampler', loc]); values.set(loc, value); },
+    uniform1f(loc, value) { calls.push(['float', loc]); values.set(loc, value); },
+    uniform4f(loc, ...value) { calls.push(['vector', loc]); values.set(loc, value); },
+    drawElementsInstanced() {
+      draws.push({ program, float: values.get(program + 'F'), vector: values.get(program + 'V'), sampler: values.get(program + 'I') });
+      if (draws.length === 3) animated[0] = 11;
+    },
+  }, { get: (o, key) => key in o ? o[key] : /^[A-Z_0-9]+$/.test(String(key)) ? key : () => {} });
+  const records = Object.fromEntries(['A', 'B'].map(key => [key, { prog: key, vp: {}, pass: -1, plans: new WeakMap(), uniforms: [
+    { name: '_Opacity', type: 'FLOAT', unit: -1, loc: key + 'F' },
+    { name: '_Color', type: 'FLOAT_VEC4', unit: -1, loc: key + 'V' },
+    { name: '_MainTex', type: 'SAMPLER_2D', unit: 0, loc: key + 'I' },
+  ] }]));
+  const material = key => ({ key, family: 'basic', state: {}, floats: { _Opacity: 1 }, vecs: { _Color: [1, 2, 3, 4] },
+    textures: [{ name: '_MainTex', key: 'tex', def: 'white' }] });
+  const a = material('A'), other = material('A'), b = material('B');
+  const rows = [
+    { mat: a }, { mat: other },
+    { mat: a, ov: { _Opacity: 0.5, _Color: animated } },
+    { mat: a, ov: { _Opacity: 0.5, _Color: animated } },
+    { mat: a }, { mat: b }, { mat: a },
+    { mat: a, ov: { _Opacity: -0 } }, { mat: a, ov: { _Opacity: 0 } },
+  ];
+  const items = rows.map((row, i) => ({ ...row, kind: 'quad', first: i, count: 1 }));
+  const glr = Object.assign(Object.create(FxGL.prototype), { gl, defaults: { white: 'tex' }, texture: () => 'tex',
+    stats: { draws: 0, tris: 0 }, program: (_kind, mat) => records[mat.key], _state() {} });
+  const frame = { pass: 1, time: 0, vp: [], cam: [], half: false };
+  glr.draw(items, frame);
+  const expected = { program: 'A', float: 1, vector: [1, 2, 3, 4], sampler: 0 };
+  assert.deepEqual(draws, [expected, expected,
+    { ...expected, float: 0.5, vector: [9, 8, 7, 6] },
+    { ...expected, float: 0.5, vector: [11, 8, 7, 6] },
+    expected, { ...expected, program: 'B' }, expected,
+    { ...expected, float: -0 }, { ...expected, float: 0 }]);
+  assert.equal(calls.filter(([kind]) => kind === 'sampler').length, 2, 'sampler units are established per program');
+  assert.equal(calls.filter(([kind]) => kind === 'float').length, 6);
+  assert.equal(calls.filter(([kind]) => kind === 'vector').length, 5);
+  values.set('AF', -1); values.set('AV', [-1, -1, -1, -1]); values.set('AI', 5);
+  calls.length = 0;
+  glr.draw(items.slice(0, 1), { ...frame, pass: 2 });
+  assert.deepEqual(draws.at(-1), expected);
+  assert.deepEqual(calls.map(([kind]) => kind), ['sampler', 'float', 'vector'], 'another pass re-establishes every uniform');
 });
 
 test('mobile canvas resolution responds to pressure without exceeding quality or device limits', () => {
