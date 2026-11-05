@@ -29,12 +29,12 @@ export class MatchPhases {
   // Active manual pickers precede AI, autoplay and disconnected seats. Only pending turns are reordered.
   manualDraftPicker(ps) { return !!ps && ps.alive && !ps.left && ps.connected && !ps.botControlled; }
 
-  /** The fixed pool membership persists; only the living, present seats have a turn in this stage. */
-  makeDraftGroups({ shuffle = true } = {}) {
+  /** Fixed pool membership persists; the opening band draft also keeps departed seats for the team's AI pick. */
+  makeDraftGroups({ shuffle = true, includeDeparted = false } = {}) {
     return this.poolGroups.map(({ id, playerIds }) => {
       const order = playerIds.filter((pid) => {
         const ps = this.players.get(pid);
-        return ps && ps.alive && !ps.left;
+        return ps && (includeDeparted || (ps.alive && !ps.left));
       });
       if (shuffle) {
         if (!this.isSolo) this.rngDraft.shuffle(order);
@@ -134,7 +134,7 @@ export class MatchPhases {
     this._rerollStartAt.clear();
     const skips = this.isSolo ? 0 : this.gd.bandDraft.skipsPerPlayer;
     const untimed = this.soloUntimed;
-    const groups = this.makeDraftGroups();
+    const groups = this.makeDraftGroups({ includeDeparted: true });
     for (const g of groups) g.skipsLeft = Object.fromEntries(g.order.map((pid) => [pid, skips]));
     this.draft = installDraftFacade({
       id: this.nextDraftId('band'), groups, picks: {}, untimed,
@@ -163,7 +163,7 @@ export class MatchPhases {
     // loop-cap: idx walks g.order once
     while (g.idx < g.order.length) {
       const ps = this.players.get(g.order[g.idx]);
-      if (ps && ps.alive && !ps.left && !d.picks[ps.playerId]) break;
+      if (ps && !d.picks[ps.playerId]) break;
       g.idx++;
     }
     this.prioritizeDraftOrder(g.order, g.idx);
@@ -299,7 +299,7 @@ export class MatchPhases {
   _applyBand(ps, bandId, { dedupe = false } = {}) {
     const d = this.draft;
     const g = ps && this.draftGroup(ps.playerId);
-    if (!d || !g || !ps.alive || ps.left || d.picks[ps.playerId]) return;
+    if (!d || !g || d.picks[ps.playerId]) return;
     let id = this.gd.bandAllowed(bandId) ? bandId : this.defaultBand(ps.playerId);
     if (dedupe && this.bandTaken(id, ps.playerId)) id = this.gd.bandIds().find((b) => !this.bandTaken(b, ps.playerId)) || id;
     d.picks[ps.playerId] = id;
@@ -339,7 +339,6 @@ export class MatchPhases {
     if (this.phase !== PHASE.BAND_DRAFT) return;
     for (const g of this.draft.groups) this.clearDraftGroupTimer(g);
     for (const ps of this.order) {
-      if (!ps.alive || ps.left) continue;
       if (!this.draft.picks[ps.playerId]) {
         // One after another in seat order, so each default sees earlier assignments within its group.
         const id = this.defaultBand(ps.playerId);

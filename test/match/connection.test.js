@@ -236,8 +236,8 @@ test('onLeave: quitting counts as elimination (copies back to the pool at once, 
 });
 
 test('onLeave: a quitter has no place in the Final Assault pairing or the boss pool; its draft turns pass on', () => {
-  // band draft: the player on turn leaves → at once the AI drafts for it like for a seat gone before the draft (Touch
-  // while nobody else holds it, not the default band; §37.65), it keeps its 0 LP and the turn moves on
+  // D004 keeps remaining manual teammates first. At the departed seat's AI turn it drafts Touch while free
+  // (§37.65), retains 0 LP, and takes no place in later battles or boss pairing.
   const h = makeMatch({ mode: 'coop', difficulty: 'FUNNY', humans: 3, seed: 5, fake: true, script: (b) => (b.kind === 'boss' ? { bossDps: 1e9 } : {}) }).start();
   const m = h.m;
   for (const id of ['p_0', 'p_1', 'p_2']) m.handle(id, { t: 'g.infoReady' });
@@ -246,6 +246,11 @@ test('onLeave: a quitter has no place in the Final Assault pairing or the boss p
   const first = m.draftTurn();
   m.onLeave(first);
   h.sched.advance(1);
+  for (const pid of m.draftGroup(first).order.filter(pid => pid !== first)) {
+    const bandId = m.gd.bandIds().find(id => id !== 'band_amedic' && !m.bandTaken(id, pid));
+    assert.deepEqual(m.handle(pid, { t: 'g.band', bandId }), { ok: true });
+    h.sched.advance(1);
+  }
   assert.equal(m.draft.picks[first], 'band_amedic');
   assert.equal(h.ps(first).lp, 0);
   assert.notEqual(m.draftTurn(), first);
