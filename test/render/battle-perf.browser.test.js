@@ -35,6 +35,33 @@ describe('battle perf page in headless Chrome', { skip }, () => {
     await srv?.close();
   });
 
+  test('official FX samples complete rendered frames and reports the window means and peaks', async () => {
+    const page = await browser.newPage();
+    try {
+      await page.setViewport({ width: 960, height: 540, deviceScaleFactor: 1 });
+      await page.goto(`http://127.0.0.1:${srv.port}/dev/battle-perf.html?spec=hard-unite-r13&fx=full&panel=0`);
+      await page.waitForFunction(() => window.__perf?.ready && window.__perf.view.debug.ofx.glr, { timeout: 60000 });
+      const result = await page.evaluate(async () => {
+        const f = window.__perf, d = f.view.debug;
+        await d.ofx.lib.preload(d.wiring.keysFor([...d.views.values()]));
+        const frames = [];
+        const observe = () => frames.push(d.ofx.stats());
+        d.app.ticker.add(observe, null, -28);
+        try { return { sample: await f.sample(500), frames }; }
+        finally { d.app.ticker.remove(observe); }
+      });
+      const frames = result.frames.slice(1), fx = result.sample.officialFx;
+      assert.equal(fx.frames, frames.length);
+      assert.ok(fx.peakDraws > 0 && fx.peakTris > 0 && fx.peakUploadBytes > 0);
+      for (const name of ['effects', 'particles', 'draws', 'tris', 'uploadBytes']) {
+        const values = frames.map(frame => frame[name]);
+        const mean = Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10;
+        assert.equal(fx[name], mean, `${name} mean`);
+        assert.equal(fx[`peak${name[0].toUpperCase()}${name.slice(1)}`], Math.max(...values), `${name} peak`);
+      }
+    } finally { await page.close(); }
+  });
+
   for (const s of index) {
     test(`${s.name}: the battle runs and draws, the sample hook reports`, async () => {
       const page = await browser.newPage();

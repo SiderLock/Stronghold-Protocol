@@ -34,7 +34,7 @@ export class FxGL {
     this.frameTime = performance.now();
     this.pruneAt = 0;
     this.defaults = {};
-    this.stats = { draws: 0, programs: 0, textures: 0, texBytes: 0, quads: 0, meshes: 0, tris: 0 };
+    this.stats = { draws: 0, programs: 0, textures: 0, texBytes: 0, quads: 0, meshes: 0, tris: 0, uploadBytes: 0 };
     this.hasDepth = !!(gl.getContextAttributes && gl.getContextAttributes()?.depth);
     this._init();
   }
@@ -259,6 +259,7 @@ export class FxGL {
   /** Upload a frame's geometry (geom.js FrameData). */
   upload(fd) {
     const gl = this.gl;
+    this.stats.uploadBytes += (fd.nq * QUAD_STRIDE + fd.nm * MESH_STRIDE + fd.ns * STRIP_STRIDE + fd.ni) * 4;
     if (fd.nq) { gl.bindBuffer(gl.ARRAY_BUFFER, this.quadBuf); gl.bufferData(gl.ARRAY_BUFFER, fd.quad.subarray(0, fd.nq * QUAD_STRIDE), gl.STREAM_DRAW); }
     if (fd.nm) { gl.bindBuffer(gl.ARRAY_BUFFER, this.meshBuf); gl.bufferData(gl.ARRAY_BUFFER, fd.mesh.subarray(0, fd.nm * MESH_STRIDE), gl.STREAM_DRAW); }
     if (fd.ns) { gl.bindBuffer(gl.ARRAY_BUFFER, this.stripVbo); gl.bufferData(gl.ARRAY_BUFFER, fd.strip.subarray(0, fd.ns * STRIP_STRIDE), gl.STREAM_DRAW); }

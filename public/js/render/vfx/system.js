@@ -365,7 +365,8 @@ export class OfficialFx {
         const r = e.effect.build(e, basis, fd, frameNo);
         if (!r || !r.count) continue;
         e.kind = r.kind; e.first = r.first; e.count = r.count;
-        if (prev && prev.mat === e.mat && prev.kind === e.kind && !prev.ov && !e.ov && prev.meshKey === e.meshKey && prev.submesh === e.submesh
+        const sameMaterial = prev && (prev.mat === e.mat || (prev.mat.batchKey && prev.mat.batchKey === e.mat.batchKey));
+        if (sameMaterial && prev.kind === e.kind && !prev.ov && !e.ov && prev.meshKey === e.meshKey && prev.submesh === e.submesh
           && prev.first + prev.count === e.first) { prev.count += e.count; continue; }
         list[w++] = e;
         prev = e;
@@ -406,13 +407,14 @@ export class OfficialFx {
     for (const fx of this.effects) for (const s of fx.sys) if (s && s.count) systems++;
     return {
       tier: this.tier, available: this.available, effects: this.effects.length, pending: this.pending.length, particles: this.particles, reused: this.pooled,
-      systems, dropped: this.dropped, draws: this.glr ? this.glr.stats.draws : 0, programs: this.glr ? this.glr.stats.programs : 0,
+      systems, dropped: this.dropped, draws: this.glr ? this.glr.stats.draws : 0, tris: this.glr ? this.glr.stats.tris : 0,
+      uploadBytes: this.glr ? this.glr.stats.uploadBytes : 0, programs: this.glr ? this.glr.stats.programs : 0,
       textures: this.glr ? this.glr.stats.textures : 0, texMB: this.glr ? Math.round(this.glr.stats.texBytes / 1048576) : 0,
     };
   }
 
   /** Per-frame counters reset (draw counts are per frame). */
-  frameStats() { if (this.glr) { this.glr.stats.draws = 0; this.glr.stats.tris = 0; this.glr.beginFrame(performance.now()); } }
+  frameStats() { if (this.glr) { this.glr.stats.draws = 0; this.glr.stats.tris = 0; this.glr.stats.uploadBytes = 0; this.glr.beginFrame(performance.now()); } }
 
   /** The GL context was lost / restored: drop GPU objects (rebuilt lazily). */
   contextLost() {

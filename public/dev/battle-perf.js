@@ -50,10 +50,23 @@ perf.sample = (ms = 10000) => new Promise((resolve) => {
   const r0 = { ...perf.runner.stats() };
   const lt0 = longTasks.length;
   const ticker = perf.view.debug.app.ticker;
+  const fxFields = ['effects', 'particles', 'draws', 'tris', 'uploadBytes'];
+  const fxTotals = Object.fromEntries(fxFields.map(name => [name, 0]));
+  const fxPeaks = { ...fxTotals };
+  let fxFrames = 0;
   const step = () => {
     const t = performance.now();
     deltas.push(t - last);
     last = t;
+    if (deltas.length > 1) {
+      const fx = perf.view.debug.ofx.stats();
+      fxFrames++;
+      for (const name of fxFields) {
+        const value = Number(fx[name]) || 0;
+        fxTotals[name] += value;
+        fxPeaks[name] = Math.max(fxPeaks[name], value);
+      }
+    }
     if (t - t0 < ms || deltas.length < 2) return;
     ticker.remove(step);
     deltas.shift();
@@ -67,11 +80,13 @@ perf.sample = (ms = 10000) => new Promise((resolve) => {
       ticks, simMs: round(r1.stepMs - r0.stepMs), simMsPerTick: ticks > 0 ? round((r1.stepMs - r0.stepMs) / ticks, 3) : null,
       viewCpuMs: v.cpuMs, renderMs: v.renderMs, units: v.units, lod: v.lod, particles: v.particles,
       resolution: v.resolution, frameLimit: v.frameLimit,
-      officialFx: v.officialFx ? { tier: v.officialFx.tier, effects: v.officialFx.effects, particles: v.officialFx.particles, draws: v.officialFx.draws, textures: v.officialFx.textures, texMB: v.officialFx.texMB } : null,
+      officialFx: v.officialFx ? { tier: v.officialFx.tier, textures: v.officialFx.textures, texMB: v.officialFx.texMB,
+        ...Object.fromEntries(fxFields.flatMap(name => [[name, round(fxTotals[name] / fxFrames)],
+          [`peak${name[0].toUpperCase()}${name.slice(1)}`, fxPeaks[name]]])), frames: fxFrames } : null,
       board: v.board3d?.on ? '3d' : '2d', done: !!perf.runner.state()?.done,
     });
   };
-  ticker.add(step);
+  ticker.add(step, null, -27); // after Pixi's -25 render and the view's -26 render-cost probe
 });
 
 /** The device line of a report: renderer, screen, cores (what a phone report needs to be comparable). */

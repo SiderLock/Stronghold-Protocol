@@ -160,7 +160,7 @@ async function main() {
         const o = s.officialFx;
         console.log(`${spec.padEnd(18)} ${quality.padEnd(6)} fx ${fx.padEnd(4)} ${String(cpu).padStart(2)}x  fps ${String(s.fps).padStart(6)}  p95 ${String(s.p95).padStart(6)} ms  >33ms ${String(s.over33).padStart(5)}%`
           + `  sim ${s.simMsPerTick} ms/tick  view CPU ${s.viewCpuMs} ms  render ${s.renderMs} ms  units ${s.units}  load ${s.lod}`
-          + (o && o.tier !== 'off' ? `  fx ${o.effects} effects / ${o.particles} particles / ${o.draws} draws / ${o.texMB} MB` : '')
+          + (o && o.tier !== 'off' ? `  fx avg ${o.effects} effects / ${o.particles} particles / ${o.draws} draws (peak ${o.peakDraws ?? o.draws}) / ${o.texMB} MB` : '')
           + `${errors.length ? `  ERRORS ${errors.length}` : ''}`);
         if (summary) console.log(`  ${summary.stages.filter((x) => x.pct > 0).map((x) => `${x.stage} ${x.pct}%`).join(' · ')}`);
       }

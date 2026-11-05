@@ -188,7 +188,8 @@ history and the open points: DESIGN §32.14.25.
   (`gl.js FxGL`; Pixi's state is reset after the pass) and the board's camera: `system.js unityViewProj` maps the
   Unity battle frame (board frame through C = diag(1, 1, −1) about the centre (10, 9)) through `projection.js`'s
   camera, pixel for pixel. The entries of every live effect are sorted as Unity sorts them (sorting layer, order,
-  render queue, distance back to front) and contiguous draws of one material are merged; a ZTest material tests
+  render queue, distance back to front) and contiguous draws with equivalent shader variants, uniforms, textures
+  and render states are merged. Animated material overrides remain separate. A ZTest material tests
   against a depth pre-pass of the board's tile heights. The Pixi canvas is transparent over the three.js board, so the
   blend factors are rewritten for premultiplied compositing: a straight alpha blend becomes (One, OneMinusSrcAlpha),
   additive blends keep the destination alpha, and the Multiply family darkens through (Zero, SrcColor).

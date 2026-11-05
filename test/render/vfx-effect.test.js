@@ -15,6 +15,7 @@ import { FxWiring } from '../../public/js/render/vfx/wiring.js';
 import { listHasEffects } from '../../public/js/render/vfx/available.js';
 import { OfficialFx, LOOP_TTL } from '../../public/js/render/vfx/system.js';
 import { quatRotate } from '../../public/js/render/vfx/math.js';
+import { presetCamera } from '../../public/js/render/projection.js';
 
 const MAT = {
   name: 'm', shader: 'Torappu/Particles/Additive', passes: [{ blend: ['SrcAlpha', 'One', 'Zero', 'OneMinusSrcAlpha'], blendOp: 'Add', zTest: 'Disabled', zWrite: false, cull: 'Off', colorMask: 15 }],
@@ -198,6 +199,49 @@ describe('placement and direction', () => {
 });
 
 describe('materials', () => {
+  test('equivalent draw state has one batch key while material labels and records stay distinct', () => {
+    const source = { ...MAT, floats: { _MainTexChannel: 0, _Opacity: 0.5 },
+      textures: { ...MAT.textures, _Mask: { default: 'white', st: [1, 1, 0, 0] } } };
+    const a = compileMaterial(source);
+    const b = compileMaterial({ ...source, name: 'another label',
+      floats: { _Opacity: 0.5, _MainTexChannel: 0 },
+      textures: Object.fromEntries(Object.entries(source.textures).reverse()) });
+    assert.equal(a.batchKey, b.batchKey);
+    assert.notEqual(a, b);
+    assert.equal(a.name, 'm');
+    assert.equal(b.name, 'another label');
+  });
+
+  test('batch keys distinguish uniforms, signed zero, textures, shader variants and every pass state', () => {
+    const key = compileMaterial(MAT).batchKey;
+    const changes = [
+      m => { m.floats._MainTexChannel = 1; },
+      m => { m.floats._MainTexChannel = -0; },
+      m => { m.colors._TintColor[0] = 0.5; },
+      m => { m.textures._MainTex.tex = 'other'; },
+      m => { m.textures._MainTex.st[0] = 2; },
+      m => { m.textures._MainTex.default = 'black'; },
+      m => { m.keywords = ['_HGCUSTOMVERTEXSTREAM_ON']; },
+      m => { m.keywords = ['_WEIGHT_ON']; },
+      m => { m.passes[0].blend[0] = 'One'; },
+      m => { m.passes[0].blend[1] = 'Zero'; },
+      m => { m.passes[0].blend[2] = 'One'; },
+      m => { m.passes[0].blend[3] = 'One'; },
+      m => { m.passes[0].blendOp = 'Sub'; },
+      m => { m.passes[0].zTest = 'Less'; },
+      m => { m.passes[0].zWrite = true; },
+      m => { m.passes[0].cull = 'Back'; },
+      m => { m.passes[0].colorMask = 7; },
+    ];
+    for (const change of changes) {
+      const material = structuredClone(MAT);
+      change(material);
+      assert.notEqual(compileMaterial(material).batchKey, key, String(change));
+    }
+    assert.notEqual(compileMaterial(MAT, { lite: true }).batchKey, key);
+    assert.equal(compileMaterial({ ...MAT, queue: NaN }).batchKey, key, 'queue is ordering metadata');
+  });
+
   test('families by shader name; an unknown shader falls back and is logged', () => {
     assert.equal(familyOf('Torappu/Particles/Ram/Disturb(CustomData)').family, 'ramDisturbCd');
     assert.equal(familyOf('Torappu/Particles/Dissolve/Dissolve AB UVTween').family, 'dissolveTween');
@@ -222,6 +266,63 @@ describe('materials', () => {
     assert.equal(lite.family, 'basic');
     assert.ok(compileMaterial({ ...MAT, shader: 'Torappu/Particles/Disturb/Disturb Origin' }, { lite: true }).defs.lite);
   });
+});
+
+test('official FX batches adjacent equivalent materials and preserves order, pass and override boundaries', () => {
+  const mat = () => compileMaterial(MAT);
+  function prepare(rows) {
+    const renderer = { screen: { width: 960, height: 540 } };
+    const cam = presetCamera('normal', renderer.screen);
+    const ofx = new OfficialFx({ P: { Container: class {} }, renderer, cam: () => cam, lib: { available: true }, tier: 'full' });
+    ofx.glr = { upload() {} };
+    ofx.effects = rows.map(row => ({
+      gather(_cam, sink) { sink({ mat: row.mat, ov: row.ov || null, ground: !!row.ground,
+        layer: 0, order: 0, queue: row.mat.queue ?? 3000, dist: 0, meshKey: null, submesh: 0, effect: this }); },
+      build(_entry, _cam, fd) { return { kind: 'quad', first: fd.quads(1), count: 1 }; },
+    }));
+    ofx._prepare(renderer);
+    return ofx.items;
+  }
+  const a = mat(), b = mat();
+  assert.deepEqual(prepare([{ mat: a }, { mat: b }]).over.map(item => item.count), [2]);
+  const other = compileMaterial({ ...MAT, floats: { _MainTexChannel: 1 } });
+  assert.deepEqual(prepare([{ mat: a }, { mat: other }, { mat: b }]).over.map(item => item.mat), [a, other, b]);
+  assert.equal(prepare([{ mat: a, ov: { _Opacity: 0.5 } }, { mat: b }]).over.length, 2);
+  const split = prepare([{ mat: a, ground: true }, { mat: b }]);
+  assert.equal(split.ground.length, 1);
+  assert.equal(split.over.length, 1);
+  const earlier = compileMaterial({ ...MAT, queue: 2900 });
+  const ordered = prepare([{ mat: a }, { mat: earlier }]).over;
+  assert.equal(ordered.length, 1);
+  assert.equal(ordered[0].mat, earlier, 'queue sorting precedes adjacent batching');
+  assert.equal(ordered[0].count, 2);
+  assert.equal(prepare([{ mat: { state: {} } }, { mat: { state: {} } }]).over.length, 2, 'custom material records without keys remain separate');
+});
+
+test('static UV rotations reuse per-instance arrays through clips and pooled resets', () => {
+  const uv = { class: 'FxUVRotation', enabled: true, fields: {
+    _rotateTex1: true, _rotateTex2: false, _rotateTex3: true, _rotateTex4: true,
+    angle1: 30, _angle2: 45, _angle3: 60, _angle4: 90,
+  } };
+  const def = compileEffect(desc([root([pe({ _isLoop: 1 }), uv])]));
+  const a = new Effect(def, { seed: 1 }), b = new Effect(def, { seed: 2 });
+  a.update(1 / 60); b.update(1 / 60);
+  const matrices = Array.from({ length: 4 }, (_, k) => a.matOv.get(0)['_Rotation' + k]);
+  for (let k = 0; k < 4; k++) {
+    assert.deepEqual(matrices[k], def.uvRot[0].rotations[k]);
+    assert.notEqual(matrices[k], def.uvRot[0].rotations[k]);
+    assert.notEqual(matrices[k], b.matOv.get(0)['_Rotation' + k]);
+  }
+  matrices[0][0] = 999;
+  a.matOv.get(0)._Rotation1 = 12;
+  a.update(1 / 60);
+  assert.equal(a.matOv.get(0)._Rotation0, matrices[0]);
+  assert.deepEqual(a.matOv.get(0)._Rotation0, def.uvRot[0].rotations[0]);
+  assert.deepEqual(a.matOv.get(0)._Rotation1, def.uvRot[0].rotations[1]);
+  assert.deepEqual(b.matOv.get(0)._Rotation0, def.uvRot[0].rotations[0]);
+  a.reset(1); a.update(1 / 60);
+  assert.deepEqual(a.matOv.get(0)._Rotation0, def.uvRot[0].rotations[0]);
+  assert.equal(a.matOv.get(0)._HG_UV_ROTATION, 1);
 });
 
 describe('library', () => {

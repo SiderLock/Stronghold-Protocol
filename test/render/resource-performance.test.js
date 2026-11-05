@@ -4,11 +4,29 @@ import { createAssets } from '../../public/js/assets.js';
 import { FxLibrary } from '../../public/js/render/vfx/library.js';
 import { FxGL, FX_TEXTURE_BYTES } from '../../public/js/render/vfx/gl.js';
 import { OfficialFx } from '../../public/js/render/vfx/system.js';
+import { FrameData } from '../../public/js/render/vfx/geom.js';
 import { pressureResolution } from '../../public/js/render/app/host.js';
 import { sanitizeSettings, DEFAULT_SETTINGS } from '../../public/js/ui/gameLogic/settings.js';
 
 const turn = () => new Promise(resolve => setImmediate(resolve));
 const gate = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+
+test('FX frame counters include actual uploaded bytes and reset after the previous rendered frame', () => {
+  const uploads = [];
+  const glr = Object.create(FxGL.prototype);
+  glr.gl = { bindBuffer() {}, bindVertexArray() {}, bufferData(_target, data) { uploads.push(data.byteLength); } };
+  glr.stats = { draws: 4, tris: 16, uploadBytes: 0 };
+  glr.beginFrame = () => {};
+  const frame = new FrameData();
+  frame.quads(2); frame.meshes(1); frame.verts(3); frame.indices(6);
+  glr.upload(frame);
+  assert.equal(glr.stats.uploadBytes, uploads.reduce((sum, bytes) => sum + bytes, 0));
+  assert.equal(glr.stats.uploadBytes, (2 * 27 + 30 + 3 * 12 + 6) * 4);
+  frame.reset(); glr.upload(frame);
+  assert.equal(uploads.length, 4, 'empty buffers add no upload');
+  OfficialFx.prototype.frameStats.call({ glr });
+  assert.deepEqual(glr.stats, { draws: 0, tris: 0, uploadBytes: 0, quads: 0, meshes: 0 });
+});
 
 test('decoded-image cache evicts least-recent references by bytes without closing a live image', async () => {
   let closed = 0, loaded = 0;

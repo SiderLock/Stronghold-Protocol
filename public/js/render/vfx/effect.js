@@ -151,7 +151,16 @@ export function compileEffect(desc, lib = {}) {
             period: b.class === 'FxUVTweenerAdvance' && on(f.tweenRepeat) ? Math.max(0, num(f.tweenAnmTime, 0)) : 0,
             extra: Array.isArray(f.extraMapSettings) ? f.extraMapSettings : [] });
           break;
-        case 'FxUVRotation': def.uvRot.push({ node: i, flags: [f._rotateTex1, f._rotateTex2, f._rotateTex3, f._rotateTex4].map(on), angles: [num(f.angle1 ?? f._angle1, 0), num(f._angle2, 0), num(f._angle3, 0), num(f._angle4, 0)] }); break;
+        case 'FxUVRotation': {
+          const flags = [f._rotateTex1, f._rotateTex2, f._rotateTex3, f._rotateTex4].map(on);
+          const angles = [num(f.angle1 ?? f._angle1, 0), num(f._angle2, 0), num(f._angle3, 0), num(f._angle4, 0)];
+          const rotations = angles.map((angle, k) => {
+            const a = flags[k] ? angle * Math.PI / 180 : 0, c = Math.cos(a), s = Math.sin(a);
+            return [c, s, -s, c];
+          });
+          def.uvRot.push({ node: i, flags, angles, rotations, enabled: flags.some(Boolean) ? 1 : 0 });
+          break;
+        }
         case 'FxLODSetting':
           def.lod = { disable: new Set((Array.isArray(f._disableObjects) ? f._disableObjects : []).map((o) => o && o.node).filter((x) => x != null)),
             hook: new Map((Array.isArray(f._particleDetailsHookers) ? f._particleDetailsHookers : []).filter((h) => h && h._particle && h._particle.node != null).map((h) => [h._particle.node, Math.max(0, Math.min(1, num(h._detailPercentage, 1)))])) };
@@ -523,10 +532,11 @@ export class Effect {
     for (const r of def.uvRot) {
       let ov = this.matOv.get(r.node);
       if (!ov) { ov = {}; this.matOv.set(r.node, ov); }
-      ov._HG_UV_ROTATION = r.flags.some(Boolean) ? 1 : 0;
+      ov._HG_UV_ROTATION = r.enabled;
       for (let k = 0; k < 4; k++) {
-        const a = r.flags[k] ? r.angles[k] * Math.PI / 180 : 0, c = Math.cos(a), s = Math.sin(a);
-        ov['_Rotation' + k] = [c, s, -s, c];
+        const name = '_Rotation' + k, value = r.rotations[k];
+        const matrix = Array.isArray(ov[name]) ? ov[name] : (ov[name] = []);
+        for (let j = 0; j < 4; j++) matrix[j] = value[j];
       }
     }
     // world matrices
