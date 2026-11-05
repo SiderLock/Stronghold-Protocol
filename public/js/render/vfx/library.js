@@ -210,15 +210,20 @@ export class FxLibrary {
     return this._texInfo;
   }
 
-  /** Run fn under the parallel-load limit. */
-  _limit(fn) {
+  /** Run fn under the shared limit; descriptors and meshes precede queued image work, FIFO within each class. */
+  _limit(fn, priority = false) {
     return trackAssetDemand(new Promise((resolve, reject) => {
       const run = () => {
         if (this.destroyed) { resolve(null); return; }
         this.active++;
         Promise.resolve().then(fn).then(resolve, reject).finally(() => { this.active--; const next = this.queue.shift(); if (next) next(); });
       };
-      if (this.active < MAX_PARALLEL) run(); else this.queue.push(run);
+      run.priority = priority;
+      if (this.active < MAX_PARALLEL) run();
+      else {
+        const at = priority ? this.queue.findIndex(job => !job.priority) : -1;
+        if (at < 0) this.queue.push(run); else this.queue.splice(at, 0, run);
+      }
     }));
   }
 
@@ -231,7 +236,7 @@ export class FxLibrary {
       p = this.init().then(() => {
         if (this.pluginFx?.descriptors.has(k)) return this.pluginFx.descriptors.get(k);
         const url = this.url('fx/prefabs', k);
-        return url ? this._limit(() => this._json(url)) : null;
+        return url ? this._limit(() => this._json(url), true) : null;
       }).catch((err) => { if (!this.destroyed) { this.failed.add(k); console.warn('[fx] prefab failed', k, err?.message || err); } return null; });
       this.descs.set(k, p);
     }
@@ -255,6 +260,7 @@ export class FxLibrary {
     await Promise.all((desc.meshes || []).map((m) => this.loadMesh(m)));
     if (this.destroyed) return null;
     if (k.startsWith('plugin:') && revision !== (this.pluginRevision || 0)) return null;
+    if (this.defs.has(k)) return this.defs.get(k);
     const def = compileEffect(desc, this);
     this.defs.set(k, def);
     return def;
@@ -277,7 +283,7 @@ export class FxLibrary {
     if (!p) {
       p = this.init().then(() => {
         const url = this.url('fx/mesh', key);
-        return url ? this._limit(() => this._json(url)) : null;
+        return url ? this._limit(() => this._json(url), true) : null;
       }).then((m) => { if (this.destroyed) return null; const d = normalizeMesh(m); this.meshes.set(key, d); return d; }, () => { if (!this.destroyed) this.meshes.set(key, null); return null; });
       this.meshLoads.set(key, p);
     }

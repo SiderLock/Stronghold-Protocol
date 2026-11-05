@@ -72,6 +72,52 @@ function library() {
   return lib;
 }
 
+test('FX descriptors and meshes pass queued images in FIFO order within the shared load limit', async t => {
+  const lib = library(), jobs = [], started = [];
+  t.mock.method(console, 'warn', () => {});
+  await lib.init();
+  lib.groups['fx/prefabs'] = { a: { path: '/a' }, b: { path: '/b' } };
+  lib.groups['fx/mesh'] = { m: { path: '/m' } };
+  for (let i = 0; i < 12; i++) lib.groups['fx/tex'][`t${i}`] = { path: `/t${i}` };
+  let peak = 0;
+  lib._image = url => {
+    peak = Math.max(peak, lib.active);
+    started.push(url);
+    const job = gate(); jobs.push(job);
+    return job.promise;
+  };
+  lib._json = async url => {
+    peak = Math.max(peak, lib.active);
+    started.push(url);
+    if (url === '/b') throw new Error('expected descriptor failure');
+    if (url === '/m') return { positions: [0, 0, 0], indices: [0] };
+    return { key: 'a', nodes: [], materials: [], meshes: ['m'], textures: [], refs: [] };
+  };
+  const images = Array.from({ length: 12 }, (_, i) => lib.loadTexture(`t${i}`, false));
+  await turn();
+  assert.equal(jobs.length, 8);
+  const a = lib.load('a'), duplicate = lib.load('a'), b = lib.load('b'), mesh = lib.loadMesh('m');
+  await turn();
+  assert.equal(started.length, 8, 'active work finishes before queued work starts');
+  jobs[0].resolve(null);
+  await turn();
+  assert.deepEqual(started.slice(8), ['/a', '/b', '/m', '/t8']);
+  const [def, same, missing, data] = await Promise.all([a, duplicate, b, mesh]);
+  assert.equal(def, lib.def('a'));
+  assert.equal(same, def);
+  assert.equal(missing, null);
+  assert.ok(lib.failed.has('b'));
+  assert.ok(data.positions.length > 0);
+  for (let i = 1; i < 12; i++) { jobs[i].resolve(null); await turn(); }
+  await Promise.all(images);
+  await turn();
+  assert.equal(peak, 8);
+  assert.deepEqual(started.filter(url => url.startsWith('/t')), Array.from({ length: 12 }, (_, i) => `/t${i}`));
+  assert.equal(lib.active, 0);
+  assert.equal(lib.queue.length, 0);
+  lib.destroy();
+});
+
 test('context loss rejects old decoded images without overwriting the restored context load', async () => {
   const lib = library(), jobs = [];
   lib._image = () => { const g = gate(); jobs.push(g); return g.promise; };
@@ -99,10 +145,18 @@ test('retired FX libraries drain queued work without decoding and discard in-fli
   const pending = Array.from({ length: 12 }, (_, i) => lib.loadTexture(`t${i}`, false));
   await turn();
   assert.equal(jobs.length, 8);
+  lib.groups['fx/prefabs'].late = { path: '/late' };
+  lib.groups['fx/mesh'] = { late: { path: '/mesh-late' } };
+  let jsonLoads = 0;
+  lib._json = async () => { jsonLoads++; return {}; };
+  const prefab = lib.load('late'), mesh = lib.loadMesh('late');
+  await turn();
   lib.destroy(); lib.destroy();
   let closed = 0;
   for (const g of jobs) g.resolve({ image: { close() { closed++; } }, flipped: true });
   assert.deepEqual(await Promise.all(pending), Array(12).fill(null));
+  assert.deepEqual(await Promise.all([prefab, mesh]), [null, null]);
+  assert.equal(jsonLoads, 0);
   await turn();
   assert.equal(jobs.length, 8, 'queued decodes never start after teardown');
   assert.equal(closed, 8);

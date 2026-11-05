@@ -193,6 +193,9 @@ history and the open points: DESIGN §32.14.25.
   against a depth pre-pass of the board's tile heights. The Pixi canvas is transparent over the three.js board, so the
   blend factors are rewritten for premultiplied compositing: a straight alpha blend becomes (One, OneMinusSrcAlpha),
   additive blends keep the destination alpha, and the Multiply family darkens through (Zero, SrcColor).
+- **Loading.** `vfx/library.js` shares an eight-job limit across prefab descriptors, meshes and images. Queued
+  descriptors and meshes precede queued images, preserving FIFO order within each class. After mesh dependencies
+  resolve, `load()` checks the compiled cache again so concurrent callers share one prefab definition.
 - **Shaders.** `glsl.js` holds GLSL ES 3.0 programs written for the client's particle shader families (no official
   source is in the repository): basic, legacy premultiplied / alpha-blended, standard unlit, dissolve (tween, vertex
   colour, double, custom data), disturb (origin, anchor, custom data, ramp), ramp, mask, rim, flipbook and multiply,
