@@ -91,7 +91,7 @@ export function compileEffect(desc, lib = {}) {
   const n = nodes.length;
   const def = {
     key: desc?.key || '', desc, n, nodes,
-    parent: new Int32Array(n).fill(-1), base: new Float32Array(n * 10), activeBase: new Uint8Array(n),
+    parent: new Int32Array(n).fill(-1), base: new Float32Array(n * 10), activeBase: new Uint8Array(n), localMatrices: new Array(n).fill(null),
     ps: new Array(n).fill(null), psr: new Array(n).fill(null), mesh: new Array(n).fill(null), skinned: new Array(n).fill(null),
     trail: new Array(n).fill(null), line: new Array(n).fill(null), subNodes: new Set(), hasPsAncestor: new Uint8Array(n),
     clips: (Array.isArray(desc?.clips) ? desc.clips : []).map(compileClip), animators: [],
@@ -250,6 +250,16 @@ export function compileEffect(desc, lib = {}) {
     if (list[i] === undefined) list[i] = desc?.materials?.[i] ? compileMaterial(desc.materials[i], { lite }) : null;
     return list[i];
   };
+  // Only local TRS is constant: its world matrix still follows animated ancestors and the effect's placement.
+  const dynamic = new Set([0, def.rotY, def.rotZ]);
+  for (const clip of def.clips) for (const node of clip.nodes.keys()) dynamic.add(node);
+  for (let i = 1; i < n; i++) {
+    if (def.parent[i] < 0 || dynamic.has(i)) continue;
+    const o = i * 10;
+    for (let k = 0; k < 3; k++) { _p3[k] = def.base[o + k]; _s3[k] = def.base[o + 7 + k]; }
+    for (let k = 0; k < 4; k++) _q[k] = def.base[o + 3 + k];
+    def.localMatrices[i] = mat4Trs(_p3, _q, _s3);
+  }
   return def;
 }
 
@@ -270,6 +280,7 @@ export class Effect {
     this.lib = opts.lib || null;
     const n = def.n;
     this.loc = new Float32Array(def.base);             // animated local TRS
+    this.localMatrices = def.localMatrices.slice();   // shared static locals; a sink write opts this instance out
     this.act = new Uint8Array(def.activeBase);         // own active flags (FxDelay / clips / LOD / inactive lists)
     this.hier = new Uint8Array(n);                     // active in hierarchy this frame
     this.prevHier = new Uint8Array(n);
@@ -329,6 +340,7 @@ export class Effect {
   reset(seed) {
     const def = this.def, n = def.n;
     this.loc.set(def.base);
+    for (let i = 0; i < n; i++) this.localMatrices[i] = def.localMatrices[i];
     this.act.set(def.activeBase);
     this.hier.fill(0); this.prevHier.fill(0); this.actAt.fill(-1); this.forcedOff.fill(0);
     this.matOv.clear(); this.rendOv.clear(); this.trails.clear(); this.linePts.clear();
@@ -426,6 +438,7 @@ export class Effect {
     this.__sink = {
       transform(node, pos, rot, scale, euler) {
         const o = node * 10, L = self.loc;
+        self.localMatrices[node] = null;
         if (pos) for (let k = 0; k < 3; k++) if (!Number.isNaN(pos[k])) L[o + k] = pos[k];
         if (rot) {
           for (let k = 0; k < 4; k++) if (!Number.isNaN(rot[k])) L[o + 3 + k] = rot[k];
@@ -597,6 +610,8 @@ export class Effect {
   _matrices() {
     const def = this.def, L = this.loc, n = def.n;
     for (let i = 0; i < n; i++) {
+      const local = this.localMatrices[i];
+      if (local) { mat4Mul(this.world[def.parent[i]], local, this.world[i]); continue; }
       const o = i * 10;
       _p3[0] = L[o]; _p3[1] = L[o + 1]; _p3[2] = L[o + 2];
       _q[0] = L[o + 3]; _q[1] = L[o + 4]; _q[2] = L[o + 5]; _q[3] = L[o + 6];

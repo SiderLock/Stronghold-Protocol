@@ -179,6 +179,9 @@ history and the open points: DESIGN §32.14.25.
   location), ProjectileEffect, FxDelay, FxUVTweener(Advance), FxUVRotation, FxLODSetting, FollowMountPoint /
   FollowOwner, FollowDirection, OnPlay / OnFinish emitters, the Switchable*Effect variants, ColorModifier and
   PauseEffectIf (its CheckType conditions that a view can answer: facing, abnormal flags, sleep).
+- **Local transforms.** Compilation shares local TRS matrices for non-root nodes without Transform clip bindings or
+  direction helpers. World matrices still compose with the current parent every update, then mirror as before.
+  A transform-sink write drops that instance's cached local; pooling restores the authored locals.
 - **Clock.** The battle clock: the advance of the interpolated render time each frame (`app.js frameBody`, at most
   0.25 s), so the effects follow the game speed and stop with a paused or stalled battle.
 - **Drawing.** Two passes in the Pixi stage, `vfxGround` (renderers lying flat within 0.25 of the ground, and those

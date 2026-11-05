@@ -14,7 +14,7 @@ import { resolveOfficialFx } from '../../public/js/render/vfx/tier.js';
 import { FxWiring } from '../../public/js/render/vfx/wiring.js';
 import { listHasEffects } from '../../public/js/render/vfx/available.js';
 import { OfficialFx, LOOP_TTL } from '../../public/js/render/vfx/system.js';
-import { quatRotate } from '../../public/js/render/vfx/math.js';
+import { quatEuler, quatRotate } from '../../public/js/render/vfx/math.js';
 import { presetCamera } from '../../public/js/render/projection.js';
 
 const MAT = {
@@ -539,4 +539,73 @@ describe('wiring', () => {
 test('a −30° Graphic tilt and the +30° effect tilt cancel (the pre-tilted content of §33.2)', () => {
   const v = quatRotate([0.258819, 0, 0, 0.965926], quatRotate([-0.258819, 0, 0, 0.965926], [0, 1, 0]));
   assert.ok(Math.abs(v[1] - 1) < 1e-5);
+});
+
+describe('shared static local matrices', () => {
+  const node = (id, parent, more = {}) => ({ ...root(), id, parent, ...more });
+
+  test('all Transform clip targets and direction helpers remain dynamic, including unused clips', () => {
+    const nodes = [root([pe({ _rotationY: { node: 1 }, _rotationZ: { node: 2 } })]),
+      ...Array.from({ length: 7 }, (_, i) => node(i + 1, 0)), node(8, null)];
+    const def = compileEffect(desc(nodes, { clips: [{ curves: [
+      ...['localPosition.x', 'localRotation.w', 'localEulerAnglesBaked.z', 'localScale.y'].map((property, i) =>
+        ({ node: i + 3, type: 'Transform', property, keys: [[0, 1, 0, 0]] })),
+      { node: 7, type: 'MeshRenderer', property: 'material._Color.r', keys: [[0, 1, 0, 0]] },
+      { node: 7, type: 'Transform', property: 'localPosition.x', keys: [] },
+    ] }] }));
+    assert.equal(def.animators.length, 0);
+    for (const i of [0, 1, 2, 3, 4, 5, 6, 8]) assert.equal(def.localMatrices[i], null, `dynamic / root ${i}`);
+    assert.ok(def.localMatrices[7], 'material-only animation does not change local TRS');
+    const a = new Effect(def), b = new Effect(def), saved = new Float32Array(def.localMatrices[7]);
+    assert.notEqual(a.localMatrices, b.localMatrices);
+    assert.equal(a.localMatrices[7], b.localMatrices[7], 'instances share the immutable local matrix');
+    a.place({ pos: [3, -2, 4], scale: 2, yaw: 1, mirror: true, flipY: true }).update(0);
+    assert.deepEqual(def.localMatrices[7], saved, 'placement and mirror never write into the shared local');
+  });
+
+  test('animated parents, root rotations and reflections produce the uncached world matrices bit for bit', () => {
+    for (const helpers of [false, true]) for (const projectile of [false, true]) for (const lite of [false, true]) {
+      const fields = { _isLoop: 1, _rotationY: helpers ? { node: 1 } : null, _rotationZ: helpers ? { node: 2 } : null };
+      const nodes = [root([pe(fields), ...(projectile ? [{ class: 'ProjectileEffect', fields: { _rotate180Y: 1 } }] : [])]),
+        node(1, 0, { rot: quatEuler(20, -35, 15), scale: [-1, 0.7, 2] }),
+        node(2, 1, { pos: [0.21, -0.5, 1], rot: quatEuler(-15, 25, 30) }),
+        node(3, 2, { pos: [-0, 1.2, -0.3], scale: [0.9, 1.7, 0] }),
+        node(4, 3, { pos: [0.75, -0.3, 2], rot: quatEuler(45, 10, -60), scale: [-1.2, 0.6, 1.5] }),
+        node(5, 4, { pos: [-0.4, 1.1, 0.8], scale: [0.5, -2, 0.25] })];
+      nodes[0].animator = { enabled: true, default: 0 };
+      const def = compileEffect(desc(nodes, { clips: [{ length: 1, loop: true, curves: [
+        { node: 2, type: 'Transform', property: 'localPosition.y', keys: [[0, -1, 0, 0], [1, 2, 0, 0]] },
+        { node: 2, type: 'Transform', property: 'localEulerAnglesRaw.z', keys: [[0, 20, 0, 0], [1, 80, 0, 0]] },
+        { node: 2, type: 'Transform', property: 'localScale.x', keys: [[0, -1, 0, 0], [1, 1, 0, 0]] },
+      ] }] }));
+      const cached = new Effect(def, { seed: 123, lite }), plain = new Effect(def, { seed: 123, lite });
+      plain.localMatrices.fill(null);
+      for (let step = 0; step < 45; step++) {
+        const place = { pos: [step * 0.1 - 2, -1.25, 0.42], scale: 0.25 + (step % 7) / 3,
+          yaw: step * 0.2, pitch: step * -0.03, roll: step * 0.01, mirror: step % 2 === 0, flipY: step % 3 === 0,
+          rootRot: step % 4 === 0 ? quatEuler(30, -20, 10) : null,
+          mountRot: step % 5 === 0 ? quatEuler(-10, 25, 35) : null };
+        cached.place(place).update(1 / 30); plain.place(place).update(1 / 30);
+        for (let i = 0; i < def.n; i++) assert.deepEqual(new Uint32Array(cached.world[i].buffer),
+          new Uint32Array(plain.world[i].buffer), `helpers=${helpers} projectile=${projectile} lite=${lite} step=${step} node=${i}`);
+      }
+    }
+  });
+
+  test('a transform sink write invalidates only its instance, and pooling restores the compiled locals', () => {
+    const def = compileEffect(desc([root([pe({ _isLoop: 1 })]), node(1, 0, { pos: [1, 2, 3] }), node(2, 1, { pos: [4, 0, 0] })]));
+    const changed = new Effect(def), other = new Effect(def);
+    changed.update(0); other.update(0);
+    const original = other.world.map(matrix => new Float32Array(matrix));
+    changed._sink().transform(1, [8, NaN, NaN], null, [2, NaN, NaN], null);
+    changed.update(0);
+    assert.equal(changed.localMatrices[1], null);
+    assert.equal(changed.localMatrices[2], def.localMatrices[2]);
+    assert.equal(changed.world[1][12], 8); assert.equal(changed.world[2][12], 16);
+    other.update(0);
+    assert.deepEqual(other.world, original, 'another instance keeps the authored local transform');
+    changed.reset(123).update(0);
+    assert.equal(changed.localMatrices[1], def.localMatrices[1]);
+    assert.deepEqual(changed.world, original, 'a pooled instance does not retain the prior transform write');
+  });
 });
