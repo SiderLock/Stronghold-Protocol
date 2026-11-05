@@ -77,4 +77,19 @@ describe('installation outfits: the served manifest', () => {
     assert.equal(mergeLocalSkins(DOC, {}), DOC);
     assert.equal(mergeLocalSkins(DOC, { version: 1 }), DOC);
   });
+
+  test('all installed outfit voice trees retain single lines and arrays while malformed slots are dropped', () => {
+    const voice = { select: ['/assets/local/voices/a.mp3', '/assets/local/voices/b.mp3'],
+      place: '/assets/local/voices/place.mp3', invalid: 12, empty: [], external: 'https://example.com/a.mp3' };
+    const fields = Object.fromEntries(['voice', 'voiceJp', 'voiceEn', 'voiceKr', 'voiceNative'].map(key => [key, voice]));
+    const out = mergeLocalSkins(DOC, skirt({
+      'char_003_kalts@boc#6': { charId: 'char_003_kalts', portrait: '/assets/local/skins/portrait.png', ...fields },
+    }));
+    const rec = out.chars.char_003_kalts.skins['char_003_kalts@boc#6'];
+    for (const key of Object.keys(fields)) {
+      assert.deepEqual(rec[key], { select: voice.select, place: voice.place });
+      assert.notEqual(rec[key].select, voice.select);
+    }
+    assert.deepEqual(voice.empty, []);
+  });
 });

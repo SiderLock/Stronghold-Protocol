@@ -230,7 +230,7 @@
       "textures": [
         "enemy_1305_mhslim.png"
       ],
-      "pma": true,
+      "pma": false,
       "anims": {
         "idle": "Idle",
         "deploy": "Idle",
@@ -284,7 +284,7 @@
       "textures": [
         "enemy_1305_mhslim_2.png"
       ],
-      "pma": true,
+      "pma": false,
       "anims": {
         "idle": "Idle",
         "deploy": "Idle",

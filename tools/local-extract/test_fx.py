@@ -30,10 +30,6 @@ class ModeAuraTests(unittest.TestCase):
             {'overrideEffectKey': 'actual_fx'}]}, 'Attack'), [])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class SkinFxPublishTests(unittest.TestCase):
     """`skinfx.py merge`: an index only publishes replacements it actually holds."""
 
@@ -64,3 +60,68 @@ class SkinFxPublishTests(unittest.TestCase):
             for rec in index['skinFx'].values():
                 for target in rec['replace'].values():
                     self.assertIn(target, index['prefabs'])
+
+
+class AtomicWriteTests(unittest.TestCase):
+    def test_identical_shared_file_needs_no_replacement(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from fx import write_atomic
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'shared.json'
+            path.write_bytes(b'same')
+            with patch('fx.os.replace') as replace:
+                write_atomic(path, b'same')
+            replace.assert_not_called()
+            self.assertEqual(list(Path(tmp).iterdir()), [path])
+
+    def test_transient_windows_lock_retries_and_keeps_atomic_replace(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from fx import write_atomic
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'shared.json'
+            path.write_bytes(b'old')
+            locked = PermissionError('shared mesh is busy')
+            locked.winerror = 5
+            original_replace = os.replace
+            calls = []
+
+            def replace(source, target):
+                calls.append(source)
+                if len(calls) == 1:
+                    raise locked
+                return original_replace(source, target)
+
+            with patch('fx.os.replace', side_effect=replace), patch('fx.time.sleep'):
+                write_atomic(path, b'new')
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(path.read_bytes(), b'new')
+            self.assertEqual(list(Path(tmp).iterdir()), [path])
+
+    def test_permanent_lock_and_unrelated_permission_error_preserve_previous_file(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from fx import write_atomic
+
+        for code in (5, 13):
+            with self.subTest(winerror=code), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / 'shared.json'
+                path.write_bytes(b'old')
+                error = PermissionError('cannot replace')
+                error.winerror = code
+                with patch('fx.os.replace', side_effect=error), patch('fx.time.monotonic', side_effect=[0, 2]):
+                    with self.assertRaises(PermissionError):
+                        write_atomic(path, b'new')
+                self.assertEqual(path.read_bytes(), b'old')
+                self.assertEqual(list(Path(tmp).iterdir()), [path])
+
+
+if __name__ == '__main__':
+    unittest.main()

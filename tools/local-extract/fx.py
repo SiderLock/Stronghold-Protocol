@@ -1424,9 +1424,30 @@ def save_texture(img, path, encoding='webp'):
 def write_atomic(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.read_bytes() == data:
+            return
+    except OSError:
+        pass
     tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
     tmp.write_bytes(data)
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 1
+    delay = 0.001
+    try:
+        while True:
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as error:
+                if getattr(error, 'winerror', None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.128)
+    finally:
+        try:
+            tmp.unlink()
+        except (FileNotFoundError, PermissionError):
+            pass
 
 
 # ---- container indexes ----------------------------------------------------------------------------------------------

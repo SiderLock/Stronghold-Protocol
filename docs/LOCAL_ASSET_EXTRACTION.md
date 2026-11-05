@@ -40,6 +40,22 @@ New-Item -ItemType Directory -Force .cache | Out-Null
 
 特效文件及 `skinFx` 映射在 `public/assets/local/fx/`，配套本地索引为 `data/local-fx.json`。`skinfx.py` 的 `--only` 会限制本次扫描并替换整个 `skinFx` 段，维护完整安装时不要误用小范围结果覆盖全量映射。`--dry-run` 跳过索引合并，但指定 `--keys-out` 仍会写键列表。映射存在不代表目标 prefab、贴图和网格已存在；查看摘要中的 `bad`、`notInIndex` 与实际文件。部分假弹道字段仅报告，不能据此宣称所有换装特效都支持。
 
+新增干员的数据并入以后，可用 `--fx-set used --fx-add-only` 把新增单位、技能和依赖资源加入既有特效集。检查本次实际新增的单位与技能，随后复核时装替换映射。该模式保留已有单位记录，已有技能或模组发生变化时按完整提取流程更新。
+
+## 官方时装独立语音
+
+基础干员语音由素材下载器补齐。已安装时装的独立语音使用官方 `skin_table.voiceId` 对应的 `charword_table` 语音库，读取其实际声明的中文、日文、英文和韩文语种及战斗槽位。
+
+```powershell
+node tools/fetch-assets.mjs --add-only
+node tools/local-extract/skin-voices.mjs --dry-run --json
+node tools/local-extract/skin-voices.mjs --json
+```
+
+工具复用现有下载、格式校验与缓存记录，音频保存到 `public/assets/local/voices/`，可用槽位合入 `data/local-skins.json`。普通素材 prune 保留 local 目录。下载结束后重新读取时装 sidecar 并原子写入，保留已提取的图片、模型与可用语音。缺失或失败条目列在结果中，命令以失败状态退出供重试。词库名中的 `#` 按 URL 路径编码。缺少缓存表时沿用现有缓存下载器获取官方表，`--dry-run` 也会准备这些表。后续 `skins.py` 刷新同一干员的时装图片与模型时继续保留已安装的五类语音字段。
+
+服务端把本地时装的五类语音字段合入已服务的素材清单，播放器按已有的语言选择和基础语音回退规则播放。更新完成后重启本地服务并刷新页面，再核对实际资源请求。
+
 ## 本机核验与发布前检查
 
 启动本地服务后在编队页逐个核验头像、立绘、预览动画、棋盘朝向和特效回退；有变更时重启本机服务并刷新页面。不要为了重读本地索引终止线上对局，也不要在已有完整安装上随意重跑全量 setup 或 prune。

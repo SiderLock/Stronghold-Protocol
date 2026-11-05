@@ -41,6 +41,30 @@ function py(code) {
   return JSON.parse(r.stdout);
 }
 
+test('refreshing outfit art retains installed independent voices while replacing the old images', { skip: !PY }, () => {
+  const result = py(`import contextlib, io, tempfile
+from pathlib import Path
+sid='char_9001_test@demo#1'
+voices={key:{'select':'/assets/local/voices/'+key+'.mp3'} for key in ['voice','voiceJp','voiceEn','voiceKr','voiceNative']}
+with tempfile.TemporaryDirectory() as tmp:
+ skins.ROOT=Path(tmp); (skins.ROOT/'data').mkdir()
+ sidecar=skins.ROOT/'data/local-skins.json'
+ sidecar.write_text(json.dumps({'version':1,'skins':{sid:{'charId':'char_9001_test','portrait':'old','illust':'old',**voices}}}))
+ skins.skin_table=lambda *a,**kw: {'fixture':True}
+ skins.default_extra=lambda *a: None
+ skins.named_skins=lambda *a,**kw: [{'skinId':sid,'charId':'char_9001_test'}]
+ skins.avatar_map=lambda *a,**kw: {}
+ skins.export_outfit=lambda *a,**kw: {'entry':{'charId':'char_9001_test','portrait':'new'},'files':1}
+ with contextlib.redirect_stdout(io.StringIO()): skins.main(['--game',tmp])
+ first=json.loads(sidecar.read_text())['skins'][sid]
+ skins.export_outfit=lambda *a,**kw: {'entry':{'charId':'char_9002_other','portrait':'other'},'files':1}
+ with contextlib.redirect_stdout(io.StringIO()): skins.main(['--game',tmp])
+ second=json.loads(sidecar.read_text())['skins'][sid]
+ print(json.dumps({'first':first,'second':second,'voices':voices}))`);
+  assert.deepEqual(result.first, { ...result.voices, charId: 'char_9001_test', portrait: 'new' });
+  assert.deepEqual(result.second, { charId: 'char_9002_other', portrait: 'other' });
+});
+
 test('outfit faces follow battle prefab references even with duplicate names, reversed object order and inactive Back', { skip: !PY }, () => {
   const results = py(`results=[faces()]
 objects=dict(reversed(list(objects.items())))

@@ -395,8 +395,11 @@ def main(argv=None):
         if 'error' in got:
             errors.append(f"{skin['skinId']}: {got['error']}")
         else:
+            previous = prev.get(skin['skinId']) or {}
+            voices = {key: previous[key] for key in ('voice', 'voiceJp', 'voiceEn', 'voiceKr', 'voiceNative')
+                      if key in previous and previous.get('charId') == got['entry'].get('charId')}
             out[skin['skinId']] = ({**prev[skin['skinId']], 'spine': got['entry']['spine']}
-                                   if a.models_only else got['entry'])
+                                   if a.models_only else {**voices, **got['entry']})
             files += got['files']
         if i % 25 == 0:
             log(f'  skins: {i}/{len(wanted)}…')

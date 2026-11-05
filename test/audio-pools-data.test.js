@@ -56,8 +56,9 @@ test('every generated attack/hit reference resolves to a valid pool and its sele
   // plain mode-bank slots on 19 operators, and 弑君者 / 莱伊 / 望 / 灰毫's normal attack from their mode-0 banks
   // The four-version art union adds nine references to installed sounds and 46 official pool records; the online
   // regeneration of 2026-11-03 (DESIGN §37.93) adds the attack / hit files of 16 第一期 operators and 2 enemies (+37).
-  assert.equal(refs, 1024);
-  assert.equal(Object.keys(pools).length, 1013);
+  // CN 2.7.91 resource refresh adds 14 attack/hit references and their official pools for 冻河 / 国度 / 塔露拉.
+  assert.equal(refs, 1038);
+  assert.equal(Object.keys(pools).length, 1027);
   const p = pools[units.char_4064_mlynar.attackPools[2]];
   assert.equal(p.sounds['player/p_imp/p_imp_loyalsword_h.mp3'].delay, 0.1);
 });

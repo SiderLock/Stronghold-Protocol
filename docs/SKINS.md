@@ -209,6 +209,13 @@ slot names as the operator's own `audio.voice[<charId>]` (docs/PLUGINS.md §9).
   the schema refuses would be dropped by the runtime with a warning, and a field the runtime does not know would be
   silently ignored — the two halves of the upstream 语音槽 pull request that never merged.
 
+Installation outfits use the same five voice fields. `node tools/local-extract/skin-voices.mjs` reads each installed
+outfit's official `skin_table.voiceId`, downloads the declared dubs' battle slots, and adds them to
+`data/local-skins.json`. `mergeLocalSkins` retains these fields in the served manifest. The downloader validates MP3
+files and keeps them under `public/assets/local/voices/`. Incomplete downloads retain the installed slots for retry.
+Subsequent `skins.py` art refreshes preserve these voice fields for the same operator's outfit.
+The command, metadata and resource checks are described in [本地素材提取参考](LOCAL_ASSET_EXTRACTION.md#官方时装独立语音).
+
 ## 小人预览 (model preview)
 
 The picker's enlarged view plays the row's **real skeleton**: it opens on 待机 and offers a button per animation the
@@ -652,12 +659,14 @@ canvas on return; closing a preview frees that renderer's GPU objects. High-DPR 
 The in-game mobile resolution adjustment is independently switchable in settings; see
 [mobile performance](development/MOBILE_PERFORMANCE.md).
 
-- **Bots always wear the default model** (`PlayerState.setSkins` refuses a bot, as `setLoadout` does).
+- **AI outfits follow the fork's opening configuration**. D045 selects one installed outfit map for the match's AI
+  seats, shared across fixed groups. The installation's catalogue determines the available appearances.
 - **The studio lists the skins the manifest already has** (P7): the target picker finds one by the outfit's name, its
   series or its operator, and `skin:<key>` names it — the key carries `@ # + .`, so it is copied from there rather than
   typed (`server/studio/targets.js`). A skin the installation does not have yet is still written by hand or in the stem
   form: the studio cannot invent an outfit.
-- **No skin effects and no operator voices** (a separate piece of work; docs/ASSETS.md).
+- **Installation effects and voices are prepared by the host tools**. `skinfx.py` publishes verified effect replacements,
+  and `skin-voices.mjs` adds the official independent voice banks to the installation sidecar.
 - **A summon keeps the look it was placed with**: its model is read once, when the unit is built with the battle input,
   so a change made mid-battle reaches the next battle (operators refresh immediately instead). A prep board's token
   piece keeps its own model until it deploys, and a summon's avatar is never restyled — see 召唤物换装 above.
