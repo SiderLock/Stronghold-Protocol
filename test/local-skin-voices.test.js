@@ -7,6 +7,7 @@ import { fillVoices } from '../tools/local-extract/skin-voices.mjs';
 import { indexVoice, VOICE_BATTLE_SLOTS } from '../tools/assets/audio.mjs';
 import { mergeLocalSkins } from '../shared/skins.js';
 import { relOf, rewriteManifest } from '../server/http/assetViews.js';
+import { createAssetCacheCatalog } from '../server/assetCacheCatalog.js';
 import { voiceLine } from '../public/js/audio.js';
 
 const CHAR = 'char_003_kalts';
@@ -62,7 +63,7 @@ test('outfit voice dry run uses the official voiceId and only its declared langu
   assert.equal(await readFile(f.sidecar, 'utf8'), before);
 });
 
-test('installed voices survive manifest composition, encode the bank fragment, and play through existing language fallback', async t => {
+test('installed voices survive manifest composition and pre-caching, and play through existing language fallback', async t => {
   const f = await fixture(t);
   const report = await fillVoices({ root: f.root, fetchImpl: f.fetchImpl, log() {} });
   assert.equal(report.downloaded, 4);
@@ -74,7 +75,7 @@ test('installed voices survive manifest composition, encode the bank fragment, a
   const skin = local.skins[SKIN];
   assert.equal(skin.portrait, '/assets/local/skins/portrait.png');
   assert.equal(skin.voiceEn, undefined);
-  const url = `/assets/local/voices/jp/${CHAR}_boc%236/cn_019.mp3`;
+  const url = `/assets/local/voices/jp/${CHAR}_boc/skin-6/cn_019.mp3`;
   assert.equal(skin.voiceJp.start, url);
   assert.equal((await readFile(path.join(f.root, 'public', relOf(url)))).toString('latin1', 0, 3), 'ID3');
   const doc = mergeLocalSkins({ chars: { [CHAR]: {} } }, local);
@@ -85,6 +86,13 @@ test('installed voices survive manifest composition, encode the bank fragment, a
   assert.deepEqual(voiceLine(audio, CHAR, 'start', 'jp', () => 0, doc.chars[CHAR].skins[SKIN]), {
     url, fallback: skin.voice.start,
   });
+  await writeFile(path.join(f.root, 'data/assets.json'), '{}');
+  await mkdir(path.join(f.root, 'public/assets/local/skins'), { recursive: true });
+  await writeFile(path.join(f.root, 'public/assets/local/skins/portrait.png'), 'portrait');
+  const catalog = await createAssetCacheCatalog({ publicDir: path.join(f.root, 'public'), dataDir: path.join(f.root, 'data') });
+  assert.equal(catalog.complete, true);
+  assert.deepEqual(catalog.missing, []);
+  assert.ok(catalog.files.some(file => file.url === url), 'the actual installed voice enters the pre-cache');
   const again = await fillVoices({ root: f.root, fetchImpl: f.fetchImpl, log() {} });
   assert.equal(again.skipped, 4);
   assert.equal(again.written, false);

@@ -45,7 +45,8 @@ export async function fillVoices({ root = ROOT, dryRun = false, fetchImpl = glob
           const match = /^([A-Za-z0-9_#]+)\/([A-Za-z]{2}_\d+)$/.exec(asset);
           if (!match) continue;
           const file = `${match[1]}/${match[2].toLowerCase()}.mp3`;
-          const rel = `local/voices/${lang}/${file}`;
+          // Keep the official bank in download URLs; local paths must also pass the pre-cache's plain-path rules.
+          const rel = `local/voices/${lang}/${match[1].replaceAll('#', '/skin-')}/${match[2].toLowerCase()}.mp3`;
           jobs.push({ rel, urls: [joinUrl(RAW.aa2voice, `${VOICE_DIRS[lang]}/${file}`)], kind: 'mp3' });
           lines.push(rel);
         }
