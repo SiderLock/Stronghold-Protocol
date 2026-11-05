@@ -245,10 +245,13 @@ describe('server: automatic assignments never duplicate a teammate\'s strategy',
   test('a departing seat: the AI drafts a free strategy for it at its turn; mixed with bots nobody shares one', () => {
     const h = draftOf({ humans: 3, seed: 5 });
     const m = h.m;
-    const [first, second] = m.draft.order;
+    const [first, second, third] = m.draft.order;
     // with Touch taken the AI draws any strategy but 歌利亚 alike for the leaver (§37.65) and re-draws a taken one
     assert.deepEqual(m.handle(first, { t: 'g.band', bandId: 'band_amedic' }), { ok: true });
     m.onLeave(second);
+    h.sched.advance(1);
+    assert.equal(m.draftTurn(), third, 'D004 keeps the remaining manual teammate ahead of the departed AI seat');
+    assert.deepEqual(m.handle(third, { t: 'g.band', bandId: m.defaultBand(third) }), { ok: true });
     h.sched.advance(1);
     assert.ok(DATA.bands[m.draft.picks[second]], 'drafted at its turn');
     assert.notEqual(m.draft.picks[second], 'band_amedic', 'the leaver does not duplicate Touch');
