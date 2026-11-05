@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { gunzipSync, brotliDecompressSync } from 'node:zlib';
 import { createStaticHandler, DATA_SHIM_JS } from '../server/http/static.js';
 import { createRequestHandler } from '../server/http/routes.js';
-import { preferredEncoding } from '../server/http/files.js';
+import { CompressCache, preferredEncoding } from '../server/http/files.js';
 import { createAssetIndex } from '../server/http/assetIndex.js';
 import { createManifestViews } from '../server/http/assetViews.js';
 import { RuntimeCache } from '../server/http/runtimeCache.js';
@@ -235,9 +235,73 @@ test('twenty concurrent first-touch Brotli downloads share stable bytes and late
   assert.equal((await request(server, imports['/data/config.json'], { headers: { 'Accept-Encoding': 'br', 'If-None-Match': replies[0].headers.etag } })).status, 304);
 });
 
+test('compression admission bounds source reads before buffers are allocated', async (t) => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const cache = new CompressCache(128);
+  const reads = [];
+  const jobs = Array.from({ length: 6 }, (_, i) => cache.compressed(`read-${i}`, async () => {
+    reads.push(i);
+    await gate;
+    return Buffer.from(`body-${i}`.repeat(1000));
+  }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(reads, [0, 1], 'queued sources have not started reading');
+  release();
+  const encoded = await Promise.all(jobs);
+  for (let i = 0; i < encoded.length; i++) assert.equal(gunzipSync(encoded[i]).toString(), `body-${i}`.repeat(1000));
+  assert.equal(reads.length, 6);
+  assert.ok(cache.total <= 128, 'the existing encoded-byte LRU remains bounded');
+  assert.equal(cache.inflight.size, 0);
+});
+
+test('a failed source read releases its compression permit to queued work', async (t) => {
+  let fail, release;
+  const failedGate = new Promise(resolve => { fail = resolve; });
+  const heldGate = new Promise(resolve => { release = resolve; });
+  t.after(() => { fail(); release(); });
+  const cache = new CompressCache();
+  const failed = assert.rejects(cache.compressed('bad', async () => { await failedGate; throw new Error('unreadable source'); }), /unreadable source/);
+  const held = cache.compressed('held', async () => { await heldGate; return Buffer.from('held'); });
+  let started = false;
+  const queued = cache.compressed('queued', async () => { started = true; return Buffer.from('next'); });
+  assert.equal(started, false);
+  fail(); await failed;
+  assert.equal(gunzipSync(await queued).toString(), 'next');
+  assert.equal(started, true);
+  release(); assert.equal(gunzipSync(await held).toString(), 'held');
+  assert.equal(cache.inflight.size, 0);
+});
+
+test('large FX-sized text reuses encoded bodies while retaining validators, ranges and source bytes', async (t) => {
+  const { server, root } = await fixture(t);
+  const body = '// large static text\n'.repeat(450_000); // over 8 MiB, like the official FX index
+  await fs.writeFile(path.join(root, 'public/js/large.js'), body);
+  const reads = t.mock.method(fs, 'readFile', fs.readFile);
+  const responses = await Promise.all(Array.from({ length: 4 }, () => request(server, '/js/large.js', { headers: { 'Accept-Encoding': 'br' } })));
+  const first = responses[0];
+  assert.equal(first.headers['content-encoding'], 'br');
+  assert.equal(Number(first.headers['content-length']), first.body.length);
+  assert.equal(brotliDecompressSync(first.body).toString(), body);
+  for (const response of responses) assert.deepEqual(response.body, first.body);
+  assert.equal(reads.mock.calls.filter(call => call.arguments[0] === path.join(root, 'public/js/large.js')).length, 1, 'concurrent requests share one disk read and compression');
+  const warm = await request(server, '/js/large.js', { headers: { 'Accept-Encoding': 'br' } });
+  assert.deepEqual(warm.body, first.body);
+  assert.equal(reads.mock.calls.filter(call => call.arguments[0] === path.join(root, 'public/js/large.js')).length, 1, 'warm requests retain only the encoded result');
+  const cached = await request(server, '/js/large.js', { headers: { 'Accept-Encoding': 'br', 'If-None-Match': first.headers.etag } });
+  assert.equal(cached.status, 304);
+  const range = await request(server, '/js/large.js', { headers: { 'Accept-Encoding': 'br', Range: 'bytes=0-19' } });
+  assert.equal(range.status, 206); assert.equal(range.headers['content-encoding'], undefined);
+  assert.equal(range.body.toString(), body.slice(0, 20));
+  const gzip = await request(server, '/js/large.js', { headers: { 'Accept-Encoding': 'gzip' } });
+  assert.equal(gunzipSync(gzip.body).toString(), body);
+  assert.notEqual(gzip.headers.etag, first.headers.etag);
+});
+
 test('large text streams Brotli without a Content-Length and preserves the full source', async (t) => {
   const { server, root } = await fixture(t);
-  const body = '// large static text\n'.repeat(450_000); // exceeds the 8 MiB compressed-buffer path
+  const body = '// large static text\n'.repeat(900_000); // exceeds the 16 MiB compressed-buffer path
   await fs.writeFile(path.join(root, 'public/js/large.js'), body);
   const response = await request(server, '/js/large.js', { headers: { 'Accept-Encoding': 'br' } });
   assert.equal(response.status, 200); assert.equal(response.headers['content-encoding'], 'br');

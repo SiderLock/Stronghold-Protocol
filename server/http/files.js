@@ -64,7 +64,7 @@ export const COMPRESSIBLE = new Set([
 
 const TEXT_LIKE = new Set(['.html', '.htm', '.js', '.mjs', '.css', '.json', '.map', '.webmanifest', '.txt', '.md', '.csv', '.xml', '.atlas', '.svg']);
 const GZIP_MIN_BYTES = 512;
-const GZIP_CACHE_MAX_FILE = 8 << 20;      // larger files are compressed as streams
+const GZIP_CACHE_MAX_FILE = 16 << 20;     // [ASSUMED] includes the official FX index; larger files still stream
 const GZIP_CACHE_MAX_TOTAL = 96 << 20;
 // Plain files can change in place, so "long" is one day. Verified content-hash URLs receive
 // IMMUTABLE_CACHE through opts after assetIndex checks the current bytes.
@@ -93,10 +93,12 @@ function compressStream(encoding, ext, size) {
 // Bound HTTP compression independently of ws. Identical concurrent requests also share a cache promise.
 let compressionActive = 0;
 const compressionWaiters = [];
-export async function compressBytes(body, encoding, ext = '') {
+export async function compressBytes(bodyOrRead, encoding, ext = '') {
   if (compressionActive >= 2) await new Promise((resolve) => compressionWaiters.push(resolve));
   else compressionActive++;
   try {
+    // Disk reads wait for the same permit as compression, so queued requests do not retain raw file buffers.
+    const body = typeof bodyOrRead === 'function' ? await bodyOrRead() : bodyOrRead;
     return encoding === 'br' ? await brotliAsync(body, brotliParams(ext, body.length)) : await gzipAsync(body, { level: 6 });
   } finally {
     const next = compressionWaiters.shift();
@@ -133,7 +135,7 @@ export class CompressCache {
 
   /** Disk and in-memory variants share the same inflight and bounded LRU cache. */
   compressed(key, read, encoding = 'gzip', ext = '') {
-    return this.obtain(`${encoding}\0${key}`, async () => compressBytes(await read(), encoding, ext));
+    return this.obtain(`${encoding}\0${key}`, () => compressBytes(read, encoding, ext));
   }
 
   obtain(key, make) {
