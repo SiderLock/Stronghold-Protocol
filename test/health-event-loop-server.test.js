@@ -57,11 +57,13 @@ test('SP_LOOP_SAMPLE=0 switches the sampler off', async () => {
 test('the sampler reports a phase for the window it is asked about', async () => {
   const srv = await startServer({ port: 0, host: '127.0.0.1', quiet: true, loopSample: { windowMs: 5000 } });
   try {
-    srv.lobby.rooms.set('phase-test', { seats: [], spectators: [], match: { phase: 'BATTLE', _rehearsalTasks: new Map([['x', {}]]) } });
+    srv.lobby.rooms.set('phase-test', { seats: [], spectators: [], version: 'act2autochess', match: { phase: 'BATTLE', _rehearsalTasks: new Map([['x', {}]]) } });
     const record = srv.eventLoop.report();
     srv.lobby.rooms.delete('phase-test');
     assert.equal(record.phase, 'BATTLE');
     assert.equal(record.rehearsals, 1);
+    assert.equal(record.versions, 'act2autochess');
+    for (const key of ['workQueued', 'workPeakMs', 'workerQueued', 'workerRunning']) assert.equal(typeof record[key], 'number');
     assert.equal(typeof record.p95, 'number');
     assert.equal(typeof record.cpu, 'number');
     assert.equal(typeof record.mem, 'number');

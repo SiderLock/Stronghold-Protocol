@@ -23,14 +23,16 @@ export class MatchInfra {
   }
 
   /** Schedule a guarded callback (tracked for dispose). */
-  later(ms, fn) {
+  later(ms, fn, { work = null } = {}) {
     if (this.disposed) return null;
     let h = null;
     h = this.sched.setTimeout(() => {
       this._timers.delete(h);
       if (this.disposed) return;
       this.guard(fn);
-    }, ms);
+    }, ms, work && !this.test ? { work, onSlow: sample => this.log.warn?.('[work] slow slice', {
+      ...sample, room: this.roomCode, version: this.data.config?.version?.id ?? null, phase: this.phase, round: this.round,
+    }) } : null);
     if (h) this._timers.add(h);
     return h;
   }

@@ -761,6 +761,16 @@ export class Lobby {
 
   allowEmergencyResume(session) { return !!this.roomOf(session)?.match; }
 
+  /** Local slow-operation logs only: no names, addresses, session ids, tokens or request bodies. */
+  performanceContext(session) {
+    const room = session ? this.roomOf(session) : null;
+    const match = room?.match;
+    return { room: room?.code ?? null, version: room?.version ?? null, phase: match?.phase ?? null,
+      round: match?.round ?? null, hosted: !!match?.hosted, seats: room?.seats.length ?? 0,
+      bots: room?.seats.filter(s => s?.isBot).length ?? 0,
+      work: match?.sched?.source?.workQueue?.stats() ?? null, rehearsal: this.rehearsalPool?.stats() ?? null };
+  }
+
   /** Preserve the earliest AI seats and every human; remove only surplus trailing AI seats. */
   trimBots(room) {
     if (room.match || this.maxAiPerRoom === null) return;

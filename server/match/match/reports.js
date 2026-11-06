@@ -151,7 +151,7 @@ export class MatchReports {
         f.rearmDeadline = false;
       }
       const schedule = () => {
-        const timer = this.later(0, slice);
+        const timer = this.later(0, slice, { work: 'verify' });
         if (required) f.verifyTimer = timer;
       };
       const slice = () => {
@@ -187,7 +187,7 @@ export class MatchReports {
     let h = 0;
     for (let i = 0; i < f.battleId.length; i++) h = (h * 31 + f.battleId.charCodeAt(i)) >>> 0;
     // Sample jobs use only match-level timers: field completion must not cancel the diagnostic work.
-    if (h % 8 === 0) this.later(0, start);
+    if (h % 8 === 0) this.later(0, start, { work: 'verify' });
     accept(result);
   }
 }

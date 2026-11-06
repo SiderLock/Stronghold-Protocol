@@ -685,7 +685,7 @@ export class Network {
   /**
    * @param {{
    *   registry: SessionRegistry,
-   *   handler: { onHello?: Function, onMessage: Function, onDisconnect?: Function, onExpire?: Function, welcomeInfo?: Function },
+   *   handler: { onHello?: Function, onMessage: Function, onDisconnect?: Function, onExpire?: Function, welcomeInfo?: Function, performanceContext?: Function },
    *   log?: { info: Function, warn: Function, error: Function, debug?: Function },
    *   now?: () => number,
    *   options?: Partial<typeof NET_DEFAULTS>,
@@ -703,7 +703,9 @@ export class Network {
     this.connsPerKey = new Map();
     this.closed = false;
     this.emergency = { active: false, reason: null, since: 0, retryAt: 0 };
-    this.metrics = createConnectionMetrics();
+    this.metrics = createConnectionMetrics({ onSlow: (sample, session) => this.log.warn('[net] slow handler', {
+      ...sample, ...this.handler.performanceContext?.(session),
+    }) });
     this._lastDiagnosticLog = -Infinity;
     this.heartbeatTimer = setInterval(() => this.heartbeat(), this.opts.heartbeatMs);
     this.heartbeatTimer.unref?.();
@@ -868,7 +870,7 @@ export class Network {
       if ((d.loopMs >= 100 || d.handlerMs >= 100 || queuedBytes >= STATE_QUEUE_BYTES || sendMs >= 250)
           && now - this._lastDiagnosticLog >= 30000) {
         this._lastDiagnosticLog = now;
-        this.log.warn('[net] delivery delayed', this.diagnostics());
+        this.log.warn('[net] delivery delayed', { ...this.diagnostics(), context: this.handler.performanceContext?.(conn.session) ?? null });
       }
       if (validRid(rid)) pong.rid = rid;
       this.reply(conn, pong);
@@ -902,16 +904,17 @@ export class Network {
       this.log.error(`[net] handler crashed on ${msg.t}`, e);
       res = { error: ERR.INTERNAL };
     }
-    this.metrics.handler.add(performance.now() - handlingAt);
+    const syncMs = performance.now() - handlingAt;
+    this.metrics.recordHandler(msg.t, syncMs, syncMs, conn.session);
     if (res && typeof res.then === 'function') {
       // an answer that has to wait (DESIGN §32.6: a room whose match runs in a match host worker answers once the worker
       // has — server/lobby.js keeps each such room's messages in order): sent when it settles; a rejection is INTERNAL.
       // A vanilla room never answers this way, so its replies go out exactly as before
       Promise.resolve(res).then((r) => {
-        this.metrics.handler.add(performance.now() - handlingAt);
+        this.metrics.recordHandler(msg.t, syncMs, performance.now() - handlingAt, conn.session);
         this.answer(conn, msg, rid, r);
       }, (e) => {
-        this.metrics.handler.add(performance.now() - handlingAt);
+        this.metrics.recordHandler(msg.t, syncMs, performance.now() - handlingAt, conn.session);
         this.log.error(`[net] handler failed on ${msg.t}`, e);
         this.answer(conn, msg, rid, { error: ERR.INTERNAL });
       });

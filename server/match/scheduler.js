@@ -15,6 +15,10 @@
 // clearInterval(handle), dispose(). Flags: `virtual` (bool), `instant` (bool: battles run synchronously).
 // Callbacks are expected to guard themselves; the schedulers still catch and report (onError) so one faulty
 // callback never breaks the queue.
+// Real setTimeout also accepts { work: label, onSlow? }: computation shares one process-wide queue.
+// VirtualScheduler ignores this scheduling metadata, preserving replay/golden ordering and virtual epochs.
+
+import { processWorkQueue } from './workQueue.js';
 
 const MAX_DELAY = 2 ** 31 - 1;
 const clampDelay = (ms) => {
@@ -24,8 +28,8 @@ const clampDelay = (ms) => {
 };
 
 export class RealScheduler {
-  /** @param {{ now?: () => number, onError?: (e: unknown) => void }} [opts] */
-  constructor({ now = Date.now, onError = null } = {}) {
+  /** @param {{ now?: () => number, onError?: (e: unknown) => void, workQueue?: ReturnType<typeof import('./workQueue.js').createWorkQueue> }} [opts] */
+  constructor({ now = Date.now, onError = null, workQueue = processWorkQueue } = {}) {
     this.virtual = false;
     this.instant = false;
     this._now = typeof now === 'function' ? now : Date.now;
@@ -34,6 +38,8 @@ export class RealScheduler {
     this._timeouts = new Set();
     /** @type {Set<any>} */
     this._intervals = new Set();
+    this.workQueue = workQueue;
+    this._work = new Set();
     this.disposed = false;
   }
 
@@ -47,9 +53,22 @@ export class RealScheduler {
     };
   }
 
-  setTimeout(fn, ms) {
+  setTimeout(fn, ms, options = null) {
     if (this.disposed || typeof fn !== 'function') return null;
     const run = this._wrap(fn);
+    if (options?.work) {
+      const h = { timer: null, queued: null };
+      this._work.add(h);
+      const enqueue = () => {
+        h.timer = null;
+        if (this.disposed || !this._work.has(h)) return;
+        h.queued = this.workQueue.submit(() => { if (this._work.delete(h)) run(); }, options);
+      };
+      const delay = clampDelay(ms);
+      if (delay > 0) { h.timer = setTimeout(enqueue, delay); h.timer.unref?.(); }
+      else enqueue();
+      return h;
+    }
     const h = setTimeout(() => { this._timeouts.delete(h); run(); }, clampDelay(ms));
     h.unref?.();
     this._timeouts.add(h);
@@ -58,6 +77,11 @@ export class RealScheduler {
 
   clearTimeout(h) {
     if (!h) return;
+    if (this._work.delete(h)) {
+      if (h.timer) clearTimeout(h.timer);
+      this.workQueue.cancel(h.queued);
+      return;
+    }
     clearTimeout(h);
     this._timeouts.delete(h);
   }
@@ -78,6 +102,7 @@ export class RealScheduler {
 
   dispose() {
     this.disposed = true;
+    for (const h of this._work) this.clearTimeout(h);
     for (const h of this._timeouts) clearTimeout(h);
     for (const h of this._intervals) clearInterval(h);
     this._timeouts.clear();

@@ -282,7 +282,8 @@ export function timelineSample(b) {
 /**
  * A server-run battle stepped to its end, in one go or in wall-clock-bounded slices (a low-power host must not stall
  * its event loop for the ~0.1–1 s a whole battle takes, several times at once when bots fight): `run(budgetMs)` steps
- * until the battle ends (→ true) or the budget is used (→ false; checked every 16 ticks). `timeline` grows while it
+ * until the battle ends (→ true) or the budget is used (→ false; checked every 4 ticks, 16 for test journals).
+ * `timeline` grows while it
  * runs (timelineSample: [gt, killed, total, resolved(, left)] every TIMELINE_EVERY game seconds, then the final state);
  * `output()` once done gives `{ battle, result, timeline, crashed }`. A throwing battle is force-ended, then replaced by
  * a DeadBattle; the run is bounded by HARD_CAP_SECONDS.
@@ -305,6 +306,7 @@ export class HeadlessJob {
     if (this.done) return true;
     // `control` is a test-match slice (server/match/testTrace.js testSlice). Replay ignores the wall clock.
     const replaying = !!(control && control.replaying);
+    const checkMask = control ? 15 : 3; // Keep journal record/replay step boundaries compatible.
     const timed = !replaying && Number.isFinite(budgetMs);
     const t0 = timed ? now() : 0;
     let b = this.battle;
@@ -316,7 +318,7 @@ export class HeadlessJob {
         k++;
         if (control) control.note(1);
         if (this.n % this.every === 0) this.timeline.push(timelineSample(b));
-        if ((k & 15) === 0 && !b.finished && (replaying ? control.stop() : timed && now() - t0 >= budgetMs)) return false;
+        if ((k & checkMask) === 0 && !b.finished && (replaying ? control.stop() : timed && now() - t0 >= budgetMs)) return false;
       }
       if (!b.finished) b.forceEnd('timeout');
     } catch (e) {

@@ -61,6 +61,7 @@ import { createPluginPolicy } from './plugins/policy.js';
 import { createRoomSets } from './plugins/roomSets.js';
 import { createMatchHosts } from './match/host/index.js';
 import { createRehearsalPool } from './match/rehearsalPool.js';
+import { processWorkQueue } from './match/workQueue.js';
 import { createVersionSets } from './versions.js';
 import { versionById } from '../shared/versions.js';
 import { t } from '../shared/i18n.js';
@@ -200,13 +201,17 @@ export async function startServer(opts = {}) {
     counts: () => {
       const s = lobby.stats();
       const phases = new Set();
+      const activeVersions = new Set();
       let rehearsals = 0;
       for (const room of lobby.rooms.values()) {
         if (room.match?.phase) phases.add(room.match.phase);
+        if (room.match && room.version) activeVersions.add(room.version);
         rehearsals += room.match?._rehearsalTasks?.size || 0;
       }
+      const work = processWorkQueue.stats(), workers = rehearsalPool.stats();
       return { rooms: s.rooms, matches: s.matches, humans: s.humans, spectators: s.spectators,
-        phase: [...phases].sort().join('+') || 'idle', rehearsals };
+        phase: [...phases].sort().join('+') || 'idle', versions: [...activeVersions].sort().join('+') || 'none', rehearsals,
+        workQueued: work.queued, workPeakMs: Math.round(work.maxSliceMs), workerQueued: workers.queued, workerRunning: workers.running };
     },
   });
   const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, simDir, packsDir, pluginsDir, packs, content, runtimeCache: opts.runtimeCache, log, assetIndex, views, visual, contents, versions });

@@ -88,7 +88,7 @@ export class MatchPrep {
         return;
       }
       if (r.done) { then(r.value); return; }
-      this.later(0, () => { if (valid()) drive(gen, label, then); });
+      this.later(0, () => { if (valid()) drive(gen, label, then); }, { work: 'bot' });
     };
     const ready = () => {
       if (!ps.ready) {
@@ -105,7 +105,7 @@ export class MatchPrep {
     };
     /** The layout the finished job chose is applied in a callback of its own (bounded slices end one stage per call). */
     const finish = (job) => {
-      if (bounded) this.later(0, () => { if (valid()) end(job); });
+      if (bounded) this.later(0, () => { if (valid()) end(job); }, { work: 'bot' });
       else end(job);
     };
     /** The rehearsal's slices, once the job simulates locally (nobody answered, or the server took it over). */
@@ -124,12 +124,12 @@ export class MatchPrep {
               job.best = job.plans[index] || job.best;
               job.done = true;
               finish(job);
-            });
+            }, { work: 'bot' });
           }, (error) => {
             this._workerRehearsals.delete(task);
             if (!valid()) return;
             this.log.warn?.(`[match ${this.roomCode}] bot rehearsal fallback: ${error.message}`);
-            this.later(0, () => { if (valid()) runJob(job); });
+            this.later(0, () => { if (valid()) runJob(job); }, { work: 'bot' });
           });
           return;
         }
@@ -139,10 +139,10 @@ export class MatchPrep {
         let done = true;
         try { done = job.run(this.botSliceMs, sliceCtl); } catch (e) { this.reportError(`bot ${ps.playerId} rehearsal`, e); }
         if (done) finish(job);
-        else this.later(0, slice);
+        else this.later(0, slice, { work: 'bot' });
       };
       // bounded slices start in a callback of their own (the economy + default layout above already used this one)
-      if (bounded) this.later(0, slice);
+      if (bounded) this.later(0, slice, { work: 'bot' });
       else slice();
     };
     const begin = () => {
@@ -176,9 +176,9 @@ export class MatchPrep {
     this.later(this.scaled(DELAYS.BOT_ACTION + i * DELAYS.BOT_STAGGER), () => {
       if (!valid()) return;
       if (this.botFor(ps).decide?.(this, ps, { kind: 'prep', valid, complete: () => ps.ready,
-        fallback: () => this.later(0, begin) })) return;
+        fallback: () => this.later(0, begin, { work: 'bot' }) })) return;
       begin();
-    });
+    }, { work: 'bot' });
   }
 
   onReadyChanged(ps) {

@@ -20,11 +20,11 @@ export class FreezeScheduler {
   // Keep the emergency wrapper in that path: a frozen or disposed match must not advance callbacks.
   runNext() { return !this.disposed && !this.frozen && this.virtual ? this.source.runNext() : false; }
 
-  _create(fn, ms, every = 0) {
+  _create(fn, ms, every = 0, options = null) {
     if (this.disposed || typeof fn !== 'function') return null;
     const value = Number(ms);
     const delay = Number.isFinite(value) ? Math.min(2 ** 31 - 1, Math.max(0, value)) : 0;
-    const handle = { fn, every, remaining: delay, at: this.gameNow() + delay, source: null, cancelled: false };
+    const handle = { fn, every, options, remaining: delay, at: this.gameNow() + delay, source: null, cancelled: false };
     this.handles.add(handle);
     if (!this.frozen) this._arm(handle);
     return handle;
@@ -41,10 +41,10 @@ export class FreezeScheduler {
         this._arm(handle);
       } else this.handles.delete(handle);
       handle.fn();
-    }, handle.remaining);
+    }, handle.remaining, handle.options);
   }
 
-  setTimeout(fn, ms) { return this._create(fn, ms); }
+  setTimeout(fn, ms, options = null) { return this._create(fn, ms, 0, options); }
   setInterval(fn, ms) {
     const value = Number(ms);
     const every = Number.isFinite(value) ? Math.min(2 ** 31 - 1, Math.max(1, value)) : 1;

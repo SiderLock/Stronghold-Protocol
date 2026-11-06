@@ -272,6 +272,14 @@ candidate comparison and preparation continuation are preserved; the parent appl
 same prep job is still valid. Ending prep/disposal cancels queued/running work. Worker failure resumes the original
 sliced job. Previews omit unused render events, and early-stop comparisons read live leak counters rather than
 building provisional full reports. Virtual/test/plugin matches retain the original path.
+Under client-side combat, normal/unite fields with no human authority (including disconnect takeovers and oversized-result replays) reuse this
+same bounded child pool; returned timelines/results are released on the original field clock. Boss/hidden fields keep
+their live shared credit pool. Real Bot prep, local headless construction/simulation, verification and result-application
+callbacks share a process-wide cooperative queue (`workQueue.js`), including inside version/plugin match hosts.
+The default 8 ms budget is per drain, not per seat; a single step can overrun it. `FreezeScheduler` holds/cancels queued
+work with its existing stable timer handles; ordinary deadlines/network timers bypass the computation queue.
+Virtual scheduler ordering and test journals retain their original path/boundaries. Budget and measurement scope:
+[server performance](development/SERVER_PERFORMANCE.md#多-ai-计算调度与隔离2026-11-06).
 The synchronous prep orchestrator lives in `server/match/botPrep.js`. `bot.js` binds its existing actions through
 `createBotPrepSteps(actions)`; trusted strategies can override an operation while keeping reward, economy,
 placement and cleanup sequencing. Overrides are synchronous functions or synchronous iterators according to the

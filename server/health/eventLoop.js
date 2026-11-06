@@ -91,7 +91,9 @@ export function createEventLoopSampler({ log = console, windowMs, keep = LOOP_LO
     log.info?.(`[loop] p50=${record.p50}ms p95=${record.p95}ms p99=${record.p99}ms max=${record.max}ms ` +
       `samples=${record.samples} cpu=${record.cpu}% mem=${record.mem}MB ` +
       `rooms=${record.rooms ?? 0} matches=${record.matches ?? 0} humans=${record.humans ?? 0} ` +
-      `spectators=${record.spectators ?? 0} phase=${record.phase ?? 'idle'} rehearsals=${record.rehearsals ?? 0}`);
+      `spectators=${record.spectators ?? 0} phase=${record.phase ?? 'idle'} rehearsals=${record.rehearsals ?? 0} ` +
+      `versions=${record.versions ?? 'none'} workQueued=${record.workQueued ?? 0} workPeakEver=${record.workPeakMs ?? 0}ms ` +
+      `workerQueued=${record.workerQueued ?? 0} workerRunning=${record.workerRunning ?? 0}`);
     return record;
   }
 

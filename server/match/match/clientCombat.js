@@ -176,9 +176,9 @@ export class MatchClientCombat {
     // the former authority (still online after a timeout / an invalid result) stops reporting and keeps its view
     if (prev) this.sendTo(prev, { t: 'b.end', battleId: f.battleId, fieldId: f.fieldId, reason: 'takeover' });
     if (f.kind === 'boss' || f.kind === 'hidden') { this._bossServerRun(f); return; }
-    // A large real result deliberately yields instead of truncating leaks / overflowing the wire.
-    // Replaying the entire battle at its end must not compete with pings and next-round prep on the main loop.
-    if (reason === 'oversized-result' && this.rehearsalPool && !f.workerTried) {
+    // Ordinary AI / takeover fields use the same bounded process pool as oversized-result replays.
+    // Bosses retain their live shared credit pool above; a refusal/failure keeps the original sliced fallback.
+    if (this.rehearsalPool && !f.workerTried) {
       f.workerTried = true;
       const task = this.rehearsalPool.submit({ kind: 'headless', spec: f.spec });
       if (task) {
@@ -196,18 +196,29 @@ export class MatchClientCombat {
             f.timeline = output.timeline;
             f.endGt = output.time;
             this._armRelease(f);
-          });
+            this._armProgressTicker();
+          }, { work: 'battle-result' });
         }, error => {
           if (!valid()) return;
           f.workerTask = null;
           this.log.warn?.(`[match ${this.roomCode}] battle replay fallback: ${error.message}`);
           this.later(0, () => {
             if (!this.disposed && !this.ended && !f.done && this.fields.includes(f)) this._runOnServer(f, 'worker-fallback');
-          });
+          }, { work: 'battle' });
         });
         return;
       }
     }
+    if (!this.sched.virtual && Number.isFinite(this.headlessSliceMs)) {
+      // Building many fields in _launch is also computation: stagger construction through the shared queue.
+      f.sliceTimer = this.later(0, () => {
+        f.sliceTimer = null;
+        if (!this.disposed && !this.ended && !f.done && this.fields.includes(f)) this._startHeadless(f);
+      }, { work: 'battle-build' });
+    } else this._startHeadless(f);
+  }
+
+  _startHeadless(f) {
     const job = new HeadlessJob(this._specBattle(f.spec), { onError: (e) => this.reportError(`field ${f.fieldId} step`, e), players: f.players });
     f.job = job;
     f.battle = job.battle;
@@ -235,9 +246,9 @@ export class MatchClientCombat {
         f.sliceTimer = null;
         if (f.job !== job || f.done) return;
         if (job.run(this.headlessSliceMs, undefined, sliceCtl)) complete();
-        else f.sliceTimer = this.later(0, slice);
+        else f.sliceTimer = this.later(0, slice, { work: 'battle' });
       };
-      f.sliceTimer = this.later(0, slice);
+      f.sliceTimer = this.later(0, slice, { work: 'battle' });
     }
     this._armProgressTicker();
   }
