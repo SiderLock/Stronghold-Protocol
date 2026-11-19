@@ -6,16 +6,18 @@
 import { PHASE, layerGainRoom } from '../../../shared/constants.js';
 import { uniteSurvivors, plannedUniteSurvivors } from '../unite.js';
 import { buildResult } from '../results.js';
-import { FLOW_TICKER_PRIORITY, DELAYS } from './common.js';
+import { FLOW_TICKER_PRIORITY, DELAYS, applyTempLayers } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 import { onSettle, resetRoundCounters } from '../botEmotes.js';
 import { creditedKillsOf } from '../../sim/spec.js';
 
 export class MatchSettle {
-  settle(plan, uniteResult) {
+  settle(rawPlan, uniteResult) {
     this.phase = PHASE.SETTLE;
     this.runner = null;
     this._stopClientCombat();
+    // A plan from a resume / a direct caller may predate the multi-wave fields (history / usedHelpers): default them.
+    const plan = rawPlan ? { history: [], usedHelpers: [], notReentered: new Map(), ...rawPlan } : null;
     // the pending in-battle gains the views showed become persistent below (alive players) or lapse (DESIGN §20.15)
     for (const ps of this.order) if (ps.pendingLayerGains) { ps.pendingLayerGains = null; ps.dirty(); }
     const cap = this.gd.lpCapPerRound;
@@ -48,6 +50,10 @@ export class MatchSettle {
       ps.stats.dmgDealt += Number(r.damageDealt) || 0;
       ps.stats.healing += Number(r.healingDone) || 0;
       if (r.perfect !== false && counted === 0) ps.stats.perfectRounds++;
+      // 完美连胜 (§37.148): a round that cost no LP (the official 完美作战: AUTOCHESS_REST_NO_HP_LOSS) adds to the streak.
+      // A leaker whose counted leaks a teammate's 联防 stopped (loss 0) still ends it: its own battle let enemies through
+      // (the owner, 2026-11-14 「自己漏了但是队友成功联防漏怪的人的完美连胜也该中断」, §37.201)
+      ps.stats.perfectStreak = loss > 0 || counted > 0 ? 0 : (ps.stats.perfectStreak || 0) + 1;
       // bounty coins (own battle + unite kills) are credited to the next prep
       let coins = Math.max(0, Math.trunc(Number(r.coins) || 0));
       let uniteCreditedKills = 0;
@@ -74,6 +80,8 @@ export class MatchSettle {
         this.dispatch(ps, 'onLayers', { bondId, from: before, to: ps.layers[bondId], reason: 'battle' });
       }
       this._charDamageTickers(ps, r);
+      // Preserve the own-battle pool through SETTLE. Conversion runs when the next prep actually opens.
+      applyTempLayers(this.gd, ps, r);
       this.dispatch(ps, 'onBattleResult', { result: r, lpLoss: loss, perfect: counted === 0 && r.perfect !== false, unite: uniteResult || null, uniteResults });
       ps.recompute();
     }

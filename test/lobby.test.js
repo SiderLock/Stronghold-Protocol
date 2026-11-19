@@ -20,7 +20,7 @@ import { StubMatch as Match } from '../server/match/StubMatch.js';
 import { Match as RealMatch } from '../server/match/Match.js';
 import { TestClient } from './helpers/wsClient.js';
 import { ERR, BASE_SEATS, MAX_SEATS, MAX_SPECTATORS, PHASE, EMOTES } from '../shared/constants.js';
-import { DEFAULT_VERSION, VERSIONS } from '../shared/versions.js';
+import { DEFAULT_VERSION, LOBBY_DEFAULT_VERSION, VERSIONS } from '../shared/versions.js';
 
 const CODE_RE = new RegExp(`^[${CODE_ALPHABET}]{4}$`);
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -110,8 +110,9 @@ describe('static http server', () => {
   const js = `// app\n${'export const x = 1;\n'.repeat(200)}`;
   const mp3 = randomBytes(5000);
   const skel = Buffer.from('skel'.repeat(400));
-  // over the 8 MB compression cache limit: compressed as a stream
-  const big = `// big\n${Array.from({ length: 360000 }, (_, i) => `export const v${i} = ${i % 97};`).join('\n')}\n`;
+  // over the 16 MB compression cache limit (server/http/files.js GZIP_CACHE_MAX_FILE, raised for the official FX
+  // index): compressed as a stream
+  const big = `// big\n${Array.from({ length: 700000 }, (_, i) => `export const v${i} = ${i % 97};`).join('\n')}\n`;
 
   before(async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sp-static-'));
@@ -799,7 +800,8 @@ describe('websocket lobby', () => {
     assert.ok(!v1.seats.some((x) => x && x.playerId === s1.id), 'never in a player seat');
     await host.waitFor('room.state', (s) => s.spectators.length === 1);
     await expectOk(s1, { t: 'room.spectate', code: st.code }); // idempotent
-    await expectError(guest, { t: 'room.spectate', code: st.code }, ERR.ALREADY); // a player never switches in place
+    await expectOk(guest, { t: 'room.spectate', code: st.code });
+    await expectOk(guest, { t: 'room.join', code: st.code }); // players may switch roles before the match
     // a spectator may not act
     await expectError(s1, { t: 'room.ready', ready: true }, ERR.SPECTATOR);
     for (const msg of [{ t: 'room.start' }, { t: 'room.addBot' }, { t: 'room.setDifficulty', difficulty: 'HARD' }, { t: 'room.removeSpectator', playerId: s1.id }]) {
@@ -1290,7 +1292,7 @@ describe('websocket lobby', () => {
     assert.ok(h.sockets >= 1);
     assert.ok(h.sessions >= 1);
     assert.deepEqual(h.versions.enabled, VERSIONS.map((v) => v.id), 'nothing set enables every version (DESIGN §35.23.11)');
-    assert.equal(h.versions.default, DEFAULT_VERSION);
+    assert.equal(h.versions.default, LOBBY_DEFAULT_VERSION, 'nothing set preselects 规程·序列Ⅰ');
     assert.equal(h.versions.hosts.workers, 0, 'an idle server has forked no version match host');
     assert.equal(h.versions.hosts.matches, 0);
     assert.equal(srv.versionHosts.stats().workers, 0);

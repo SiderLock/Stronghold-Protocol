@@ -67,6 +67,23 @@ test('disabled pools and queue shutdown leave no pending work', async () => {
   assert.equal(pool.stats().workers, 0);
 });
 
+test('batch cancellation does not start replacement children before the remaining fields can be cancelled', async () => {
+  const pool = createRehearsalPool({ data, workers: 1 });
+  const tasks = Array.from({ length: 3 }, () => pool.submit(payload));
+  const rejected = tasks.map(task => assert.rejects(task.promise));
+  try {
+    for (let i = 0; i < 500 && !pool.stats().running; i++) await pause(5);
+    assert.equal(pool.stats().running, 1);
+    tasks[0].cancel();
+    assert.equal(pool.stats().workers, 0, 'replacement waits until this cancellation stack ends');
+    tasks[1].cancel(); tasks[2].cancel();
+    await Promise.all(rejected);
+    await pause(5);
+    assert.equal(pool.stats().workers, 0);
+    assert.equal(pool.stats().queued, 0);
+  } finally { pool.close(); }
+});
+
 test('eight manual humans plus twelve AI seats finish worker-backed prep and leave humans in control', async () => {
   const h = makeMatch({ humans: 8, bots: 12, botRehearsal: 3, seed: 4 }).start().toPrep();
   const m = h.m;
@@ -173,6 +190,125 @@ test('an oversized 600-enemy result replays in the child with full losses and th
     assert.equal(field.endGt, expected.battle.time);
     assert.equal(m.errorCount, 0);
   } finally { m.dispose(); pool.close(); }
+});
+
+test('six manual humans and fourteen AI fields use the shared child without building battles on the network thread', async () => {
+  const h = makeMatch({ humans: 6, bots: 14, clientCombat: true, clients: false, instant: false });
+  const m = h.m, pool = createRehearsalPool({ data: m.data, workers: 1 });
+  m.rehearsalPool = pool;
+  let parentBuilds = 0;
+  m._specBattle = () => { parentBuilds++; throw new Error('ordinary AI fields must use the child'); };
+  try {
+    h.start();
+    assert.ok(h.drive(() => m.phase === 'COMBAT'));
+    const bots = m.fields.filter(f => f.mode === 'server'), humans = m.fields.filter(f => f.mode === 'client');
+    assert.equal(bots.length, 14);
+    assert.equal(humans.length, 6);
+    const expected = bots.map(f => runHeadless(createBattleFromSpec(f.spec, m.ds, { recordEvents: false }), { players: f.players }));
+    for (let i = 0; i < 2000 && bots.some(f => !f.result); i++) { await pause(5); h.sched.advance(0); }
+    assert.ok(bots.every(f => f.result && !f.done), 'results are held for their natural field-clock release');
+    assert.ok(humans.every(f => f.mode === 'client' && f.authority && !f.result), 'manual humans retain authority');
+    assert.equal(parentBuilds, 0);
+    for (let i = 0; i < bots.length; i++) {
+      assert.equal(resultDigest(bots[i].result).hash, resultDigest(expected[i].result).hash);
+      assert.deepEqual(bots[i].timeline, expected[i].timeline);
+      assert.equal(bots[i].endGt, expected[i].battle.time);
+    }
+    const end = Math.max(...bots.map(f => f.startAt + Math.round(f.endGt * 1000 / m.gameSpeed)));
+    h.sched.advance(end - h.sched.now());
+    assert.ok(bots.every(f => f.done), 'the result is released at the original natural time');
+    assert.equal(m.phase, 'COMBAT', 'the server does not auto-complete the humans');
+    assert.equal(m.errorCount, 0);
+  } finally { m.dispose(); pool.close(); }
+});
+
+test('a no-human co-op unite field uses the child and preserves its full timeline and settlement', async () => {
+  const h = makeMatch({ humans: 1, clientCombat: true, clients: false });
+  const m = h.m, pool = createRehearsalPool({ data: m.data, workers: 1 });
+  const unite = JSON.parse(readFileSync(new URL('../../public/dev/perf/hard-unite-r13.json', import.meta.url))).spec;
+  const f = m._ccField({ fieldId: 'u', kind: 'unite', players: unite.players.map(p => p.playerId), opts: unite });
+  const expected = runHeadless(createBattleFromSpec(f.spec, m.ds, { recordEvents: false }), { players: f.players });
+  m.fields = [f]; m.rehearsalPool = pool;
+  let released = 0;
+  m._armRelease = () => { released++; };
+  m._specBattle = () => { throw new Error('unite must use the child'); };
+  try {
+    m._runOnServer(f, 'no-human');
+    for (let i = 0; i < 2000 && !released; i++) { await pause(5); h.sched.advance(0); }
+    assert.equal(released, 1);
+    assert.equal(f.battle, null);
+    assert.equal(resultDigest(f.result).hash, resultDigest(expected.result).hash);
+    assert.deepEqual(f.timeline, expected.timeline);
+    assert.equal(f.endGt, expected.battle.time);
+    assert.equal(m.errorCount, 0);
+  } finally { m.dispose(); pool.close(); }
+});
+
+for (const refusal of ['full', 'failure']) {
+  test(`an ordinary field falls back once when its child pool reports ${refusal}`, async () => {
+    const h = makeMatch({ humans: 1, clientCombat: true, clients: false, headlessSliceMs: 0.00001 }).start();
+    const m = h.m;
+    h.drive(() => m.phase === 'COMBAT');
+    const f = m.fields[0], expected = runHeadless(createBattleFromSpec(f.spec, m.ds, { recordEvents: false }), { players: f.players });
+    let submits = 0, released = 0;
+    m.rehearsalPool = { submit() { submits++; return refusal === 'full' ? null : {
+      promise: Promise.reject(new Error('test pool failure')), cancel() {},
+    }; } };
+    m._armRelease = () => { released++; };
+    try {
+      m._runOnServer(f, 'no-human');
+      for (let i = 0; i < 200 && !released; i++) { await pause(1); h.sched.advance(0); }
+      assert.equal(submits, 1);
+      assert.equal(released, 1);
+      assert.equal(resultDigest(f.result).hash, resultDigest(expected.result).hash);
+      assert.equal(m.errorCount, 0);
+    } finally { m.dispose(); }
+  });
+}
+
+test('a normal-field child answer stays held while frozen and cannot apply after field cancellation', async () => {
+  const h = makeMatch({ humans: 1, clientCombat: true, clients: false }).start();
+  const m = h.m;
+  h.drive(() => m.phase === 'COMBAT');
+  const f = m.fields[0];
+  let answer, cancelled = 0;
+  m.rehearsalPool = { submit() { return { promise: new Promise(resolve => { answer = resolve; }), cancel() { cancelled++; } }; } };
+  try {
+    m._runOnServer(f, 'no-human');
+    m.sched.freeze();
+    answer({ result: { perPlayer: {} }, timeline: [], time: 1, errors: [], failures: [] });
+    await pause(1); h.sched.advance(0);
+    assert.equal(f.result, null);
+    m._clearFieldTimers(f);
+    m.sched.resume(); h.sched.advance(0);
+    assert.equal(cancelled, 1);
+    assert.equal(f.result, null, 'cancelled output cannot be applied on resume');
+  } finally { m.dispose(); }
+});
+
+test('a frozen normal-field child answer applies exactly once after resume', async () => {
+  const h = makeMatch({ humans: 1, clientCombat: true, clients: false }).start();
+  const m = h.m;
+  h.drive(() => m.phase === 'COMBAT');
+  const f = m.fields[0];
+  let answer, released = 0;
+  const output = { result: { perPlayer: {} }, timeline: [[0, 0, 0, 0]], time: 1, errors: [], failures: [] };
+  m.rehearsalPool = { submit() { return { promise: new Promise(resolve => { answer = resolve; }), cancel() {} }; } };
+  m._armRelease = () => { released++; };
+  try {
+    m._runOnServer(f, 'no-human');
+    m.sched.freeze();
+    answer(output);
+    await pause(1); h.sched.advance(0);
+    assert.equal(f.result, null);
+    assert.equal(released, 0);
+    m.sched.resume(); h.sched.advance(0);
+    assert.equal(f.result, output.result);
+    assert.equal(f.workerTask, null);
+    assert.equal(released, 1);
+    h.sched.advance(0);
+    assert.equal(released, 1);
+  } finally { m.dispose(); }
 });
 
 test('clearing a field cancels its replay and refuses late worker output', async () => {

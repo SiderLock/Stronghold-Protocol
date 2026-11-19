@@ -50,7 +50,7 @@ export function hudPadding(kind, size) {
 
 /**
  * HUD geometry (rem) the prep cameras keep clear (they mirror the CSS; test/ui/playtest5-ui.test.js checks the rules):
- * the bond scroller's bottom edge (css/screens/game.css .gm__bonds top 1.36rem + a .bslot's disc and name ≈
+ * the bond scroller's bottom edge (css/screens/game.css .gm__bonds top 1rem + .18rem stage padding + a .bslot's disc and name ≈
  * .8rem, or its 44 px arrow height, whichever is taller; negative margins offset the clip padding) and the shop bar's top edge
  * above the viewport's bottom (css/screens/game-shop.css .shopbar
  * bottom .2rem + .shopbar__row padding .1rem ×2 + card height 2.24rem, plus its 2 px + 1 px borders). The shop bar
@@ -62,7 +62,7 @@ export function hudPadding(kind, size) {
  * css/devices.css).
  */
 export const HUD_REM = Object.freeze({
-  bondStripTop: 1.36, bondStripBottom: 2.16, bondArrowPx: 44,
+  bondStripTop: 1, bondStripBottom: 1.98, bondArrowPx: 44,
   shopCardHeight: 2.24, shopBarTop: 2.64, shopBarBorderPx: 3, shopTabTop: 0.8, shopTabBorderPx: 3, cornerTop: 0.8,
 });
 
@@ -88,7 +88,7 @@ export const HUD_REM = Object.freeze({
  * responsive CSS, even before those controls mount or when the shop is absent.
  * @param {string} kind
  * @param {{ width: number, height: number }} size
- * @param {{ shop?: boolean }} [opts] `shop: false` = the folded shop's band
+ * @param {{ shop?: boolean|'partial' }} [opts] `shop: false` = the folded shop's band
  * On 4:3 and similarly tall landscape screens the long team panel can also cover the first bench tile. Reserve its
  * maximum width for every match, so the camera does not jump when player names or the number of visible rows change.
  * @returns {{ top: number, bottom: number, left?: number }|null}
@@ -96,6 +96,7 @@ export const HUD_REM = Object.freeze({
 export function hudBands(kind, size, opts) {
   if (kind !== 'prep' && kind !== 'bossPrep') return null;
   const folded = !!opts && opts.shop === false;
+  const partial = opts?.shop === 'partial';
   const h = size?.height || 1080;
   let rem = 100;
   let safeTop = 0;
@@ -131,7 +132,7 @@ export function hudBands(kind, size, opts) {
     // Keep the same minimum band before mount and while collapsed, so toggling cannot shrink it.
     const bonds = document.querySelector('.gm__bonds')?.getBoundingClientRect();
     if (bonds?.height > 0) bondsBottom = Math.max(0, bonds.bottom - oy);
-    if (folded) {
+    if (folded || partial) {
       if (hud && hud.bottom - oy > 0) safeBottom = Math.max(0, h - (hud.bottom - oy));
     }
     // Always measure the corner (交流 / ⚙ / 📖 / ⛶ / chat): with the shop open a taller chat corner can still
@@ -140,7 +141,11 @@ export function hudBands(kind, size, opts) {
   } catch { /* ignore */ }
   const bottom = folded
     ? Math.max(safeBottom + rem * HUD_REM.shopTabTop + HUD_REM.shopTabBorderPx, corner || safeBottom + rem * HUD_REM.cornerTop)
-    : Math.max(rem * (HUD_REM.shopBarTop - HUD_REM.shopCardHeight + shopCardHeight) + HUD_REM.shopBarBorderPx, corner);
+    : partial
+      // [ASSUMED] #692: CSS scales the whole bar to 70% around its bottom-right anchor (.2rem above the bottom).
+      ? Math.max(safeBottom + rem * 0.2 + (rem * (HUD_REM.shopBarTop - 0.2) + HUD_REM.shopBarBorderPx) * 0.7,
+        corner || safeBottom + rem * HUD_REM.cornerTop)
+      : Math.max(rem * (HUD_REM.shopBarTop - HUD_REM.shopCardHeight + shopCardHeight) + HUD_REM.shopBarBorderPx, corner);
   return {
     top: Math.min(h * 0.4, Math.max(bondsBottom, safeTop + Math.max(rem * (bondTop + HUD_REM.bondStripBottom - HUD_REM.bondStripTop),
       rem * bondTop + HUD_REM.bondArrowPx))),

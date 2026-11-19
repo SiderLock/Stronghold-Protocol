@@ -13,8 +13,9 @@ import { FrameData, cameraBasis } from '../../public/js/render/vfx/geom.js';
 import { resolveOfficialFx } from '../../public/js/render/vfx/tier.js';
 import { FxWiring } from '../../public/js/render/vfx/wiring.js';
 import { listHasEffects } from '../../public/js/render/vfx/available.js';
-import { OfficialFx, LOOP_TTL } from '../../public/js/render/vfx/system.js';
-import { quatRotate } from '../../public/js/render/vfx/math.js';
+import { OfficialFx, LOOP_TTL, MAX_EFFECTS, MAX_PARTICLES } from '../../public/js/render/vfx/system.js';
+import { quatEuler, quatRotate } from '../../public/js/render/vfx/math.js';
+import { presetCamera } from '../../public/js/render/projection.js';
 
 const MAT = {
   name: 'm', shader: 'Torappu/Particles/Additive', passes: [{ blend: ['SrcAlpha', 'One', 'Zero', 'OneMinusSrcAlpha'], blendOp: 'Add', zTest: 'Disabled', zWrite: false, cull: 'Off', colorMask: 15 }],
@@ -42,6 +43,43 @@ const pe = (fields) => ({ class: 'ParticleEffect', enabled: true, fields: { _del
 function runUntil(fx, seconds, dt = 1 / 30) { for (let t = 0; t < seconds && !fx.done; t += dt) fx.update(dt); return fx; }
 
 describe('effect lifecycle', () => {
+  test('MapEffect keeps static meshes after a finite disabled particle system ends, without restarting particles', () => {
+    const ps = psNode(1, 0, { len: 2 });
+    ps.particleSystemRenderer.m_Enabled = false;
+    const mesh = { id: 2, name: 'red-light', parent: 1, children: [], active: true,
+      meshFilter: 'builtin:Quad', meshRenderer: { m_Enabled: true, materials: [0] } };
+    const descriptor = desc([root([{ class: 'MapEffect', enabled: true, fields: {} }]), ps, mesh]);
+    for (const lite of [false, true]) {
+      const def = compileEffect(descriptor);
+      const fx = new Effect(def, { seed: 97, lite, lib: new FxLibrary() });
+      runUntil(fx, 60);
+      assert.equal(def.loops, true, 'map-owned instances are not expendable one-shots');
+      assert.equal(fx.state, 'play');
+      assert.equal(fx.sys[1].count, 0);
+      assert.equal(fx.sys[1].alive, false, 'finite particles stop normally');
+      assert.ok(fx.ctime >= 59, 'the scrolling material clock never restarts');
+      const items = [];
+      fx.gather({ pos: [0, 0, -5] }, item => items.push(item));
+      assert.equal(items.length, 1, 'the static red-light mesh still draws');
+      fx.stop(); runUntil(fx, 1);
+      assert.equal(fx.done, true, 'explicit stop still releases the map effect');
+      fx.reset(97); runUntil(fx, 5);
+      assert.equal(fx.done, false, 'pool reuse preserves map ownership');
+      fx.kill(); assert.equal(fx.done, true);
+    }
+  });
+
+  test('disabled MapEffect and finite ordinary effects retain their normal completion', () => {
+    for (const behaviours of [[], [{ class: 'MapEffect', enabled: false, fields: {} }], [pe({})]]) {
+      const fx = new Effect(compileEffect(desc([root(behaviours), psNode(1, 0, { len: 2 })])));
+      runUntil(fx, 5);
+      assert.equal(fx.done, true);
+    }
+    const fx = new Effect(compileEffect(desc([root([{ class: 'MapEffect', enabled: true, fields: { _delayToFinish: 0.4 } }])])));
+    fx.update(0.1); fx.stop(); runUntil(fx, 2);
+    assert.equal(fx.done, true, 'authored finish delay remains bounded');
+  });
+
   test('a one-shot finishes when its particles are gone, then lingers `_delayToFinish`', () => {
     const fx = new Effect(compileEffect(desc([root([pe({ _delayToFinish: 0.4 })]), psNode(1, 0)])), { seed: 1 });
     fx.update(1 / 30);
@@ -198,6 +236,49 @@ describe('placement and direction', () => {
 });
 
 describe('materials', () => {
+  test('equivalent draw state has one batch key while material labels and records stay distinct', () => {
+    const source = { ...MAT, floats: { _MainTexChannel: 0, _Opacity: 0.5 },
+      textures: { ...MAT.textures, _Mask: { default: 'white', st: [1, 1, 0, 0] } } };
+    const a = compileMaterial(source);
+    const b = compileMaterial({ ...source, name: 'another label',
+      floats: { _Opacity: 0.5, _MainTexChannel: 0 },
+      textures: Object.fromEntries(Object.entries(source.textures).reverse()) });
+    assert.equal(a.batchKey, b.batchKey);
+    assert.notEqual(a, b);
+    assert.equal(a.name, 'm');
+    assert.equal(b.name, 'another label');
+  });
+
+  test('batch keys distinguish uniforms, signed zero, textures, shader variants and every pass state', () => {
+    const key = compileMaterial(MAT).batchKey;
+    const changes = [
+      m => { m.floats._MainTexChannel = 1; },
+      m => { m.floats._MainTexChannel = -0; },
+      m => { m.colors._TintColor[0] = 0.5; },
+      m => { m.textures._MainTex.tex = 'other'; },
+      m => { m.textures._MainTex.st[0] = 2; },
+      m => { m.textures._MainTex.default = 'black'; },
+      m => { m.keywords = ['_HGCUSTOMVERTEXSTREAM_ON']; },
+      m => { m.keywords = ['_WEIGHT_ON']; },
+      m => { m.passes[0].blend[0] = 'One'; },
+      m => { m.passes[0].blend[1] = 'Zero'; },
+      m => { m.passes[0].blend[2] = 'One'; },
+      m => { m.passes[0].blend[3] = 'One'; },
+      m => { m.passes[0].blendOp = 'Sub'; },
+      m => { m.passes[0].zTest = 'Less'; },
+      m => { m.passes[0].zWrite = true; },
+      m => { m.passes[0].cull = 'Back'; },
+      m => { m.passes[0].colorMask = 7; },
+    ];
+    for (const change of changes) {
+      const material = structuredClone(MAT);
+      change(material);
+      assert.notEqual(compileMaterial(material).batchKey, key, String(change));
+    }
+    assert.notEqual(compileMaterial(MAT, { lite: true }).batchKey, key);
+    assert.equal(compileMaterial({ ...MAT, queue: NaN }).batchKey, key, 'queue is ordering metadata');
+  });
+
   test('families by shader name; an unknown shader falls back and is logged', () => {
     assert.equal(familyOf('Torappu/Particles/Ram/Disturb(CustomData)').family, 'ramDisturbCd');
     assert.equal(familyOf('Torappu/Particles/Dissolve/Dissolve AB UVTween').family, 'dissolveTween');
@@ -222,6 +303,63 @@ describe('materials', () => {
     assert.equal(lite.family, 'basic');
     assert.ok(compileMaterial({ ...MAT, shader: 'Torappu/Particles/Disturb/Disturb Origin' }, { lite: true }).defs.lite);
   });
+});
+
+test('official FX batches adjacent equivalent materials and preserves order, pass and override boundaries', () => {
+  const mat = () => compileMaterial(MAT);
+  function prepare(rows) {
+    const renderer = { screen: { width: 960, height: 540 } };
+    const cam = presetCamera('normal', renderer.screen);
+    const ofx = new OfficialFx({ P: { Container: class {} }, renderer, cam: () => cam, lib: { available: true }, tier: 'full' });
+    ofx.glr = { upload() {} };
+    ofx.effects = rows.map(row => ({
+      gather(_cam, sink) { sink({ mat: row.mat, ov: row.ov || null, ground: !!row.ground,
+        layer: 0, order: 0, queue: row.mat.queue ?? 3000, dist: 0, meshKey: null, submesh: 0, effect: this }); },
+      build(_entry, _cam, fd) { return { kind: 'quad', first: fd.quads(1), count: 1 }; },
+    }));
+    ofx._prepare(renderer);
+    return ofx.items;
+  }
+  const a = mat(), b = mat();
+  assert.deepEqual(prepare([{ mat: a }, { mat: b }]).over.map(item => item.count), [2]);
+  const other = compileMaterial({ ...MAT, floats: { _MainTexChannel: 1 } });
+  assert.deepEqual(prepare([{ mat: a }, { mat: other }, { mat: b }]).over.map(item => item.mat), [a, other, b]);
+  assert.equal(prepare([{ mat: a, ov: { _Opacity: 0.5 } }, { mat: b }]).over.length, 2);
+  const split = prepare([{ mat: a, ground: true }, { mat: b }]);
+  assert.equal(split.ground.length, 1);
+  assert.equal(split.over.length, 1);
+  const earlier = compileMaterial({ ...MAT, queue: 2900 });
+  const ordered = prepare([{ mat: a }, { mat: earlier }]).over;
+  assert.equal(ordered.length, 1);
+  assert.equal(ordered[0].mat, earlier, 'queue sorting precedes adjacent batching');
+  assert.equal(ordered[0].count, 2);
+  assert.equal(prepare([{ mat: { state: {} } }, { mat: { state: {} } }]).over.length, 2, 'custom material records without keys remain separate');
+});
+
+test('static UV rotations reuse per-instance arrays through clips and pooled resets', () => {
+  const uv = { class: 'FxUVRotation', enabled: true, fields: {
+    _rotateTex1: true, _rotateTex2: false, _rotateTex3: true, _rotateTex4: true,
+    angle1: 30, _angle2: 45, _angle3: 60, _angle4: 90,
+  } };
+  const def = compileEffect(desc([root([pe({ _isLoop: 1 }), uv])]));
+  const a = new Effect(def, { seed: 1 }), b = new Effect(def, { seed: 2 });
+  a.update(1 / 60); b.update(1 / 60);
+  const matrices = Array.from({ length: 4 }, (_, k) => a.matOv.get(0)['_Rotation' + k]);
+  for (let k = 0; k < 4; k++) {
+    assert.deepEqual(matrices[k], def.uvRot[0].rotations[k]);
+    assert.notEqual(matrices[k], def.uvRot[0].rotations[k]);
+    assert.notEqual(matrices[k], b.matOv.get(0)['_Rotation' + k]);
+  }
+  matrices[0][0] = 999;
+  a.matOv.get(0)._Rotation1 = 12;
+  a.update(1 / 60);
+  assert.equal(a.matOv.get(0)._Rotation0, matrices[0]);
+  assert.deepEqual(a.matOv.get(0)._Rotation0, def.uvRot[0].rotations[0]);
+  assert.deepEqual(a.matOv.get(0)._Rotation1, def.uvRot[0].rotations[1]);
+  assert.deepEqual(b.matOv.get(0)._Rotation0, def.uvRot[0].rotations[0]);
+  a.reset(1); a.update(1 / 60);
+  assert.deepEqual(a.matOv.get(0)._Rotation0, def.uvRot[0].rotations[0]);
+  assert.equal(a.matOv.get(0)._HG_UV_ROTATION, 1);
 });
 
 describe('library', () => {
@@ -257,8 +395,71 @@ test('官方特效: auto is 完整 on a desktop and 精简 on touch; nothing wit
   assert.equal(resolveOfficialFx('auto', true, false), 'full');
   assert.equal(resolveOfficialFx('auto', true, true), 'lite');
   assert.equal(resolveOfficialFx('lite', true, false), 'lite');
+  assert.equal(resolveOfficialFx('low', true, false), 'low');
+  assert.equal(resolveOfficialFx('low', false, true), 'off');
   assert.equal(resolveOfficialFx('off', true, false), 'off');
   assert.equal(resolveOfficialFx('full', false, false), 'off');
+});
+
+describe('official FX quality profiles', () => {
+  function fixture(tier, burst = 40) {
+    const n = psNode(1, 0, { life: 10 });
+    n.particleSystem.EmissionModule.m_Bursts[0].countCurve = burst;
+    const def = compileEffect(desc([root([pe({})]), n]));
+    const lib = { available: true, has: key => key === 'test', def: () => def };
+    const ofx = new OfficialFx({ P: { Container: class {} }, cam: () => null, lib, tier });
+    return { ofx, def };
+  }
+
+  test('high and legacy medium retain their profiles; low reduces actual emitted particles', () => {
+    for (const [tier, scale, count, lite] of [['full', 1, 40, false], ['lite', 0.5, 20, true], ['low', 0.25, 10, true]]) {
+      const { ofx } = fixture(tier);
+      const h = ofx.spawn('test', {}, { seed: 7 });
+      ofx.update(1 / 60);
+      assert.equal(h.effect.sys[1].emissionScale, scale, tier);
+      assert.equal(h.effect.sys[1].count, count, tier);
+      assert.equal(ofx.lite, lite);
+      assert.equal(h.effect.def.material(0, ofx.lite).defs.lite, lite);
+      assert.equal(ofx.stats().particles, count);
+    }
+    const { ofx } = fixture('low', 1);
+    const h = ofx.spawn('test'); ofx.update(1 / 60);
+    assert.equal(h.effect.sys[1].count, 1, 'a one-particle cue survives low quality');
+  });
+
+  test('pooling reuses each profile and switching low / medium / high discards old emission parameters', () => {
+    const { ofx } = fixture('full');
+    let previous = null;
+    for (const tier of ['full', 'lite', 'low', 'lite', 'off', 'full']) {
+      ofx.setTier(tier);
+      assert.equal(ofx.pool.size, 0, `pool cleared on switching to ${tier}`);
+      if (tier === 'off') { assert.equal(ofx.spawn('test'), null); continue; }
+      const h = ofx.spawn('test');
+      assert.notEqual(h.effect, previous);
+      const count = tier === 'full' ? 40 : tier === 'lite' ? 20 : 10;
+      ofx.update(1 / 60); assert.equal(h.effect.sys[1].count, count);
+      const initial = h.effect;
+      h.kill(); ofx.update(0);
+      assert.equal(ofx.pool.get(initial.def).length, 1);
+      ofx.setTier(tier);
+      const reused = ofx.spawn('test');
+      assert.equal(reused.effect, initial, 'selecting the same tier keeps its pool');
+      ofx.update(1 / 60); assert.equal(reused.effect.sys[1].count, count);
+      previous = reused.effect;
+    }
+  });
+
+  test('each tier uses its soft admission budgets while important effects can still start', () => {
+    for (const tier of ['low', 'lite', 'full']) {
+      const { ofx } = fixture(tier);
+      for (let i = 0; i < MAX_EFFECTS[tier]; i++) assert.ok(ofx.spawn('test'));
+      assert.equal(ofx.spawn('test'), null, `${tier}: effect admission budget`);
+      assert.ok(ofx.spawn('test', {}, { important: true }));
+      ofx.clear(); ofx.particles = MAX_PARTICLES[tier];
+      assert.equal(ofx.spawn('test'), null, `${tier}: particle admission budget`);
+      assert.ok(ofx.spawn('test', {}, { loop: true }), 'persistent cues retain the existing exemption');
+    }
+  });
 });
 
 describe('wiring', () => {
@@ -438,4 +639,73 @@ describe('wiring', () => {
 test('a −30° Graphic tilt and the +30° effect tilt cancel (the pre-tilted content of §33.2)', () => {
   const v = quatRotate([0.258819, 0, 0, 0.965926], quatRotate([-0.258819, 0, 0, 0.965926], [0, 1, 0]));
   assert.ok(Math.abs(v[1] - 1) < 1e-5);
+});
+
+describe('shared static local matrices', () => {
+  const node = (id, parent, more = {}) => ({ ...root(), id, parent, ...more });
+
+  test('all Transform clip targets and direction helpers remain dynamic, including unused clips', () => {
+    const nodes = [root([pe({ _rotationY: { node: 1 }, _rotationZ: { node: 2 } })]),
+      ...Array.from({ length: 7 }, (_, i) => node(i + 1, 0)), node(8, null)];
+    const def = compileEffect(desc(nodes, { clips: [{ curves: [
+      ...['localPosition.x', 'localRotation.w', 'localEulerAnglesBaked.z', 'localScale.y'].map((property, i) =>
+        ({ node: i + 3, type: 'Transform', property, keys: [[0, 1, 0, 0]] })),
+      { node: 7, type: 'MeshRenderer', property: 'material._Color.r', keys: [[0, 1, 0, 0]] },
+      { node: 7, type: 'Transform', property: 'localPosition.x', keys: [] },
+    ] }] }));
+    assert.equal(def.animators.length, 0);
+    for (const i of [0, 1, 2, 3, 4, 5, 6, 8]) assert.equal(def.localMatrices[i], null, `dynamic / root ${i}`);
+    assert.ok(def.localMatrices[7], 'material-only animation does not change local TRS');
+    const a = new Effect(def), b = new Effect(def), saved = new Float32Array(def.localMatrices[7]);
+    assert.notEqual(a.localMatrices, b.localMatrices);
+    assert.equal(a.localMatrices[7], b.localMatrices[7], 'instances share the immutable local matrix');
+    a.place({ pos: [3, -2, 4], scale: 2, yaw: 1, mirror: true, flipY: true }).update(0);
+    assert.deepEqual(def.localMatrices[7], saved, 'placement and mirror never write into the shared local');
+  });
+
+  test('animated parents, root rotations and reflections produce the uncached world matrices bit for bit', () => {
+    for (const helpers of [false, true]) for (const projectile of [false, true]) for (const lite of [false, true]) {
+      const fields = { _isLoop: 1, _rotationY: helpers ? { node: 1 } : null, _rotationZ: helpers ? { node: 2 } : null };
+      const nodes = [root([pe(fields), ...(projectile ? [{ class: 'ProjectileEffect', fields: { _rotate180Y: 1 } }] : [])]),
+        node(1, 0, { rot: quatEuler(20, -35, 15), scale: [-1, 0.7, 2] }),
+        node(2, 1, { pos: [0.21, -0.5, 1], rot: quatEuler(-15, 25, 30) }),
+        node(3, 2, { pos: [-0, 1.2, -0.3], scale: [0.9, 1.7, 0] }),
+        node(4, 3, { pos: [0.75, -0.3, 2], rot: quatEuler(45, 10, -60), scale: [-1.2, 0.6, 1.5] }),
+        node(5, 4, { pos: [-0.4, 1.1, 0.8], scale: [0.5, -2, 0.25] })];
+      nodes[0].animator = { enabled: true, default: 0 };
+      const def = compileEffect(desc(nodes, { clips: [{ length: 1, loop: true, curves: [
+        { node: 2, type: 'Transform', property: 'localPosition.y', keys: [[0, -1, 0, 0], [1, 2, 0, 0]] },
+        { node: 2, type: 'Transform', property: 'localEulerAnglesRaw.z', keys: [[0, 20, 0, 0], [1, 80, 0, 0]] },
+        { node: 2, type: 'Transform', property: 'localScale.x', keys: [[0, -1, 0, 0], [1, 1, 0, 0]] },
+      ] }] }));
+      const cached = new Effect(def, { seed: 123, lite }), plain = new Effect(def, { seed: 123, lite });
+      plain.localMatrices.fill(null);
+      for (let step = 0; step < 45; step++) {
+        const place = { pos: [step * 0.1 - 2, -1.25, 0.42], scale: 0.25 + (step % 7) / 3,
+          yaw: step * 0.2, pitch: step * -0.03, roll: step * 0.01, mirror: step % 2 === 0, flipY: step % 3 === 0,
+          rootRot: step % 4 === 0 ? quatEuler(30, -20, 10) : null,
+          mountRot: step % 5 === 0 ? quatEuler(-10, 25, 35) : null };
+        cached.place(place).update(1 / 30); plain.place(place).update(1 / 30);
+        for (let i = 0; i < def.n; i++) assert.deepEqual(new Uint32Array(cached.world[i].buffer),
+          new Uint32Array(plain.world[i].buffer), `helpers=${helpers} projectile=${projectile} lite=${lite} step=${step} node=${i}`);
+      }
+    }
+  });
+
+  test('a transform sink write invalidates only its instance, and pooling restores the compiled locals', () => {
+    const def = compileEffect(desc([root([pe({ _isLoop: 1 })]), node(1, 0, { pos: [1, 2, 3] }), node(2, 1, { pos: [4, 0, 0] })]));
+    const changed = new Effect(def), other = new Effect(def);
+    changed.update(0); other.update(0);
+    const original = other.world.map(matrix => new Float32Array(matrix));
+    changed._sink().transform(1, [8, NaN, NaN], null, [2, NaN, NaN], null);
+    changed.update(0);
+    assert.equal(changed.localMatrices[1], null);
+    assert.equal(changed.localMatrices[2], def.localMatrices[2]);
+    assert.equal(changed.world[1][12], 8); assert.equal(changed.world[2][12], 16);
+    other.update(0);
+    assert.deepEqual(other.world, original, 'another instance keeps the authored local transform');
+    changed.reset(123).update(0);
+    assert.equal(changed.localMatrices[1], def.localMatrices[1]);
+    assert.deepEqual(changed.world, original, 'a pooled instance does not retain the prior transform write');
+  });
 });

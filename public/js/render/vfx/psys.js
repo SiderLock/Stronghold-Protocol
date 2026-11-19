@@ -255,13 +255,14 @@ export function completeAxes(m, out) {
 export class PSys {
   /**
    * @param {any} def compileSystem(...)
-   * @param {{ seed?: number, emission?: number, sub?: boolean, rng?: Rng }} [opts]
+   * @param {{ seed?: number, emission?: number, burstFloorScale?: number, sub?: boolean, rng?: Rng }} [opts]
    *   emission: multiplier of the emitted counts (the light tier's ×0.5, FxLODSetting's detail share)
    */
   constructor(def, opts = {}) {
     this.def = def;
     this.rng = opts.rng || new Rng(def.seed || opts.seed || ((Math.random() * 4294967296) >>> 0));
     this.emissionScale = num(opts.emission, 1);
+    this.burstFloorScale = num(opts.burstFloorScale, 0); // low preserves bursts that survived the medium-tier scale
     this.isSub = !!opts.sub;
     // per-instance references to the def's curves (a clip binding replaces one with a private copy: overrideField)
     this.rate = def.emission ? def.emission.rate : null;
@@ -524,7 +525,7 @@ export class PSys {
         this.burstNext[bi] = k + 1;
         if (tf < la - 1e-9 && !(la === 0 && tf <= 1e-9)) continue; // passed while not emitting (a late start)
         if (B.prob < 1 && this.rng.next() >= B.prob) continue;
-        const c = Math.round(B.count.at(Math.min(1, tf / D), this.rng.next()) * this.emissionScale);
+        const c = this._burstCount(B.count.at(Math.min(1, tf / D), this.rng.next()));
         for (let i = 0; i < c && this.count < cap; i++) this._spawn(tau, Math.max(0, lb - tf), 1, i, c, null);
       }
     }
@@ -548,13 +549,19 @@ export class PSys {
       if (B.prob < 1 && this.rng.next() >= B.prob) continue;
       const cycles = B.cycles > 0 ? B.cycles : 1;
       for (let k = 0; k < cycles; k++) {
-        const c = Math.round(B.count.at(0, this.rng.next()) * this.emissionScale);
+        const c = this._burstCount(B.count.at(0, this.rng.next()));
         const t = B.time + k * B.interval;
         if (c <= 0) continue;
         if (t <= 1e-6) this._emitAt(c, x, y, z, inherit);
         else this.pending.push({ t, count: c, x, y, z, inherit });
       }
     }
+  }
+
+  /** Preserve a low-tier cue only if its reference tier emitted it; zero / disabled / already-rounded-away stay zero. */
+  _burstCount(count) {
+    const n = Math.round(count * this.emissionScale);
+    return this.burstFloorScale > 0 && this.emissionScale > 0 && Math.round(count * this.burstFloorScale) > 0 ? Math.max(1, n) : n;
   }
 
   /**

@@ -148,17 +148,41 @@ def fake_projectile_keys(skins):
 
 def merge(index_path, skins):
     """Write the `skinFx` section into an existing index.json (skins it already lists are replaced wholesale: the
-    client is the source of truth). Returns (skins written, target keys that the index does not hold yet)."""
+    client is the source of truth). Returns (skins written, target keys the index does not hold).
+
+    A pair whose target key this installation does not hold is NOT published: the client hooker can name an effect the
+    client build never bundled (e.g. one outfit's two `…_marthe#13` buff variants, which every other outfit carries), and
+    shipping the pair would make the index point at a prefab nobody has. The runtime already falls back to the base key
+    for a missing target (render/vfx/wiring.js skinFxKey), so dropping the pair is the same picture — but the served
+    index then holds only effects that exist, and a later extraction that does bundle it publishes the real variant.
+    """
     index_path = Path(index_path)
     index = json.loads(index_path.read_text(encoding='utf-8')) if index_path.exists() else {}
-    index['skinFx'] = {k: skins[k] for k in sorted(skins)}
     prefabs = index.get('prefabs') or {}
-    missing = [k for k in target_keys(skins) if k.lower() not in prefabs]
+    kept = {}
+    missing = []
+    dropped = []
+    for skin_id in sorted(skins):
+        rec = skins[skin_id]
+        replace = {}
+        for src, dst in (rec.get('replace') or {}).items():
+            if dst and dst.lower() not in prefabs:
+                if dst not in missing:
+                    missing.append(dst)
+                dropped.append((skin_id, dst))
+                continue
+            replace[src] = dst
+        rec = dict(rec)
+        rec['replace'] = replace
+        # an outfit with nothing left to replace (and no fake projectiles) is left out of the section entirely
+        if replace or rec.get('fakeProjectiles'):
+            kept[skin_id] = rec
+    index['skinFx'] = kept
     index_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = index_path.with_suffix('.json.tmp')
     tmp.write_text(json.dumps(index, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     tmp.replace(index_path)
-    return len(index['skinFx']), missing
+    return len(kept), missing, dropped
 
 
 def main(argv=None):
@@ -179,15 +203,15 @@ def main(argv=None):
     keys = target_keys(skins)
     if a.keys_out:
         Path(a.keys_out).write_text('\n'.join(keys) + ('\n' if keys else ''), encoding='utf-8')
-    written, missing = (0, [])
+    written, missing, dropped = (0, [], [])
     if not a.dry_run:
-        written, missing = merge(Path(a.out) / 'fx' / 'index.json', skins)
+        written, missing, dropped = merge(Path(a.out) / 'fx' / 'index.json', skins)
     summary = {
         'bundles': got['bundles'], 'bad': got['bad'], 'skins': len(skins),
         'pairs': sum(len(r['replace']) for r in skins.values()),
         'withFake': sum(1 for r in skins.values() if r.get('fakeProjectiles')),
         'targetKeys': len(keys), 'fakeProjectileKeys': len(fake_projectile_keys(skins)),
-        'written': written, 'notInIndex': len(missing), 'seconds': got['seconds'],
+        'written': written, 'notInIndex': len(missing), 'droppedPairs': len(dropped), 'seconds': got['seconds'],
     }
     print(json.dumps(summary, ensure_ascii=False) if a.json else json.dumps(summary, ensure_ascii=False, indent=1))
     if missing:

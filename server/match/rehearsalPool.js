@@ -1,4 +1,4 @@
-// Stateless vanilla previews and oversized-result replays run outside the network/match event loop.
+// Stateless vanilla previews and normal/unite fields run outside the network/match event loop.
 // A child process follows match/host's existing isolation choice; cancellation never kills a server process.
 import { fork } from 'node:child_process';
 import { availableParallelism } from 'node:os';
@@ -9,14 +9,21 @@ export function createRehearsalPool({ data, workers = Math.min(2, Math.max(0, av
   const slots = new Set();
   const queue = [];
   let closed = false, disabled = false, sequence = 0;
+  let pumpPending = false;
 
-  function retire(slot, error = null) {
+  function retire(slot, error = null, restart = true) {
     if (!slots.delete(slot)) return;
     clearTimeout(slot.timer);
     clearTimeout(slot.idle);
     if (slot.job) { slot.job.reject(error || new Error('rehearsal worker stopped')); slot.job = null; }
     try { slot.child.kill(); } catch { /* already exited */ }
-    pump();
+    if (restart) pump();
+    else if (!pumpPending) {
+      // A phase/room can cancel many fields in one call stack. Finish cancelling the batch before
+      // starting a replacement child for the next job that is about to be cancelled as well.
+      pumpPending = true;
+      queueMicrotask(() => { pumpPending = false; pump(); });
+    }
   }
   function armIdle(slot) {
     clearTimeout(slot.idle);
@@ -109,7 +116,7 @@ export function createRehearsalPool({ data, workers = Math.min(2, Math.max(0, av
         job.cancelled = true;
         const index = queue.indexOf(job);
         if (index >= 0) queue.splice(index, 1);
-        if (job.slot?.job === job) retire(job.slot, new Error('rehearsal cancelled'));
+        if (job.slot?.job === job) retire(job.slot, new Error('rehearsal cancelled'), false);
         else job.reject(new Error('rehearsal cancelled'));
       } };
     },

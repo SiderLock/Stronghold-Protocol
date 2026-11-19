@@ -3,6 +3,7 @@
 import { VOICE_LANGS, sanitizeVoiceOverrides } from '../../voicePrefs.js';
 export { VOICE_LANGS } from '../../voicePrefs.js';
 
+import { BUILTIN_ID } from '../../../../shared/uiTheme.js';
 import { clamp, isObj } from './shared.js';
 import { DEFAULT_HOTKEYS, sanitizeHotkeys } from './shortcuts.js';
 
@@ -35,19 +36,26 @@ export const FRAME_LIMITS = Object.freeze([30, 60, 0]); // 0 keeps the browser/d
  *  bondTimers: selected-unit timed bond readouts (#746), off by default. [ASSUMED] Convenience HUD absent from
  *  the official game; maintainer approved 2026-10-18. Stored with the other preferences in sp.pref.settings.
  *  combatMetrics: 设置「作战统计」 (PR #618), off by default: the official HUD has no such panel.
+ *  watchDuringBattle: 设置「作战中查看队友」 (PR #971), off by default: while the own battle still runs, a teammate row
+ *  may open that field (or the other boss group) — a second simulation in this page (battle/observe.js observeTarget).
+ *  After the own battle, watching needs no switch. A pure client preference (never sent).
  *  prepDeployFold: 设置「部署时收起商店」 — picking up a piece on the own prep board folds the shop and zooms
  *  (GitHub #602, PR #646). Default on (the 0.3.0 behaviour). Off: the pickup changes neither the shop's fold nor the
- *  camera. [ASSUMED] the label; only an explicit false turns it off (a missing or junk value stays on).
+ *  camera. #692 adds 'partial': keep the shop at 70%, with halfway camera offsets. [ASSUMED] this middle level.
+ *  [ASSUMED] the label; only an explicit false turns it off (a missing or junk value stays on).
  *  adaptiveResolution: mobile canvas resolution follows sustained load when enabled; off restores the chosen quality.
- *  officialFx: 设置「官方特效」 (0.3.0, render/vfx): 'auto' (完整 on a desktop, 精简 on a touch device — render/vfx/tier.js),
- *  'off', 'lite' (精简), 'full' (完整); only shown when effects were extracted from the local client.
+ *  officialFx: 设置「官方特效」 (render/vfx): 'auto' (高 on a desktop, 中 on a touch device — render/vfx/tier.js),
+ *  'off', 'low' (低), 'lite' (中, the old 精简 profile), 'full' (高, the old 完整 profile).
+ *  Only shown when effects were extracted from the local client.
  *  otherSkins: 设置「显示其他玩家的皮肤」 (docs/SKINS.md), ON by default — draw the appearance another player chose instead
  *  of the operator's own model. A pure client preference (never sent): off, only this player's own pieces wear a skin.
+ *  uiTheme: 设置「界面主题」 (docs/THEMES.md). Empty is the built-in 卫戍协议终端. A stored id is this browser's
+ *  pack only — never sent, and it does not change a match.
  */
-export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceNative: false, voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, ammoEnergyCount: false, fullscreenWakeLock: false, bondTimers: false, combatMetrics: false, prepDeployFold: true, renderCache: false, adaptiveResolution: true, frameLimit: 0, quality: 'high', officialFx: 'auto', otherSkins: true, textSize: 'sm', keys: DEFAULT_HOTKEYS });
+export const DEFAULT_SETTINGS = Object.freeze({ bgm: 0.6, sfx: 0.8, voice: 0.8, voiceLang: 'cn', voiceNative: false, voiceOverrides: Object.freeze({}), muted: false, damageNumbers: true, officialDamageNumbers: false, ammoEnergyCount: false, fullscreenWakeLock: false, bondTimers: false, combatMetrics: false, watchDuringBattle: false, prepDeployFold: true, renderCache: false, adaptiveResolution: true, frameLimit: 0, quality: 'high', officialFx: 'auto', otherSkins: true, textSize: 'sm', uiTheme: '', themeMotion: true, arknightsCursor: false, keys: DEFAULT_HOTKEYS });
 const QUALITIES = ['high', 'medium', 'low'];
-/** The values of 设置「官方特效」 (render/vfx/tier.js OFFICIAL_FX). Display order in the dialog is low / medium / high. */
-export const OFFICIAL_FX_MODES = Object.freeze(['auto', 'off', 'lite', 'full']);
+/** The values of 设置「官方特效」 (render/vfx/tier.js OFFICIAL_FX). Display order is off / low / medium / high. */
+export const OFFICIAL_FX_MODES = Object.freeze(['auto', 'off', 'low', 'lite', 'full']);
 
 /**
  * The merged 显示弹药与能量数量 switch. A stored boolean wins. Otherwise on when either retired key was the boolean
@@ -63,9 +71,17 @@ function ammoEnergyCountOf(r) {
 /**
  * Sanitize persisted settings. Retired keys `ammoCount` and `mysticEnergy` are read here and never returned.
  * @param {any} raw
- * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en'|'kr', voiceNative: boolean, voiceOverrides: Record<string, string>, muted: boolean, damageNumbers: boolean, officialDamageNumbers: boolean, ammoEnergyCount: boolean, fullscreenWakeLock: boolean, bondTimers: boolean, combatMetrics: boolean, prepDeployFold: boolean, quality: 'high'|'medium'|'low', officialFx: 'auto'|'off'|'lite'|'full', otherSkins: boolean,
- *   renderCache: boolean, adaptiveResolution: boolean, frameLimit: number, textSize: 'sm'|'md'|'lg'|'xl', keys: Record<'buy'|'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
+ * @returns {{ bgm: number, sfx: number, voice: number, voiceLang: 'cn'|'jp'|'en'|'kr', voiceNative: boolean, voiceOverrides: Record<string, string>, muted: boolean, damageNumbers: boolean, officialDamageNumbers: boolean, ammoEnergyCount: boolean, fullscreenWakeLock: boolean, bondTimers: boolean, combatMetrics: boolean, prepDeployFold: boolean|'partial', quality: 'high'|'medium'|'low', officialFx: 'auto'|'off'|'low'|'lite'|'full', otherSkins: boolean,
+ *   renderCache: boolean, adaptiveResolution: boolean, frameLimit: number, watchDuringBattle: boolean, arknightsCursor: boolean, textSize: 'sm'|'md'|'lg'|'xl', uiTheme: string, themeMotion: boolean, keys: Record<'buy'|'refresh'|'freeze'|'levelUp'|'retreat'|'sell'|'ready', string> }}
  */
+const THEME_ID = /^[a-z0-9][a-z0-9_-]{0,39}$/;
+
+/** Empty, the built-in id, or a pack id. Anything else is the built-in look. */
+function uiThemeOf(raw) {
+  if (raw == null || raw === '' || raw === BUILTIN_ID) return '';
+  return typeof raw === 'string' && THEME_ID.test(raw) ? raw : '';
+}
+
 export function sanitizeSettings(raw) {
   const r = isObj(raw) ? raw : {};
   const vol = (v, d) => (Number.isFinite(v) ? clamp(Math.round(v * 100) / 100, 0, 1) : d);
@@ -82,7 +98,8 @@ export function sanitizeSettings(raw) {
     ammoEnergyCount: ammoEnergyCountOf(r),
     bondTimers: r.bondTimers === true,
     combatMetrics: typeof r.combatMetrics === 'boolean' ? r.combatMetrics : DEFAULT_SETTINGS.combatMetrics,
-    prepDeployFold: typeof r.prepDeployFold === 'boolean' ? r.prepDeployFold : true,
+    watchDuringBattle: r.watchDuringBattle === true,
+    prepDeployFold: r.prepDeployFold === 'partial' ? 'partial' : typeof r.prepDeployFold === 'boolean' ? r.prepDeployFold : true,
     renderCache: r.renderCache === true,
     adaptiveResolution: typeof r.adaptiveResolution === 'boolean' ? r.adaptiveResolution : DEFAULT_SETTINGS.adaptiveResolution,
     frameLimit: FRAME_LIMITS.includes(r.frameLimit) ? r.frameLimit : DEFAULT_SETTINGS.frameLimit,
@@ -91,6 +108,10 @@ export function sanitizeSettings(raw) {
     officialFx: OFFICIAL_FX_MODES.includes(r.officialFx) ? r.officialFx : DEFAULT_SETTINGS.officialFx,
     otherSkins: r.otherSkins !== false,
     textSize: TEXT_SIZES.includes(r.textSize) ? r.textSize : DEFAULT_SETTINGS.textSize,
+    arknightsCursor: r.arknightsCursor === true,
+    uiTheme: uiThemeOf(r.uiTheme),
+    // 主题动画: the official packs' looping tweens and clips (ui/prefab); off draws them still
+    themeMotion: r.themeMotion !== false,
     keys: sanitizeHotkeys(r.keys),
   };
 }

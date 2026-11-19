@@ -2,10 +2,12 @@
 // owns the effect instances, their library (render/vfx/library.js) and the WebGL2 renderer (render/vfx/gl.js), and
 // draws them as two Pixi display objects of the field view — a ground pass under the units (flat ranges / decals) and
 // an over pass above them — with the shared battle camera (render/projection.js; the prefabs are authored for it).
+// Verified standing backgrounds can instead draw inside their owner's root, before its body but after its tile row.
 //
 //   const ofx = new OfficialFx({ P, renderer, assets, cam, heightAt })
 //   ofx.ground / ofx.over                       Pixi containers to add to the layers (they draw through raw GL)
-//   ofx.setTier('off' | 'lite' | 'full')        精简 = half-size textures, emission × 0.5, FxLODSetting, exotic
+//   ofx.setTier('off' | 'low' | 'lite' | 'full')  高=full; 中=lite (half-size textures, emission ×0.5); 低=low (×0.25).
+//                                                Both reduced tiers use FxLODSetting and simplified
 //                                                shaders fall back (render/vfx/materials.js)
 //   await ofx.init() → ofx.available             the extracted effects exist (data/local-fx.json lists prefabs)
 //   ofx.spawn(key, place, opts) → handle         handle.effect (once loaded), handle.stop(o), handle.kill(), handle.place(o)
@@ -24,9 +26,10 @@ import { Effect } from './effect.js';
 import { FrameData, cameraBasis } from './geom.js';
 import { mat4, mat4Mul } from './math.js';
 
-export const TIERS = Object.freeze(['off', 'lite', 'full']);
-export const MAX_EFFECTS = Object.freeze({ lite: 90, full: 220 });
-export const MAX_PARTICLES = Object.freeze({ lite: 2500, full: 6000 });
+export const TIERS = Object.freeze(['off', 'low', 'lite', 'full']);
+// [ASSUMED] Low-tier admission budgets: fewer decorative one-shots, with the existing important-effect exemptions.
+export const MAX_EFFECTS = Object.freeze({ low: 60, lite: 90, full: 220 });
+export const MAX_PARTICLES = Object.freeze({ low: 1200, lite: 2500, full: 6000 });
 /** Battle seconds a pending one-shot may start late (its prefab still loading) before it is dropped. */
 export const LATE_START = 0.6;
 /** Finished instances kept per prefab for reuse (at most; `_preloadCnt` sets the share of each). */
@@ -131,6 +134,7 @@ export class OfficialFx {
     this.depthDone = -1;
     this.fd = new FrameData();
     this.items = { ground: [], over: [] };
+    this.unitBack = new Map(); // owner view → { container, items }: depth-sorted with that owner, not below high ground
     this.needDepth = false;
     this.particles = 0;
     this.dropped = 0;
@@ -159,16 +163,15 @@ export class OfficialFx {
   /** Effects are drawn: a tier is on, the files exist and the context is WebGL2. */
   get active() { return this.tier !== 'off' && !this.unsupported && this.lib.available; }
 
-  get lite() { return this.tier === 'lite'; }
+  get lite() { return this.tier === 'lite' || this.tier === 'low'; }
 
   setTier(t) {
     const tier = TIERS.includes(t) ? t : 'off';
     if (tier === this.tier) return;
-    const wasLite = this.tier === 'lite';
     this.tier = tier;
-    if (tier === 'off') this.clear();
-    else if (wasLite !== (tier === 'lite')) this.clear(); // the instances were built for the other tier
-    if (wasLite !== (tier === 'lite')) this.pool.clear();
+    // Low and medium share shaders / textures, but their systems retain different emission and burst settings.
+    this.clear();
+    this.pool.clear();
   }
 
   /**
@@ -228,6 +231,12 @@ export class OfficialFx {
       this.effects[w++] = fx;
     }
     this.effects.length = w;
+    for (const [owner, bucket] of this.unitBack) {
+      if (owner.root?.destroyed || !this.effects.some(fx => fx.owner === owner)) {
+        if (!bucket.container.destroyed) bucket.container.destroy();
+        this.unitBack.delete(owner);
+      }
+    }
     this.particles = parts;
     this._pauseOthers();
   }
@@ -324,6 +333,22 @@ export class OfficialFx {
     this.effects.length = 0;
     for (const h of this.pending) h.cancelled = true;
     this.pending.length = 0;
+    for (const bucket of this.unitBack.values()) if (!bucket.container.destroyed) bucket.container.destroy();
+    this.unitBack.clear();
+  }
+
+  /** Raw-GL geometry already uses world coordinates; the container contributes only its owner's painter order. */
+  _unitBackground(owner) {
+    if (!owner?.root?.addChildAt || owner.root.destroyed) return null;
+    let bucket = this.unitBack.get(owner);
+    if (!bucket) {
+      const container = new this.P.Container();
+      bucket = { container, items: [] };
+      container._render = renderer => this.renderPass('unitBack', renderer, bucket.items);
+      owner.root.addChildAt(container, 0);
+      this.unitBack.set(owner, bucket);
+    }
+    return bucket.items;
   }
 
   /** The board's heights for the ZTest materials' depth pre-pass (rebuilt when they change). */
@@ -348,24 +373,26 @@ export class OfficialFx {
     fd.reset();
     const g = this.items.ground, o = this.items.over;
     g.length = 0; o.length = 0;
+    for (const bucket of this.unitBack.values()) bucket.items.length = 0;
     let seq = 0, depth = false;
     const sink = (e) => {
       e.seq = seq++;
       if (e.mat.state.zTest) depth = true;
-      (e.ground ? g : o).push(e);
+      (e.unitBack ? this._unitBackground(e.effect.owner) || g : e.ground ? g : o).push(e);
     };
     for (const fx of this.effects) fx.gather(basis, sink);
-    g.sort(byUnityOrder);
-    o.sort(byUnityOrder);
+    const lists = [g, ...[...this.unitBack.values()].map(bucket => bucket.items), o];
+    for (const list of lists) list.sort(byUnityOrder);
     // geometry in draw order: neighbours of one material and kind become one draw (their ranges are contiguous)
     const frameNo = this.frameNo;
-    for (const list of [g, o]) {
+    for (const list of lists) {
       let w = 0, prev = null;
       for (const e of list) {
         const r = e.effect.build(e, basis, fd, frameNo);
         if (!r || !r.count) continue;
         e.kind = r.kind; e.first = r.first; e.count = r.count;
-        if (prev && prev.mat === e.mat && prev.kind === e.kind && !prev.ov && !e.ov && prev.meshKey === e.meshKey && prev.submesh === e.submesh
+        const sameMaterial = prev && (prev.mat === e.mat || (prev.mat.batchKey && prev.mat.batchKey === e.mat.batchKey));
+        if (sameMaterial && prev.kind === e.kind && !prev.ov && !e.ov && prev.meshKey === e.meshKey && prev.submesh === e.submesh
           && prev.first + prev.count === e.first) { prev.count += e.count; continue; }
         list[w++] = e;
         prev = e;
@@ -377,7 +404,7 @@ export class OfficialFx {
   }
 
   /** Draw one pass from inside Pixi's render (see the header). */
-  renderPass(pass, renderer) {
+  renderPass(pass, renderer, selectedItems = null) {
     if (!this.active || (!this.effects.length && !this.warmQueue.length)) return;
     const gl = renderer.gl;
     if (!this.glr) {
@@ -391,9 +418,9 @@ export class OfficialFx {
     try {
       if (this.warmedFrame !== this.frameNo) { this.warmedFrame = this.frameNo; this._warmStep(); }
       if (this.prepared !== this.frameNo) this._prepare(renderer);
-      const items = this.items[pass];
+      const items = selectedItems || this.items[pass];
       if (this.needDepth && this.depthDone !== this.frameNo) { this.glr.depthPrepass(this.vpB); this.depthDone = this.frameNo; }
-      if (items.length) this.glr.draw(items, { vp: this.vpU, cam: this.camU, time: this.time, half: this.lite, pass: this.frameNo * 2 + (pass === 'over' ? 1 : 0) });
+      if (items.length) this.glr.draw(items, { vp: this.vpU, cam: this.camU, time: this.time, half: this.lite, pass: this.frameNo * 3 + (pass === 'over' ? 2 : pass === 'unitBack' ? 1 : 0) });
     } catch (err) {
       if (!this._warned) { this._warned = true; console.error('[fx] render failed', err); }
     } finally {
@@ -406,13 +433,14 @@ export class OfficialFx {
     for (const fx of this.effects) for (const s of fx.sys) if (s && s.count) systems++;
     return {
       tier: this.tier, available: this.available, effects: this.effects.length, pending: this.pending.length, particles: this.particles, reused: this.pooled,
-      systems, dropped: this.dropped, draws: this.glr ? this.glr.stats.draws : 0, programs: this.glr ? this.glr.stats.programs : 0,
+      systems, dropped: this.dropped, draws: this.glr ? this.glr.stats.draws : 0, tris: this.glr ? this.glr.stats.tris : 0,
+      uploadBytes: this.glr ? this.glr.stats.uploadBytes : 0, programs: this.glr ? this.glr.stats.programs : 0,
       textures: this.glr ? this.glr.stats.textures : 0, texMB: this.glr ? Math.round(this.glr.stats.texBytes / 1048576) : 0,
     };
   }
 
   /** Per-frame counters reset (draw counts are per frame). */
-  frameStats() { if (this.glr) { this.glr.stats.draws = 0; this.glr.stats.tris = 0; this.glr.beginFrame(performance.now()); } }
+  frameStats() { if (this.glr) { this.glr.stats.draws = 0; this.glr.stats.tris = 0; this.glr.stats.uploadBytes = 0; this.glr.beginFrame(performance.now()); } }
 
   /** The GL context was lost / restored: drop GPU objects (rebuilt lazily). */
   contextLost() {
@@ -448,7 +476,9 @@ export class FxHandle {
   _start(def) {
     const s = this.sys;
     const seed = this.opts.seed ?? ((s.seed = (s.seed * 1103515245 + 12345) >>> 0) || 1);
-    const fx = s._take(def, seed) || new Effect(def, { lite: s.lite, lib: s.lib, seed });
+    // [ASSUMED] Low applies one more half after lite's ×0.5, preserving bursts visible in the medium profile.
+    const fx = s._take(def, seed) || new Effect(def, { lite: s.lite, emission: s.tier === 'low' ? 0.5 : 1,
+      minBurst: s.tier === 'low', lib: s.lib, seed });
     fx.place(this.placeArgs);
     fx.track = this.opts.track || null;
     fx.owner = this.opts.owner ?? null;

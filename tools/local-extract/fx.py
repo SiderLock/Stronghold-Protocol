@@ -109,6 +109,8 @@ FX_GENERIC = {
             'ranger': 'common_ranger_hit_01'},
     'die': {'char': 'common_char_die_01', 'enemy': 'common_enemy_die_01'},
     'birth': {'char': 'common_char_birth_01'},
+    # the terrain loops the client plays on a tile (render/app.js syncGrassFx): 规程 MAP09's 隐匿地块 (§37.230)
+    'tile': {'duelGrass': 'mapeff_079_dikuai_01'},
     'status': {'stun': 'buff_stun', 'freeze': 'buff_autochess_frozen', 'cold': 'buff_cold', 'sleep': 'buff_sleep',
                'burn': 'buff_burn', 'silence': 'buff_silence', 'slow': 'buff_slowdown', 'sluggish': 'buff_sluggish',
                'fear': 'common_buff_fear', 'levitate': 'common_levitate_01', 'bind': 'common_root_01',
@@ -1424,9 +1426,30 @@ def save_texture(img, path, encoding='webp'):
 def write_atomic(path, data):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if path.read_bytes() == data:
+            return
+    except OSError:
+        pass
     tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
     tmp.write_bytes(data)
-    os.replace(tmp, path)
+    deadline = time.monotonic() + 1
+    delay = 0.001
+    try:
+        while True:
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError as error:
+                if getattr(error, 'winerror', None) not in (5, 32, 33) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 0.128)
+    finally:
+        try:
+            tmp.unlink()
+        except (FileNotFoundError, PermissionError):
+            pass
 
 
 # ---- container indexes ----------------------------------------------------------------------------------------------

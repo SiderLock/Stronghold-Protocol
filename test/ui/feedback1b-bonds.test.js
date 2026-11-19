@@ -106,11 +106,12 @@ test('bond popup: 本局禁用 instead of 未激活, a note, and no misleading m
   // the 当前效果 block ("提升20% … 68%") would promise an effect the mode never gives; the bond text (盟约效果) stays
   assert.doesNotMatch(text, /当前效果/);
   assert.ok(![...walk(pop)].some((v) => hasClass(v, 'bpop__sec--now')), 'no current-effect section');
-  assert.match(text, /盟约效果/);
+  assert.ok([...walk(pop)].some(v => v.props?.class === 'bpop__desc'), 'the bond description remains');
   const plain = textOf(BondPopup({ bondId: 'arcaneShip', entry: null, priv: { board: [], hand: [] }, onClose() {} }));
   assert.match(plain, /未激活/);
   assert.match(plain, /在场/);
-  assert.match(plain, /当前效果/, 'an enabled bond keeps its current-effect block');
+  assert.doesNotMatch(plain, /当前效果/, 'enabled bonds also omit the separate current-effect block');
+  assert.doesNotMatch(plain, /盟约效果/, 'the description heading is omitted');
 });
 
 test('the game screen hands the mode-disabled set to the shop bar, the detail card and the bond popup', () => {
@@ -118,13 +119,13 @@ test('the game screen hands the mode-disabled set to the shop bar, the detail ca
   assert.match(src, /const offBonds = modeOffBonds\(getMode\(pub\?\.modeId\)\)/);
   assert.match(src, /<\$\{ShopBar\}[\s\S]*?offBonds=\$\{offBonds\}/);
   assert.match(src, /<\$\{DetailPanel\}[\s\S]*?offBonds=\$\{offBonds\}/);
-  assert.match(src, /<\$\{BondPopup\}[\s\S]*?off=\$\{offBonds\.has\(bondPop\.bondId\)\}/);
+  assert.match(src, /<\$\{bondOpen\?\.from === 'info' \? MatchBondDialog : BondPopup\}[\s\S]*?off=\$\{offBonds\.has\(bondPop\.bondId\)\}/);
 });
 
 test('the bond popup closes on outside presses, while its own region and toggle triggers handle themselves', () => {
   const src = read('public/js/screens/game.js');
   assert.match(src, /const screen = hudElRef\.current\?\.parentElement/);
-  assert.match(src, /if \(!live\.current\.bondOpen \|\| e\.target\?\.closest\?\.\('\.bpop, \.bslot, \.dbond'\)\) return;\s+setBondOpen\(null\)/);
+  assert.match(src, /if \(!live\.current\.bondOpen \|\| e\.target\?\.closest\?\.\('\.bpop, \.bpop-nav__arrow, \.bslot, \.dbond, \.ibond'\)\) return;\s+setBondOpen\(null\)/);
   assert.match(src, /screen\.addEventListener\('pointerdown', onDown, true\)/);
   assert.match(src, /screen\.removeEventListener\('pointerdown', onDown, true\)/);
 });
@@ -133,7 +134,7 @@ test('hidden-layer bonds show activation and tiers without a stack badge or laye
   for (const bondId of ['maniShip', 'emptyShip', 'soloShip', 'suntShip']) {
     const entry = { bondId, active: true, count: 2, tier: 1, layers: 99 };
     const pop = BondPopup({ bondId, entry, priv: { board: [], hand: [] }, onClose() {} });
-    assert.match(textOf(pop), /层数不显示/);
+  assert.ok(![...walk(pop)].some(v => hasClass(v, 'bpop__layers')), 'non-stacking bonds omit the layer label');
     assert.doesNotMatch(textOf(pop), /99|99 层/);
     const strip = BondStrip({ bonds: [entry], onOpen() {} });
     const disc = [...walk(strip)].find((v) => v.props?.name === DATA.bonds[bondId].name);
@@ -151,16 +152,47 @@ test('叙拉古 popup identifies deployment values and the game-time duration, i
   for (const owner of [null, 'teammate']) {
     const pop = BondPopup({ bondId: 'siracusaShip', entry: { active: true, count: 6, tier: 2, layers: 450 },
       priv: { board: [], hand: [] }, owner, onClose() {} });
-    assert.match(textOf(pop), /按当前层数部署时/);
+    // 0.4.0's popup dropped the 按当前层数部署时 / 当前效果 headings: the notes below the effect carry the timing
     assert.match(textOf(pop), /每次部署时确定/);
     assert.match(textOf(pop), /新增层数不会延长/);
     assert.match(textOf(pop), /2 倍速下的现实用时约为一半/);
     const timing = [...walk(pop)].find((v) => v.props?.['data-bond-timing'] === 'deployment');
     assert.equal(timing?.props.role, 'note');
   }
+  // an off bond keeps its text and its timing rule, but no 在场 count (the note explains the rule itself)
   const off = BondPopup({ bondId: 'siracusaShip', off: true, onClose() {} });
-  assert.doesNotMatch(textOf(off), /按当前层数部署时|每次部署时确定/);
+  assert.match(textOf(off), /本局禁用/);
+  assert.doesNotMatch(textOf(off), /在场/);
   const other = BondPopup({ bondId: 'sargonShip', onClose() {} });
-  assert.match(textOf(other), /当前效果/);
-  assert.doesNotMatch(textOf(other), /每次部署时确定/);
+  assert.match(textOf(other), /在场/);
+  assert.doesNotMatch(textOf(other), /每次部署时确定|2 倍速下的现实用时约为一半/);
+});
+
+test('bond navigation keeps the card and invokes only the requested direction', () => {
+  const calls = [];
+  const props = { bondId: 'arcaneShip', priv: { board: [], hand: [] }, onClose: () => calls.push('close') };
+  const popup = BondPopup({ ...props, place: 'center', onPrevious: () => calls.push('previous'), onNext: () => calls.push('next') });
+  const nodes = [...walk(popup)];
+  const arrows = nodes.filter(v => hasClass(v, 'bpop-nav__arrow'));
+  assert.equal(arrows.length, 2);
+  assert.ok(nodes.some(v => hasClass(v, 'bpop')));
+  arrows[0].props.onClick();
+  arrows[1].props.onClick();
+  assert.deepEqual(calls, ['previous', 'next']);
+  assert.equal([...walk(BondPopup(props))].filter(v => hasClass(v, 'bpop-nav__arrow')).length, 0);
+});
+
+
+test('bond header stage follows activation tier, independently of stack count', () => {
+  const props = { bondId: 'arcaneShip', priv: { board: [], hand: [] } };
+  for (const [tier, numeral] of [[1, 'Ⅰ'], [2, 'Ⅱ'], [3, 'Ⅲ']]) {
+    const popup = BondPopup({ ...props, entry: { active: true, tier, count: 6, layers: 99 } });
+    const nodes = [...walk(popup)];
+    assert.equal(textOf(nodes.find(v => hasClass(v, 'bpop__stage'))), `阶段 ${numeral}`);
+    assert.ok(!nodes.some(v => hasClass(v, 'bpop__close') || hasClass(v, 'bpop__sec--now')));
+  }
+  for (const [off, label] of [[false, '尚未激活'], [true, '本局禁用']]) {
+    const popup = BondPopup({ ...props, off, entry: { active: false, tier: 0, count: 0, layers: 99 } });
+    assert.equal(textOf([...walk(popup)].find(v => hasClass(v, 'bpop__stage'))), label);
+  }
 });

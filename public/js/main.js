@@ -39,6 +39,7 @@
 
 // Polyfills first (older Safari / Firefox ESR): every module evaluated after this one sees them.
 import './ui/compat.js';
+import { ReleaseNotesHost } from './ui/releaseNotes.js';
 import { render } from '../vendor/preact.module.js';
 import { useErrorBoundary } from '../vendor/hooks.module.js';
 import { html, UiHosts, Button, MicroLabel, closeAllDialogs } from './ui/components.js';
@@ -66,6 +67,7 @@ import { gpu } from './ui/glInfo.js';
 import { isCombatPhase } from './ui/gameLogic/phases.js';
 import { LoadoutHost } from './screens/loadout.js';
 import { StatsHost, useStatsOpen } from './screens/stats.js';
+import { LobbyPluginHost } from './ui/pluginTag.js';
 import { CoveredVersionVote } from './ui/versionVote.js';
 import { installRehearsal } from './battle/rehearsal.js';
 import { recordResult, installStatsRecorder } from './ui/stats.js';
@@ -77,9 +79,9 @@ import { t, N_, translateWire } from '../../shared/i18n.js';
 import { recordError, installTrafficMeter } from './diag.js';
 import { installMatchChat } from './matchChat.js';
 import { assetCache } from './assetCache.js';
-import { installContent, installContentSet } from './content.js';
+import { installContent, installContentSet, installLobbyPlugins } from './content.js';
 import { cosmetics } from './cosmetics.js';
-import { sanitizeVersions, roomVersion, isDefaultVersion, matchFrameVersion } from './versions.js';
+import { sanitizeVersions, roomVersion, isDefaultVersion, matchFrameVersion, musicSeason, seasonOf, startupVersion, REGULATION_SEASON } from './versions.js';
 
 const RESTORE_GRACE_MS = 1500;
 const JOIN_DELAY_MS = 350;
@@ -401,10 +403,12 @@ function App() {
     <${ToastHost} />
     <${UiHosts} />
     <${GuideHost} />
+    <${ReleaseNotesHost} />
     <${AnnouncementHost} />
     <${UrgentAnnouncementHost} />
     <${AssetCacheHost} />
     <${LoadoutHost} />
+    <${LobbyPluginHost} />
     <${StatsHost} />
     <${VoteOverOverlays} />
   </div>`;
@@ -476,6 +480,11 @@ async function boot() {
   installUrgentAnnouncements({ net });
   installAssetCache();
   installStatsRecorder(store); // follows the match on screen, so a 放弃模拟 can be recorded (ui/stats.js)
+  // Register content-set sync before the pref syncs so room.contentReady is always sent before room.loadout / room.diy
+  // when entering a room whose modded/version content set is already ready from lobby preview.
+  installContent({ toast });
+  installContentSet({ toast });
+  installLobbyPlugins({ net, toast });
   // the loadout / 干员持有 / 自选 settings by operator, shown for the data on screen (DESIGN §35.23; a v1 store migrates)
   installSettingsViews();
   installLoadoutSync({ net });
@@ -487,10 +496,6 @@ async function boot() {
   // 名片干员 (PR #643 split 6): the operator on this browser's seat card (room.card, ui/seatArt.js cardStore) — after every
   // welcome, pick and content change, with the engine's retries (the room screen only reads and sets the pick)
   installCardSync({ net });
-  // the room's cosmetic plugins and the player's own over the art manifest (content.js; nothing is fetched without them)
-  installContent({ toast });
-  // a room with gameplay plugins: its content set downloaded, checked and shown (content.js — DESIGN §32.6)
-  installContentSet({ toast });
   // A bot prep's layout rehearsal the server offers this host's browser (DESIGN §14, SP_BOT_REHEARSAL=host on the
   // server): a same-origin module Worker simulates the candidates off the main thread and answers with its pick; a
   // browser that cannot run one answers `error` and the server rehearses itself. Nothing happens while the server
@@ -499,7 +504,7 @@ async function boot() {
   net.attachBrowserHooks();
   // Audio: unlock on first gesture, BGM follows the route / match phase (js/audio.js).
   // a cosmetic plugin's sound that will not load falls back like its art (content.js, DESIGN §32 P1a)
-  installAudio({ getManifest: () => data.get('assets'), subscribe: store.subscribe, getState: store.get, selectRoute, settings: settingsStore.get(),
+  installAudio({ getManifest: () => data.get('assets'), subscribe: store.subscribe, getState: store.get, selectRoute, seasonOf: musicSeason, settings: settingsStore.get(),
     onFailed: (url) => cosmetics.fail(url) });
   // …and the music follows the art: the screen's track again when the cosmetic layers change its URLs
   cosmetics.subscribe(() => audio.refreshBgm());
@@ -531,7 +536,17 @@ async function boot() {
     splash.classList.add('is-done');
     setTimeout(() => splash.remove(), 300);
   }
-  globalThis.__SP__ = { store, net, data, version: 1 };
+  // the start-up version's entry animation before the title screen (ui/entryFilm.js): 盟约's film, or for a 规程 start
+  // (versions.js startupVersion) 规程's own opening (ui/regulationFilm.js); never over a restored match. `entryFilm`
+  // settles once the film has decided: its overlay is up by then, or none comes this page load (the browser tests get
+  // past it before their first click: test/e2e/client.mjs passEntryFilm)
+  const entryFilm = import('./ui/entryFilm.js')
+    .then((m) => m.playEntryFilm({
+      skip: () => selectRoute(store.get()) === 'game',
+      regulation: () => seasonOf(startupVersion(store.get())) === REGULATION_SEASON,
+    }))
+    .catch((err) => console.warn('[app] entry film unavailable', err));
+  globalThis.__SP__ = { store, net, data, entryFilm, version: 1 };
   // A page keeps the modules it imported at load time for its whole lifetime, so a deploy cannot reach an open tab
   // (ui/buildGuard.js): watch `/healthz.build`. Outside a match the page reloads itself; during a match the guard says
   // so instead (the connection banner offers 刷新页面) and reloads once the match — settlement screen included — is over,

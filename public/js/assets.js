@@ -140,11 +140,14 @@ export function enemyIconUrl(m, enemyId) {
   return str(rec && rec.icon);
 }
 
-/** Token avatar, falling back to its owner's avatar (docs/ASSETS.md token fallbacks). */
-export function tokenAvatarUrl(m, tokenId) {
+/** Token avatar: `tokens[id].skins[opts.skin]`, else the token's avatar, else its owner's (docs/ASSETS.md token
+ * fallbacks, docs/SKINS.md). */
+export function tokenAvatarUrl(m, tokenId, opts) {
   const rec = get(get(m, 'tokens'), str(tokenId) || '');
   if (!rec) return null;
-  return str(rec.avatar) || (rec.owner ? avatarUrl(m, rec.owner) : null) || str(get(get(get(m, 'prof'), 'battlecard'), 'token'));
+  const wanted = opts && str(opts.skin) ? String(opts.skin) : null;
+  const skin = wanted ? get(get(rec, 'skins'), wanted) : null;
+  return str(skin && skin.avatar) || str(rec.avatar) || (rec.owner ? avatarUrl(m, rec.owner) : null) || str(get(get(get(m, 'prof'), 'battlecard'), 'token'));
 }
 
 export const bondIconUrl = (m, bondId) => str(get(get(m, 'bonds'), str(bondId) || ''));
@@ -286,12 +289,19 @@ export function spineEntry(m, id, opts) {
   }
   const tk = get(get(m, 'tokens'), s);
   if (tk) {
-    // 召唤物换装 (docs/SKINS.md): the summoner's skin may bring its own model for this token; a skin that has none (or
-    // none for this token) leaves the token on the model it always drew. A token's model has no Front / Back pair.
+    // A summon's own appearance (docs/SKINS.md): the overlay may write it under the summoner's skin
+    // (`chars[<charId>].skins[<skinId>].tokens[<tokenId>].spine`, tokenSkinSpine) or under the token itself
+    // (`tokens[<tokenId>].skins[<owner skin id>]`, the official tokenSkinMap). A skin the manifest does not hold (or none
+    // asked for) draws the token's own model.
     const wanted = opts && str(opts.skin) ? String(opts.skin) : null;
     if (wanted) {
       const skinSpine = tokenSkinSpine(m, s, wanted);
       if (validSpine(skinSpine)) return skinSpine;
+      const tokenSkin = get(get(tk, 'skins'), wanted);
+      if (isObj(tokenSkin) && isObj(tokenSkin.spine)) {
+        const sp = (opts && opts.back && isObj(tokenSkin.spine.back)) ? tokenSkin.spine.back : tokenSkin.spine.front;
+        if (validSpine(sp)) return sp;
+      }
     }
     const web = validSpine(tk.spine) ? tk.spine : null;
     return (opts && opts.local && localSpineEntry(tk.spineLocal, opts.local, web)) || web;
@@ -340,19 +350,26 @@ export function localSpineEntry(sl, local, web) {
  */
 export function hasBackSpine(m, id, skinId) {
   const ch = get(get(m, 'chars'), str(id) || '') || get(get(m, 'chars'), baseCharId(id) || '');
-  if (!ch) return false;
-  const skin = str(skinId) ? get(get(ch, 'skins'), String(skinId)) : null;
-  const src = skinHasModel(skin) ? skin.spine : ch.spine;
+  if (ch) {
+    const skin = str(skinId) ? get(get(ch, 'skins'), String(skinId)) : null;
+    const src = skinHasModel(skin) ? skin.spine : ch.spine;
+    return !!(isObj(src) && validSpine(src.back));
+  }
+  // 召唤物皮肤 (docs/SKINS.md): a token's skin may ship its own Back; otherwise the token's own model decides
+  const tk = get(get(m, 'tokens'), str(id) || '');
+  if (!tk) return false;
+  const skin = str(skinId) ? get(get(tk, 'skins'), String(skinId)) : null;
+  const src = skin && isObj(skin.spine) ? skin.spine : tk.spine;
   return !!(isObj(src) && validSpine(src.back));
 }
 
 export function validSpine(sp) {
-  return isObj(sp) && typeof sp.skel === 'string' && /^\/[^\s]*\.skel$/.test(sp.skel) && typeof sp.atlas === 'string' && isObj(sp.anims);
+  return isObj(sp) && typeof sp.skel === 'string' && /^\/[^\s]*\.(?:skel|json)$/.test(sp.skel) && typeof sp.atlas === 'string' && isObj(sp.anims);
 }
 
 /** Best 2D picture for a unit asset id (operator avatar, token avatar, enemy icon, item icon); `opts` reaches avatarUrl. */
 export function unitPictureUrl(m, id, opts) {
-  return avatarUrl(m, id, opts) || tokenAvatarUrl(m, id) || enemyIconUrl(m, id) || itemIconUrl(m, id) || null;
+  return avatarUrl(m, id, opts) || tokenAvatarUrl(m, id, opts) || enemyIconUrl(m, id) || itemIconUrl(m, id) || null;
 }
 
 // ---- audio ---------------------------------------------------------------------------------------------------
@@ -1102,7 +1119,7 @@ export function createAssets(options) {
     portrait: (id, o) => portraitUrl(m(), id, o),
     illust: (id, o) => illustUrl(m(), id, o),
     enemyIcon: (id) => enemyIconUrl(m(), id),
-    tokenAvatar: (id) => tokenAvatarUrl(m(), id),
+    tokenAvatar: (id, o) => tokenAvatarUrl(m(), id, o),
     bondIcon: (id) => bondIconUrl(m(), id),
     bandIcon: (id) => bandIconUrl(m(), id),
     itemIcon: (item) => itemIconUrl(m(), item),

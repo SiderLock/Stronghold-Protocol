@@ -60,6 +60,28 @@ Three properties are load-bearing:
   model when the skin (or its model) is not in the manifest; `avatarUrl` / `portraitUrl` / `illustUrl` fall back to the
   operator's own pictures. The picker shows the operator's portrait on a skin that ships none.
 
+## Summons follow their owner's outfit (token skins)
+
+The official skin table's `charSkins[<skinId>].tokenSkinMap` maps a summon to an appearance per owner outfit (e.g.
+`char_250_phatom@sale#4` → `token_10007_phatom_twin_sale#4`). The remake carries it as the same cosmetic layer as an
+operator's outfits, not as a second choice:
+
+- **The plugin writes the summon's appearances under the owner's skin key**: `tokens[<tokenId>].skins[<skinId>]`, a skin
+  record (docs/PLUGINS.md §9). The key is the operator skin the player wears, so one token serves two owners' outfits.
+- **Every surface publishes the summon's `skin` as its owner's choice**: prep board, hand and 临时整备区
+  (`pieceView` / `_prepBoardUnits`) resolve it through the owner piece, passing a 自选 owner's picked `charId` to
+  `skinFor` just as `battleInput` does; the sim copies the owner unit's `skin` at
+  creation (including the late owner link), and `UnitInfo.ownerCharId` lets a running battle re-read the public choice
+  like an operator body.
+- **A missing skin or model falls back**: `spineEntry` / `tokenAvatarUrl` / `unitPictureUrl` use the summon's own
+  entry, then its own avatar and the owner's.
+- **The picker does not change**: a summon has no row and no stored key; it wears what its owner wears, and clearing the
+  outfit returns it to its own model. 设置「显示其他玩家的皮肤」 applies as for the owning operator.
+
+[ASSUMED] The official autochess mode's own use of outfits is not established; this remake's cosmetic layer is the
+maintainer's decision, and the data model above is the official skin table's. Display only: `Unit.skin` is never read by
+a rule and `Battle.result()` is unchanged (`test/skins.test.js`).
+
 ## 随机皮肤（本 fork，D045）
 
 用户于 2026-10-26 要求 AI 每局随机时装、同局所有 AI 共用配置，并在干员调配提供固定 / 每局随机两种模式。
@@ -186,6 +208,13 @@ slot names as the operator's own `audio.voice[<charId>]` (docs/PLUGINS.md §9).
   `schemas/overlay.schema.json` (`$ref` to the operator tree's own definition) and the fixture change together: a field
   the schema refuses would be dropped by the runtime with a warning, and a field the runtime does not know would be
   silently ignored — the two halves of the upstream 语音槽 pull request that never merged.
+
+Installation outfits use the same five voice fields. `node tools/local-extract/skin-voices.mjs` reads each installed
+outfit's official `skin_table.voiceId`, downloads the declared dubs' battle slots, and adds them to
+`data/local-skins.json`. `mergeLocalSkins` retains these fields in the served manifest. The downloader validates MP3
+files and keeps them under `public/assets/local/voices/`. Incomplete downloads retain the installed slots for retry.
+Subsequent `skins.py` art refreshes preserve these voice fields for the same operator's outfit.
+The command, metadata and resource checks are described in [本地素材提取参考](LOCAL_ASSET_EXTRACTION.md#官方时装独立语音).
 
 ## 小人预览 (model preview)
 
@@ -546,6 +575,12 @@ exists) gets no section rather than an empty grid.
 | File | Where | What |
 |---|---|---|
 | `shared/protocol.js` | before `isNotOwnedList` | `SKIN_LIMITS` (256 [ASSUMED]), `isSkinId` (**not** `isId`; the same character class as `isSkinKey`), `isCharId`, `isSkinSelection`, `operatorCharIds`, `checkSkinSelection` |
+| `shared/plugins/visual.js` | `ASSET_CONTAINERS` `tokens` | `tokens[id].skins[<skinId>]` — the same skin record under a summon, keyed by the owner's outfit (the official `tokenSkinMap`) |
+| `schemas/overlay.schema.json` | `$defs.tokenRecord` | `skins` (up to 64, `skinKey` → `skinRecord`) |
+| `server/match/player/views.js`, `server/match/match/views.js` | `pieceView`, `_prepBoardUnits`, the bench | `tokenSkin(piece)`: a summon's skin is its owner piece's operator outfit |
+| `server/sim/battle/players.js`, `server/sim/battle/summons.js`, `server/sim/snapshot.js` | token creation, `unitInfo` | the summon copies its owner unit's `skin`; `UnitInfo.ownerCharId` names the operator the client re-reads it from |
+| `public/js/assets.js`, `public/js/ui/assetUrls.js`, `public/js/ui/fallbackField.js` | `spineEntry` tokens branch, `tokenAvatarUrl`, `unitPictureUrl`, `pieceArt` | read `tokens[id].skins[skin]`, fall back to the summon's own model/avatar |
+| `public/js/render/app.js` | `pieceInfo` token branch, `skinOf` | carry the piece's `skin`; a token re-reads its owner's current outfit like an operator body |
 | `shared/protocol.js` | `C2S` | `'room.skins'` — and **no** `'room.skin.install'` |
 | `server/net.js` | `HEAVY_TYPES`, `Session` ctor | `'room.skins'`; `session.skins` |
 | `server/lobby.js` | after `freezeDiy`, `onMessage`, after `diy()`, `humanSeat`, `seatSettings`, `startMatch`, `Room.toState` | `freezeSkins` (charId + skinId, drop operators the room lacks; a bad map is BAD_MSG and does not clear), `case 'room.skins'`, `seats[].skins` in `room.state` (0.3.2 decision 4, broadcast by `skins()` when a waiting room's map changed), `skins()` — **no phase gate**, unlike the loadout — and the selection riding into the match |
@@ -624,12 +659,14 @@ canvas on return; closing a preview frees that renderer's GPU objects. High-DPR 
 The in-game mobile resolution adjustment is independently switchable in settings; see
 [mobile performance](development/MOBILE_PERFORMANCE.md).
 
-- **Bots always wear the default model** (`PlayerState.setSkins` refuses a bot, as `setLoadout` does).
+- **AI outfits follow the fork's opening configuration**. D045 selects one installed outfit map for the match's AI
+  seats, shared across fixed groups. The installation's catalogue determines the available appearances.
 - **The studio lists the skins the manifest already has** (P7): the target picker finds one by the outfit's name, its
   series or its operator, and `skin:<key>` names it — the key carries `@ # + .`, so it is copied from there rather than
   typed (`server/studio/targets.js`). A skin the installation does not have yet is still written by hand or in the stem
   form: the studio cannot invent an outfit.
-- **No skin effects and no operator voices** (a separate piece of work; docs/ASSETS.md).
+- **Installation effects and voices are prepared by the host tools**. `skinfx.py` publishes verified effect replacements,
+  and `skin-voices.mjs` adds the official independent voice banks to the installation sidecar.
 - **A summon keeps the look it was placed with**: its model is read once, when the unit is built with the battle input,
   so a change made mid-battle reaches the next battle (operators refresh immediately instead). A prep board's token
   piece keeps its own model until it deploys, and a summon's avatar is never restyled — see 召唤物换装 above.

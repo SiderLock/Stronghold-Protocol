@@ -1,10 +1,10 @@
 // public/dev/fx-viewer.js — dev viewer of the official battle effects (render/vfx, DESIGN §33): plays any extracted
 // prefab key on the board camera (the official battle camera of render/projection.js) with play / pause / step, 1× / 2×
-// (the battle clock), the 完整 / 精简 tiers, a left / right facing and an optional unit whose skin's mount points place
+// (the battle clock), the 高 / 中 / 低 tiers, a left / right facing and an optional unit whose skin's mount points place
 // the effect (its `_spawnLocation`) — markers show the points. A 2D canvas under the transparent Pixi canvas stands in
 // for the 3D board, so the effects composite onto it as they do in the game.
 //
-// Query: ?key=<prefab> &unit=<unit id> &speed=1|2 &tier=full|lite &face=L|R &panel=0 &seed=<n> &bg=<css colour>
+// Query: ?key=<prefab> &unit=<unit id> &speed=1|2 &tier=full|lite|low &face=L|R &panel=0 &seed=<n> &bg=<css colour>
 //        &grid=0 (a flat background without the tiles: the browser test measures the blending on it)
 //        &stress=<loops>,<hits per s> (a crowd: that many status loops on a 11 × 5 tile area and hits every second —
 //        the particle budget's perf check; window.__fx.sample(ms) → { fps, p95, cpuMs, particles, effects, draws })
@@ -77,7 +77,7 @@ async function main() {
   addEventListener('resize', () => { app.renderer.resize(W(), H()); cam = presetCamera('normal', { width: W(), height: H() }, { side: 'L' }); drawBoard(cam, W(), H()); });
 
   await assets.ready?.();
-  const ofx = new OfficialFx({ P, renderer: app.renderer, assets, cam: () => cam, heightAt: () => 0, tier: q.get('tier') === 'lite' ? 'lite' : 'full' });
+  const ofx = new OfficialFx({ P, renderer: app.renderer, assets, cam: () => cam, heightAt: () => 0, tier: ['low', 'lite'].includes(q.get('tier')) ? q.get('tier') : 'full' });
   ofx.setGround(() => 0, 'flat');
   const markers = new P.Graphics();
   app.stage.addChild(ofx.ground, markers, ofx.over);
@@ -200,8 +200,14 @@ async function main() {
   $('loop').onclick = () => { state.loop = !state.loop; $('loop').classList.toggle('is-on', state.loop); };
   $('stop').onclick = () => { state.loop = false; $('loop').classList.remove('is-on'); state.handle?.stop(); };
   $('clear').onclick = () => { ofx.clear(); state.handle = null; };
-  $('full').onclick = () => { ofx.setTier('full'); toggle('full', 'lite'); play(state.key); };
-  $('lite').onclick = () => { ofx.setTier('lite'); toggle('lite', 'full'); play(state.key); };
+  for (const tier of ['low', 'lite', 'full']) {
+    $(tier).classList.toggle('is-on', ofx.tier === tier);
+    $(tier).onclick = () => {
+      ofx.setTier(tier);
+      for (const id of ['low', 'lite', 'full']) $(id).classList.toggle('is-on', id === tier);
+      play(state.key);
+    };
+  }
   $('faceL').onclick = () => { state.left = true; toggle('faceL', 'faceR'); play(state.key); };
   $('faceR').onclick = () => { state.left = false; toggle('faceR', 'faceL'); play(state.key); };
   $('unit').onchange = () => { state.unit = $('unit').value; play(state.key); };

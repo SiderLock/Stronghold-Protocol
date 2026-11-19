@@ -476,6 +476,10 @@ describe('net.js', () => {
     assert.equal(e.code, 'NO_FUNDS');
     assert.equal(e.message, '资金不足');
     assert.match(new NetError('BAD_MSG', 'x', 'version mismatch: server 2').message, /版本/);
+    // a refusal that only names an official version is not the protocol check: its own text, no 刷新页面
+    assert.equal(new NetError('VERSION_UNSUPPORTED', 'x', 'act3autochess@V3_1 has no coop rooms').message, '该版本不能用于当前房间，请检查模拟方式与插件支持的版本');
+    assert.equal(new NetError('BAD_TARGET', 'x', 'not a mode of this version').message, errorText('BAD_TARGET'));
+    assert.notEqual(new NetError('PLUGIN_BLOCKED', 'x', 'training does not support version act3autochess@V3_1').message, '客户端版本与服务器不一致，请刷新页面');
   });
 
   test('defaultWsUrl', async () => {
@@ -1316,11 +1320,12 @@ function cssRules(src) {
 describe('multi-device & browser compatibility (static)', () => {
   const index = readFileSync(path.join(PUBLIC, 'index.html'), 'utf8');
 
-  test('index.html: landscape viewport without page zoom, notch-aware, devices.css last, boot diagnostics', () => {
+  test('index.html: landscape viewport without page zoom, notch-aware, devices.css then the theme sheet, boot diagnostics', () => {
     const vp = index.match(/<meta name="viewport" content="([^"]+)"/)?.[1] || '';
     for (const k of ['width=device-width', 'initial-scale=1', 'maximum-scale=1', 'user-scalable=no', 'viewport-fit=cover']) assert.ok(vp.includes(k), `viewport has ${k}`);
     const sheets = [...index.matchAll(/<link rel="stylesheet" href="(\/css\/[^"]+)"/g)].map((x) => x[1]);
-    assert.equal(sheets[sheets.length - 1], '/css/devices.css', 'devices.css is the last stylesheet');
+    assert.equal(sheets[sheets.length - 2], '/css/devices.css', 'devices.css stays the last layout sheet');
+    assert.equal(sheets[sheets.length - 1], '/css/ui-theme.css', 'a local interface theme paints after the device sheet');
     assert.match(index, /<script nomodule src="\/js\/bootLegacy\.js">/, 'a browser without ES modules gets the external fallback');
     const boot = readFileSync(path.join(PUBLIC, 'js/boot.js'), 'utf8');
     const legacy = readFileSync(path.join(PUBLIC, 'js/bootLegacy.js'), 'utf8');
@@ -1390,7 +1395,10 @@ describe('multi-device & browser compatibility (static)', () => {
       const rel = path.relative(ROOT, file);
       const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
       assert.doesNotMatch(src, /:has\(/, `${rel}: :has() (Firefox ESR 115, Safari < 15.4)`);
-      assert.doesNotMatch(src, /@container|container-type|@layer/, `${rel}: container queries / cascade layers`);
+      // A container query inside `@supports (container-type: …)` is progressive enhancement: a browser without support
+      // skips the block instead of breaking (装载卡组's deck height, loadout.css). Everything else stays banned.
+      assert.doesNotMatch(src.replace(/@supports\s*\(container-type:[^)]*\)\s*\{[\s\S]*?\n\}/g, ''),
+        /@container|container-type|@layer/, `${rel}: container queries / cascade layers`);
       for (const r of cssRules(src)) {
         assert.ok(!/(^|[\s,])&/.test(r.selector), `${rel}: CSS nesting in '${r.selector}'`);
         const decls = r.body.split(';').map((d) => d.trim()).filter(Boolean);

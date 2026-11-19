@@ -9,6 +9,8 @@
 // The light tier (精简) compiles the distortion families without their distortion lookups and draws the Rim shaders
 // as the basic family ("exotic shaders fall back").
 
+import { canonicalJson } from '../../../../shared/plugins/identity.js';
+
 const BLEND = Object.freeze({
   Zero: 0, One: 1, DstColor: 2, SrcColor: 3, OneMinusDstColor: 4, SrcAlpha: 5, OneMinusSrcColor: 6, DstAlpha: 7,
   OneMinusDstAlpha: 8, SrcAlphaSaturate: 9, OneMinusSrcAlpha: 10,
@@ -80,6 +82,7 @@ export function fallbackLog() { return [...fallbacks.entries()]; }
 
 const num = (v, d) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const uniformKey = value => Object.is(value, -0) ? '-0' : value;
 
 /** Defaults for uniforms a family reads but a shader does not declare. */
 export const UNIFORM_DEFAULTS = Object.freeze({
@@ -126,5 +129,11 @@ export function compileMaterial(m, opts = {}) {
   const queue = typeof m?.queue === 'number' ? m.queue : m?.queue === 'Geometry' ? 2000 : m?.queue === 'AlphaTest' ? 2450 : m?.queue === 'Overlay' ? 4000 : 3000;
   const defs = { cvs: kw.has('_HGCUSTOMVERTEXSTREAM_ON') || num(floats._HGCustomVertexStream, 0) > 0.5, weight: kw.has('_WEIGHT_ON') || num(floats._Weight, 0) > 0.5, lite };
   const key = `${family}|${defs.cvs ? 1 : 0}${defs.weight ? 1 : 0}${lite ? 1 : 0}`;
-  return { name: m?.name || '', shader: m?.shader || '', family, defs, key, floats, vecs, textures, state, queue, fallback: !!fallback };
+  // Queue order is resolved before adjacent batching. Labels stay on each material's own record.
+  const batchKey = canonicalJson({ key, state,
+    floats: Object.fromEntries(Object.entries(floats).map(([name, value]) => [name, uniformKey(value)])),
+    vecs: Object.fromEntries(Object.entries(vecs).map(([name, value]) => [name, value.map(uniformKey)])),
+    textures: Object.fromEntries(textures.map(({ name, key, def }) => [name, { key, def }])),
+  });
+  return { name: m?.name || '', shader: m?.shader || '', family, defs, key, batchKey, floats, vecs, textures, state, queue, fallback: !!fallback };
 }

@@ -13,6 +13,7 @@
 
 import WebSocket from 'ws';
 import { WIRE_VERSION, encodeWire, decodeWire } from '../../shared/wireCodec.js';
+import { DEFAULT_VERSION } from '../../shared/versions.js';
 
 const REPLY_TYPES = new Set(['ok', 'error', 'welcome', 'pong', 'lobby.state']);
 
@@ -84,6 +85,10 @@ export class TestClient {
    */
   send(msg) {
     const out = { ...msg };
+    // a room.create names 第二期下半 unless the test names a version: the server's lobby default is 规程·序列Ⅰ
+    // (shared/versions.js LOBBY_DEFAULT_VERSION) and these tests exercise the classic room; `version: undefined` asks
+    // for the server's default
+    if (out.t === 'room.create' && !Object.hasOwn(out, 'version')) out.version = DEFAULT_VERSION;
     if (out.rid === undefined) out.rid = this.nextRid++;
     if (out.rid === null) delete out.rid;
     this.ws.send(JSON.stringify(this.wireVersion && out.t !== 'hello' ? encodeWire(out, 'c2s') : out));

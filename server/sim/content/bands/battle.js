@@ -35,7 +35,11 @@
 //                                               retained team grant gives every player's field the map character of the
 //                                               variant whose common_condition holds for that player's elites on the field
 //                                               (condition_golden_chess_le cnt → 预备干员-医疗, _ge cnt → Touch), spawned at
-//                                               combat start on its stage slot (tokens.spawnMapChar). [ASSUMED] that slot's
+//                                               combat start on its stage slot (tokens.spawnMapChar). A 规程 command replaces
+//                                               that player's own band buffs, but it does not cancel this grant: every player
+//                                               whose match bands include it still gets the character, including a teammate
+//                                               whose live command is another effect and a field kept after the holder leaves
+//                                               (prepMapChars already shows that medic). [ASSUMED] that slot's
 //                                               aggroSeq precedes ordinary initial operators; deploySeq stays the runtime spawn
 // Prep-only bands (economy / shop / grants / layers at prep end or round start) live in bands/meta.js.
 
@@ -45,6 +49,7 @@ import {
 } from '../support/index.js';
 import { weaknessRetype, addShieldLayer, PRIO_RESPAWN, reviveNow } from '../items/battle.js';
 import { spawnMapChar } from '../tokens.js';
+import { installCommandMarks } from './commands.js';
 
 export const AMEDIC_BAND = 'band_amedic';
 /**
@@ -60,6 +65,13 @@ const deployedOps = (battle, pid) => playerOps(battle, pid, { fieldOnly: true })
 // band buff behaviours: (battle, ps, params, bandId)
 
 const BY_KEY = {
+  attr_common_global_buff(battle, ps, p, bandId) {
+    if (!ps.input.commandEffectId && battle.data.raw.config?.version?.family !== 'regulation') return;
+    for (const u of playerOps(battle, ps.playerId)) {
+      if (p.filter_autochess_golden && !isElite(u)) continue;
+      passiveBuff(battle, u, `${keyOf(bandId)}:attributes`, { ...directMods({ atk: num(p.atk), hp: num(p.max_hp) }), aspd: num(p.attack_speed) });
+    }
+  },
   // 阿米娅 众志合一
   act1autochess_band2_buff(battle, ps, p, bandId) {
     const n = activeBondIds(battle, ps.playerId).length;
@@ -178,7 +190,7 @@ const BY_KEY = {
     battle.on('hit', (c) => {
       const s = c.source;
       if (!isOp(s) || s.ownerId !== ps.playerId || !c.target || c.target.side !== 'enemy') return;
-      if (isVersionData() && s.def?.position !== 'RANGED') return;
+      if (isVersionData() && battle.data.raw.config?.version?.family !== 'regulation' && s.def?.position !== 'RANGED') return;
       weaknessRetype(c.dmg, s, c.target);
     }, { priority: 5 });
   },
@@ -248,6 +260,9 @@ export function amedicCharsFor(elites, variants = amedicVariants()) {
 function installMapChars(battle) {
   const variants = amedicVariants();
   if (!variants.length) return;
+  // matchBands already carries the retained team grant. Do not also require this player's own
+  // commandEffectId to be the map effect: in 规程 every seat has a command, so that check spawned the
+  // medic only on the holder's half and dropped the one prep still drew for the teammate (issue, round 83).
   const holders = battle.players.filter((ps) => matchBands(battle, ps.playerId).includes(AMEDIC_BAND));
   if (!holders.length) return;
   battle.on('battleStart', () => {
@@ -283,7 +298,8 @@ export function hasBattlePart(bandId) {
 
 export function install(battle) {
   for (const ps of battle.players) {
-    const band = ps.bandId ? bandRecord(ps.bandId) : null;
+    const band = ps.input.commandEffectId ? battle.data.raw.effects?.[ps.input.commandEffectId]
+      : ps.bandId ? bandRecord(ps.bandId) : null;
     if (!band) continue;
     for (const b of buffsOf(band)) {
       const f = b.bbKey ? BY_KEY[b.bbKey] : null;
@@ -292,4 +308,5 @@ export function install(battle) {
     }
   }
   installMapChars(battle);
+  installCommandMarks(battle);
 }

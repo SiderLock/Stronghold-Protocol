@@ -10,7 +10,7 @@ import { audio } from '../audio.js';
 const SUCCESS_SFX = {
   'g.buy': 'buy', 'g.sell': 'sell', 'g.refresh': 'refresh', 'g.freeze': 'freeze', 'g.levelUp': 'levelup',
   'g.move': 'drop', 'g.equip': 'equip', 'g.art': 'artPlace', 'g.reward': 'pick', 'g.choice': 'pick',
-  'g.band': 'confirm', 'g.bandSkip': 'back', 'g.infoReady': 'ready', 'g.emote': 'emote', 'g.destroy': 'back', 'g.unequip': 'back',
+  'g.band': 'confirm', 'g.diyBring': 'confirm', 'g.bandSkip': 'back', 'g.infoReady': 'ready', 'g.emote': 'emote', 'g.destroy': 'back', 'g.unequip': 'back',
 };
 
 let inflight = 0;
@@ -78,6 +78,7 @@ export function choiceRequestScope(opts = {}) {
 }
 
 export const actions = {
+  bondGroup: (idx, setupRevision) => act('g.bondGroup', { idx, setupRevision }),
   infoReady: (setupRevision = 0) => act('g.infoReady', { setupRevision }),
   rerollSetup: (setupRevision) => act('room.rerollSetup', { setupRevision }, { sfx: 'confirm' }),
   // 申请重刷 (GitHub #854): asks the host to start the vote; changes nothing by itself
@@ -85,7 +86,10 @@ export const actions = {
   rerollVote: (voteId, agree) => act('g.rerollVote', { voteId, agree }, { sfx: agree ? 'confirm' : 'back' }),
   cancelReroll: (voteId) => act('room.cancelReroll', { voteId }, { sfx: 'back' }),
   band: (bandId, opts = {}) => act('g.band', { bandId, ...draftRequestScope(opts) }),
+  diyBring: (slots) => act('g.diyBring', { slots }),
   bandSkip: (opts = {}) => act('g.bandSkip', draftRequestScope(opts)),
+  command: (effectId, target) => act('g.command', { effectId, target }, { sfx: 'confirm' }),
+  commandChoice: (choiceId, idx) => act('g.commandChoice', { choiceId, idx }, { sfx: 'pick' }),
   buy: (slot) => act('g.buy', { slot }),
   // a tap while the previous g.refresh is still on the wire is dropped (GitHub #501) — see onRefreshBusy above
   refresh: () => {

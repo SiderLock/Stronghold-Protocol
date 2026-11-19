@@ -82,13 +82,14 @@
 // screen rect for tooltips and overlays (view.pieceScreenRect). A dragged (lifted) item plate is drawn centred on its
 // ground point, i.e. on the pointer (render/app.js).
 
+import { progressLabel } from '../itemProgress.js';
 import { MoteRing } from './motes.js';
 import { UF, ANIM } from '../../../shared/constants.js';
 import { SpineActor } from './spine.js';
 import { skillAttackMode } from './skillAttack.js';
 import { MANIFOLD, isManifold, manifoldCopyForm, manifoldAttackForm } from './manifold.js';
 import { diamondTexture, shadowTexture, fxAtlas, tierChip, statusTexture, itemTexture, hudRings, ringArc, downLabel, HUD_DISC, ELEMENT_RING } from './textures.js';
-import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, PROJ, statusIconKey, statusIconSuppressed } from './style.js';
+import { COLORS, TIER_COLORS, ENEMY_FRAME, UNIT, PROJ, BENCH_UNIT, statusIconKey, statusIconSuppressed } from './style.js';
 import { drawCrate, rowDepthKey, ROW_KEY, deviceBoxOf, DEVICE_BOX } from './tiles.js';
 import { startAtkInterval, nextAtkInterval, clampAtkInterval } from './attackRate.js';
 
@@ -649,7 +650,7 @@ export class UnitView {
   /**
    * @param {ViewCtx} ctx
    * @param {object} info UnitInfo-like: { id, uid?, kind, side, defId, spine, avatar, tier, golden, facing, maxHp, boss?, motion?, name? }
-   * @param {{ prep?: boolean }} [opts]
+   * @param {{ prep?: boolean, bench?: boolean }} [opts]
    */
   constructor(ctx, info, opts = {}) {
     const P = ctx.P;
@@ -663,6 +664,7 @@ export class UnitView {
     this.skillIndex = Number.isInteger(info.skillIndex) ? info.skillIndex : null;
     this._cast = null;            // the last `cast` of a strike slot (onCast): { index, t }
     this.prep = !!opts.prep;
+    this.bench = !!opts.bench;
     this.lodIdle = opts.lod === 'idle';
     this.culled = false;          // outside the viewport this frame (not animated, not drawn)
     this._offDt = 0;              // animation time skipped while culled
@@ -1132,6 +1134,25 @@ export class UnitView {
     this.countText = null;
     this.ammoText = null;          // 设置「弹药数量」: the magazine's count under the ammo bar (_updateAmmoCount)
     this.itemPips = [];
+    this._itemPipRows = 0;
+    this.itemProgressText = null;
+    this.setItemProgress(this.info.itemProgress);
+  }
+
+  /** Equipment's prep-side progress, below the carrier's feet in prep and combat. */
+  setItemProgress(rows) {
+    const label = (rows || []).map(progressLabel).filter(Boolean).join('\n');
+    if (!label) {
+      if (this.itemProgressText) { this.itemProgressText.text = ''; this.itemProgressText.visible = false; }
+      return;
+    }
+    if (!this.itemProgressText) {
+      this.itemProgressText = new this.P.Text('', { fontFamily: 'Bender, Oxanium, sans-serif', fontSize: 16, fontWeight: '700', fill: '#4ed8af', stroke: '#0b0f0e', strokeThickness: 4, align: 'center' });
+      this.itemProgressText.anchor.set(0.5, 0);
+      this.hud.addChild(this.itemProgressText);
+    }
+    if (this.itemProgressText.text !== label) this.itemProgressText.text = label;
+    this.itemProgressText.visible = true;
   }
 
   /** Show a stack count (token stacks in the hand) — BitmapText-free: a tiny canvas-less chip via Text. */
@@ -1150,12 +1171,20 @@ export class UnitView {
   /** Equipped item pips (prep): list of item icon URLs. */
   setItems(urls) {
     const P = this.P;
-    // morphPairing plus can carry two ordinary items and one zero-slot morph (DESIGN §34.15).
-    const list = Array.isArray(urls) ? urls.slice(0, 3) : [];
-    while (this.itemPips.length > list.length) this.itemPips.pop().destroy(); // loop-cap: at most three item pips
+    // Display every carried item, including zero-slot equipment. Balance at most three icons per row:
+    // 4 → 2+2, 5 → 3+2, 6 → 3+3; larger valid inventories use more rows instead of truncating.
+    const list = Array.isArray(urls) ? urls : [];
+    const rows = Math.ceil(list.length / 3);
+    this._itemPipRows = rows;
+    const shortRow = rows ? Math.floor(list.length / rows) : 0, longRows = rows ? list.length % rows : 0;
+    let row = 0, col = 0;
+    while (this.itemPips.length > list.length) this.itemPips.pop().destroy(); // loop-cap: the previous carried-item count
     list.forEach((u, i) => {
       let s = this.itemPips[i];
       if (!s) { s = new P.Sprite(P.Texture.EMPTY); s.anchor.set(0.5); this.hud.addChild(s); this.itemPips[i] = s; }
+      const columns = shortRow + (row < longRows ? 1 : 0);
+      s._itemRow = row; s._itemCol = col; s._itemColumns = columns;
+      if (++col === columns) { row++; col = 0; }
       if (s._url === u) return;
       s._url = u;
       const a = this.ctx.assets;
@@ -1493,12 +1522,8 @@ export class UnitView {
       }
       this.lastAtk = now;
     }
-    if (target && !this.isEnemy && this.info.kind !== 'device') {
-      // operators keep their deploy direction (research 09 §1.2); enemies may turn towards their target
-    } else if (target && this.isEnemy) {
-      const dx = target.x - this.x;
-      if (Math.abs(dx) > 0.1) this.visFacing = dx < 0 ? -1 : 1;
-    }
+    // operators keep their deploy direction (research 09 §1.2); an enemy turns toward the target
+    this._faceAttack(target);
     if (target) {
       const dx = target.x - this.x, dy = target.y - this.y, len = Math.hypot(dx, dy) || 1;
       this.lungeDir.x = dx / len; this.lungeDir.y = dy / len;
@@ -1544,16 +1569,30 @@ export class UnitView {
   }
 
   /**
+   * Face this attack's target. An enemy turns when the target is not straight ahead (|dx| > 0.1); an operator keeps
+   * its deploy direction (research 09 §1.2). The wind-up uses the same rule the moment its clip starts (GitHub #869):
+   * the strike used to be the first time the model turned, so a blocker redeployed behind a walking enemy was swung
+   * at while the model still faced the old walk.
+   */
+  _faceAttack(target) {
+    if (!target || !this.isEnemy) return;
+    const dx = target.x - this.x;
+    if (Math.abs(dx) > 0.1) this.visFacing = dx < 0 ? -1 : 1;
+  }
+
+  /**
    * An attack by this unit is `lead` game seconds ahead in the snapshot buffer: start the Spine attack wind-up now
    * so the strike frame lines up with the attack. True once started (then stop calling for that attack). `kind` = the
-   * 'atk' projKind (a one-off cast winds up at the clip's own speed).
+   * 'atk' projKind (a one-off cast winds up at the clip's own speed). `target` = that attack's view: the model faces
+   * it as the clip starts, by the same rule as onAttack.
    */
-  windUp(lead, kind, castSlot = null, interval = this.atkInterval) {
+  windUp(lead, kind, castSlot = null, interval = this.atkInterval, target = null) {
     if (!this.alive || !this.actor || !this.spineReady) return false;
     this._attackForm(kind);
     this.actor.castStrike?.(this._strikeClip(castSlot));
     const ok = this.actor.windUp(clampAtkInterval(interval), lead, !!PROJ[kind]?.once);
     if (!ok) this.actor.castStrike?.(null);
+    else this._faceAttack(target);
     if (ok && this.imp) this.imp.dirty = true;
     return ok;
   }
@@ -1836,6 +1875,12 @@ export class UnitView {
     const hoverTo = this.flying && (this.alive || (this.dying > DIE_FADE_TAIL && !this.down)) ? FLY_HOVER : 0;
     if (this.hover !== hoverTo) this.hover = Math.abs(hoverTo - this.hover) < 1e-3 ? hoverTo : this.hover + (hoverTo - this.hover) * Math.min(1, dt * 6);
     const p = cam.project(this.x, this.y, this.z + this.hover + this.lift, this.screen);
+    // Only resting hand operators: leave logical coordinates / tile picking and the pads unchanged.
+    const bench = this.prep && this.bench && this.info.kind === 'op' && this.lift <= 0;
+    const bodyScale = bench ? BENCH_UNIT.scale : 1;
+    const down = bench ? cam.project(this.x, this.y - BENCH_UNIT.forward, this.z + this.hover, LG_P).y - p.y : 0;
+    p.y += down;
+    this.body.scale.set(bodyScale);
     this.placed = true;
     const s = p.s;
     // fades
@@ -1875,8 +1920,8 @@ export class UnitView {
     const shz = this.shadowZ ?? this.z;
     placeOnGround(this.ctx, this.shadow, this.ctx.layers.shadow, this.y, shz);
     const sh = cam.project(this.x, this.y, shz, SH_P);
-    this.shadow.position.set(sh.x, sh.y);
-    const shw = s * (this.isBoss ? 1.6 : 0.95) / this.shadow.texture.width;
+    this.shadow.position.set(sh.x, sh.y + down);
+    const shw = s * bodyScale * (this.isBoss ? 1.6 : 0.95) / this.shadow.texture.width;
     this.shadow.scale.set(shw, shw * (this.shadow.texture === shadowTexture() ? 1 : 1.05));
     this.shadow.alpha = 0.5 * alpha * (this.lift > 0 ? 0.6 : 1);
 
@@ -1965,13 +2010,13 @@ export class UnitView {
     if (this.aura) {
       const k = 0.35 + 0.12 * Math.sin(t * 2.2 + this.bob);
       this.aura.alpha = k;
-      this.aura.scale.set((s * 1.3) / 128, (s * 1.9) / 128);
+      this.aura.scale.set((s * bodyScale * 1.3) / 128, (s * bodyScale * 1.9) / 128);
     }
 
     // keep the original short-circuit: many views never build an actor (prep chips, diamonds, tests), so the model
     // only counts when a spine is actually shown
     const actor = spineShown ? this.actor : null;
-    const headTiles = this._headTiles = headTilesForUnit({
+    const headTiles = this._headTiles = bodyScale * headTilesForUnit({
       isEnemy: this.isEnemy, isBoss: this.isBoss, spineShown,
       bounds: actor && actor.entry ? actor.entry.bounds : null,
       modelK: this.modelK, modelKY: this.modelKY,
@@ -2110,12 +2155,21 @@ export class UnitView {
       this.countText.scale.set(clamp(s / 90, 0.5, 1.2));
       this.countText.position.set(x + s * 0.32, this.screen.y - s * 0.12);
     }
+    const pipSize = clamp(s * 0.26, 12, 30);
     for (let i = 0; i < this.itemPips.length; i++) {
       const pip = this.itemPips[i];
-      const ps = clamp(s * 0.26, 12, 30);
-      pip.width = pip.height = ps;
-      pip.position.set(this.screen.x - s * 0.36 + i * (ps + 1), this.screen.y - s * 0.05);
+      pip.width = pip.height = pipSize;
+      pip.position.set(
+        this.screen.x + (pip._itemCol - (pip._itemColumns - 1) / 2) * (pipSize + 1),
+        this.screen.y - s * 0.05 - (this._itemPipRows - 1 - pip._itemRow) * (pipSize + 2),
+      );
       pip.visible = this.alive;
+    }
+    if (this.itemProgressText) {
+      this.itemProgressText.visible = this.alive && !!this.itemProgressText.text;
+      this.itemProgressText.scale.set(clamp(s * 0.2, 10, 16) / 16);
+      const progressTop = this.itemPips.length ? Math.max(s * 0.14, -s * 0.05 + pipSize / 2 + 2) : s * 0.14;
+      this.itemProgressText.position.set(this.screen.x, this.screen.y + progressTop);
     }
   }
 
@@ -2608,7 +2662,7 @@ export class UnitView {
   bounds() {
     const s = this.screen.s || 1;
     const h = (this._headTiles || UNIT.headroom) * s;
-    const w = s * 0.7;
+    const w = s * 0.7 * this.body.scale.x;
     return { x: this.screen.x - w / 2, y: this.screen.y - h, width: w, height: h + s * 0.1 };
   }
 

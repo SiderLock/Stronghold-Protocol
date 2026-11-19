@@ -1,3 +1,4 @@
+import { seedReleaseRead } from '../helpers/releaseNotes.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync} from 'node:fs';
@@ -16,7 +17,7 @@ test('a spectator requests an AI in the browser, receives majority approval and 
     await voter.evaluateOnNewDocument(token=>{localStorage.setItem('sp.name','Host');sessionStorage.setItem('sp.entered','1');sessionStorage.setItem('sp.token',token);},host.token);
     await voter.goto(srv.url+'/');await voter.waitForSelector('.gm__corner .ai-participation-entry');
     const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width:1440,height:900});
-    await page.evaluateOnNewDocument(()=>{localStorage.setItem('sp.name','Late');sessionStorage.setItem('sp.entered','1');});await page.goto(srv.url+'/');
+    await page.evaluateOnNewDocument(()=>{localStorage.setItem('sp.name','Late');sessionStorage.setItem('sp.entered','1');});await seedReleaseRead(page); await page.goto(srv.url+'/');
     await page.waitForFunction(async()=>{const {net}=await import('/js/net.js');return net.status==='online';});
     await page.evaluate(async code=>{const {net}=await import('/js/net.js');await net.request('room.spectate',{code});},room.code);
     await page.waitForSelector('.gm__corner .ai-participation-entry');await page.click('.gm__corner .ai-participation-entry');
@@ -54,6 +55,7 @@ test('the host can enable the default-off takeover setting through the room UI',
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 900 });
   await page.evaluateOnNewDocument(() => { localStorage.setItem('sp.name', 'Host'); sessionStorage.setItem('sp.entered', '1'); });
+  await seedReleaseRead(page);
   await page.goto(srv.url);
   await page.waitForFunction(async () => (await import('/js/net.js')).net.status === 'online');
   await page.evaluate(async () => (await import('/js/net.js')).net.request('room.create', { mode: 'coop', difficulty: 'NORMAL' }));

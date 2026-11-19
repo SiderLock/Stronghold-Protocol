@@ -24,7 +24,8 @@
 // becomes active (FxDelay, an m_IsActive clip curve, or the start) and it has playOnAwake (or a playing parent system at
 // the start: Unity plays child systems with their parent); sub-emitter systems only play for their parent. The effect
 // is finished when every non-looping system has ended with no live particle, the non-looping clips have ended and the
-// trails have faded; a looping effect (`_isLoop`, a looping system or clip) runs until `stop()`. `_maxLifetime` ends it
+// trails have faded; a looping effect (`_isLoop`, a looping system or clip) runs until `stop()`. MapEffect is held by
+// its map even when its particle systems finish: its static meshes can keep scrolling. `_maxLifetime` ends it
 // early; `_inactiveOnFinish` nodes hide when it finishes — at its stop() (a projectile's arrival) or when its content
 // has ended — and stay hidden through the `_delayToFinish` linger; `stop({ hit: true })` hides a projectile's
 // `_inactiveOnHit` nodes at once. The light tier (精簡) applies FxLODSetting (`_disableObjects` removed, the
@@ -91,11 +92,11 @@ export function compileEffect(desc, lib = {}) {
   const n = nodes.length;
   const def = {
     key: desc?.key || '', desc, n, nodes,
-    parent: new Int32Array(n).fill(-1), base: new Float32Array(n * 10), activeBase: new Uint8Array(n),
+    parent: new Int32Array(n).fill(-1), base: new Float32Array(n * 10), activeBase: new Uint8Array(n), localMatrices: new Array(n).fill(null),
     ps: new Array(n).fill(null), psr: new Array(n).fill(null), mesh: new Array(n).fill(null), skinned: new Array(n).fill(null),
     trail: new Array(n).fill(null), line: new Array(n).fill(null), subNodes: new Set(), hasPsAncestor: new Uint8Array(n),
     clips: (Array.isArray(desc?.clips) ? desc.clips : []).map(compileClip), animators: [],
-    pe: null, proj: null, fxDelay: new Map(), tweeners: [], uvRot: [], lod: null, follow: null, direction: null,
+    pe: null, proj: null, mapEffect: null, fxDelay: new Map(), tweeners: [], uvRot: [], lod: null, follow: null, direction: null,
     onPlay: [], onFinish: [], switchable: null, colorMod: null, pause: null, pauses: [], materials: [], lite: [],
     textures: Array.isArray(desc?.textures) ? desc.textures : [], meshes: Array.isArray(desc?.meshes) ? desc.meshes : [],
     stats: desc?.stats || {}, refs: Array.isArray(desc?.refs) ? desc.refs : [],
@@ -116,7 +117,11 @@ export function compileEffect(desc, lib = {}) {
     if (nd.meshRenderer && nd.meshFilter !== undefined) {
       const r = nd.meshRenderer;
       def.mesh[i] = { enabled: r.m_Enabled !== false && r.m_Enabled !== 0, mesh: meshRef(nd.meshFilter),
-        order: num(r.m_SortingOrder, 0), layer: num(r.m_SortingLayer, 0), mats: Array.isArray(r.materials) ? r.materials : [] };
+        order: num(r.m_SortingOrder, 0), layer: num(r.m_SortingLayer, 0), mats: Array.isArray(r.materials) ? r.materials : [],
+        // This standing background follows its owner's depth, immediately before Spine. The global ground pass
+        // also precedes the 2D board's raised tiles, which would cover the bottom of this order-zero mesh.
+        // [ASSUMED] Scoped painter-order mapping, not a reconstruction of Unity's full transparent sorting.
+        unitBack: def.key === 'cetsyr_skill_03_buff_01' && nd.name === 'beijing_01' };
     }
     if (nd.skinnedMeshRenderer) {
       const r = nd.skinnedMeshRenderer;
@@ -143,6 +148,7 @@ export function compileEffect(desc, lib = {}) {
       const f = isObj(b.fields) ? b.fields : {};
       switch (b.class) {
         case 'ParticleEffect': case 'EmptyEffect': if (!def.pe && i === 0) def.pe = f; else if (!def.pe) def.pe = f; break;
+        case 'MapEffect': def.mapEffect = f; break;
         case 'ProjectileEffect': def.proj = f; break;
         case 'FxDelay': def.fxDelay.set(i, Math.max(0, num(f._delayTime, 0))); break;
         case 'FxUVTweener': case 'FxUVTweenerAdvance':
@@ -151,7 +157,16 @@ export function compileEffect(desc, lib = {}) {
             period: b.class === 'FxUVTweenerAdvance' && on(f.tweenRepeat) ? Math.max(0, num(f.tweenAnmTime, 0)) : 0,
             extra: Array.isArray(f.extraMapSettings) ? f.extraMapSettings : [] });
           break;
-        case 'FxUVRotation': def.uvRot.push({ node: i, flags: [f._rotateTex1, f._rotateTex2, f._rotateTex3, f._rotateTex4].map(on), angles: [num(f.angle1 ?? f._angle1, 0), num(f._angle2, 0), num(f._angle3, 0), num(f._angle4, 0)] }); break;
+        case 'FxUVRotation': {
+          const flags = [f._rotateTex1, f._rotateTex2, f._rotateTex3, f._rotateTex4].map(on);
+          const angles = [num(f.angle1 ?? f._angle1, 0), num(f._angle2, 0), num(f._angle3, 0), num(f._angle4, 0)];
+          const rotations = angles.map((angle, k) => {
+            const a = flags[k] ? angle * Math.PI / 180 : 0, c = Math.cos(a), s = Math.sin(a);
+            return [c, s, -s, c];
+          });
+          def.uvRot.push({ node: i, flags, angles, rotations, enabled: flags.some(Boolean) ? 1 : 0 });
+          break;
+        }
         case 'FxLODSetting':
           def.lod = { disable: new Set((Array.isArray(f._disableObjects) ? f._disableObjects : []).map((o) => o && o.node).filter((x) => x != null)),
             hook: new Map((Array.isArray(f._particleDetailsHookers) ? f._particleDetailsHookers : []).filter((h) => h && h._particle && h._particle.node != null).map((h) => [h._particle.node, Math.max(0, Math.min(1, num(h._detailPercentage, 1)))])) };
@@ -211,7 +226,7 @@ export function compileEffect(desc, lib = {}) {
     let p = def.parent[i];
     while (p >= 0) { if (def.ps[p]) { def.hasPsAncestor[i] = 1; break; } p = def.parent[p]; }
   }
-  const pe = def.pe || def.proj || {};
+  const pe = def.pe || def.proj || def.mapEffect || {};
   def.delayToPlay = Math.max(0, num(pe._delayToPlay, 0));
   def.randomDelay = Math.max(0, num(pe._randomPlayDelay, 0));
   def.delayToFinish = Math.max(0, num(pe._delayToFinish, 0));
@@ -235,12 +250,22 @@ export function compileEffect(desc, lib = {}) {
   // authored behind its unit: the root's `static_offset` node pushed into the board (z > 0) — see behindUnits
   const so = nodes.find((nd) => nd && nd.name === 'static_offset' && nd.parent === (Number.isInteger(desc?.root) ? desc.root : 0));
   def.back = !!so && Array.isArray(so.pos) && num(so.pos[2], 0) > 0;
-  def.loops = def.isLoop || def.ps.some((p) => p && p.looping && p.playOnAwake !== false) || def.animators.some((a) => def.clips[a.clip]?.loop);
+  def.loops = def.isLoop || !!def.mapEffect || def.ps.some((p) => p && p.looping && p.playOnAwake !== false) || def.animators.some((a) => def.clips[a.clip]?.loop);
   def.material = (i, lite) => {
     const list = lite ? def.lite : def.materials;
     if (list[i] === undefined) list[i] = desc?.materials?.[i] ? compileMaterial(desc.materials[i], { lite }) : null;
     return list[i];
   };
+  // Only local TRS is constant: its world matrix still follows animated ancestors and the effect's placement.
+  const dynamic = new Set([0, def.rotY, def.rotZ]);
+  for (const clip of def.clips) for (const node of clip.nodes.keys()) dynamic.add(node);
+  for (let i = 1; i < n; i++) {
+    if (def.parent[i] < 0 || dynamic.has(i)) continue;
+    const o = i * 10;
+    for (let k = 0; k < 3; k++) { _p3[k] = def.base[o + k]; _s3[k] = def.base[o + 7 + k]; }
+    for (let k = 0; k < 4; k++) _q[k] = def.base[o + 3 + k];
+    def.localMatrices[i] = mat4Trs(_p3, _q, _s3);
+  }
   return def;
 }
 
@@ -252,7 +277,7 @@ let seq = 0;
 export class Effect {
   /**
    * @param {any} def compileEffect(...)
-   * @param {{ seed?: number, lite?: boolean, emission?: number, lib?: any, rngSeed?: number }} [opts]
+   * @param {{ seed?: number, lite?: boolean, emission?: number, minBurst?: boolean, lib?: any, rngSeed?: number }} [opts]
    */
   constructor(def, opts = {}) {
     this.def = def;
@@ -261,6 +286,7 @@ export class Effect {
     this.lib = opts.lib || null;
     const n = def.n;
     this.loc = new Float32Array(def.base);             // animated local TRS
+    this.localMatrices = def.localMatrices.slice();   // shared static locals; a sink write opts this instance out
     this.act = new Uint8Array(def.activeBase);         // own active flags (FxDelay / clips / LOD / inactive lists)
     this.hier = new Uint8Array(n);                     // active in hierarchy this frame
     this.prevHier = new Uint8Array(n);
@@ -300,7 +326,8 @@ export class Effect {
       if (!def.ps[i]) continue;
       let e = emission;
       if (this.lite && def.lod && def.lod.hook.has(i)) e *= def.lod.hook.get(i);
-      this.sys[i] = new PSys(def.ps[i], { seed: (seed0 + i * 7919) >>> 0, emission: e, sub: def.subNodes.has(i) });
+      this.sys[i] = new PSys(def.ps[i], { seed: (seed0 + i * 7919) >>> 0, emission: e,
+        burstFloorScale: opts.minBurst ? e * 2 : 0, sub: def.subNodes.has(i) });
     }
     // sub-emitter wiring
     for (let i = 0; i < n; i++) {
@@ -320,6 +347,7 @@ export class Effect {
   reset(seed) {
     const def = this.def, n = def.n;
     this.loc.set(def.base);
+    for (let i = 0; i < n; i++) this.localMatrices[i] = def.localMatrices[i];
     this.act.set(def.activeBase);
     this.hier.fill(0); this.prevHier.fill(0); this.actAt.fill(-1); this.forcedOff.fill(0);
     this.matOv.clear(); this.rendOv.clear(); this.trails.clear(); this.linePts.clear();
@@ -417,6 +445,7 @@ export class Effect {
     this.__sink = {
       transform(node, pos, rot, scale, euler) {
         const o = node * 10, L = self.loc;
+        self.localMatrices[node] = null;
         if (pos) for (let k = 0; k < 3; k++) if (!Number.isNaN(pos[k])) L[o + k] = pos[k];
         if (rot) {
           for (let k = 0; k < 4; k++) if (!Number.isNaN(rot[k])) L[o + 3 + k] = rot[k];
@@ -523,10 +552,11 @@ export class Effect {
     for (const r of def.uvRot) {
       let ov = this.matOv.get(r.node);
       if (!ov) { ov = {}; this.matOv.set(r.node, ov); }
-      ov._HG_UV_ROTATION = r.flags.some(Boolean) ? 1 : 0;
+      ov._HG_UV_ROTATION = r.enabled;
       for (let k = 0; k < 4; k++) {
-        const a = r.flags[k] ? r.angles[k] * Math.PI / 180 : 0, c = Math.cos(a), s = Math.sin(a);
-        ov['_Rotation' + k] = [c, s, -s, c];
+        const name = '_Rotation' + k, value = r.rotations[k];
+        const matrix = Array.isArray(ov[name]) ? ov[name] : (ov[name] = []);
+        for (let j = 0; j < 4; j++) matrix[j] = value[j];
       }
     }
     // world matrices
@@ -587,6 +617,8 @@ export class Effect {
   _matrices() {
     const def = this.def, L = this.loc, n = def.n;
     for (let i = 0; i < n; i++) {
+      const local = this.localMatrices[i];
+      if (local) { mat4Mul(this.world[def.parent[i]], local, this.world[i]); continue; }
       const o = i * 10;
       _p3[0] = L[o]; _p3[1] = L[o + 1]; _p3[2] = L[o + 2];
       _q[0] = L[o + 3]; _q[1] = L[o + 4]; _q[2] = L[o + 5]; _q[3] = L[o + 6];
@@ -701,7 +733,9 @@ export class Effect {
         const dur = def.maxLifetime > 0 ? def.maxLifetime : num(def.stats.duration, 0) || 1;
         if (ct < dur) busy = true;
       }
-      if (!busy && def.isLoop && this.state === 'play') busy = true; // a looping effect waits for stop()
+      // MapEffect's static renderers live with the tile, independently of finite or renderer-disabled PS children.
+      // Keeping the instance does not restart emission or rewind its material clock.
+      if (!busy && (def.isLoop || def.mapEffect)) busy = true;
     }
     if (def.maxLifetime > 0 && ct >= def.maxLifetime) busy = false;
     if (!busy) this._finish();
@@ -761,7 +795,11 @@ export class Effect {
           for (let k = 0; k < mr.mats.length; k++) {
             if (mr.mats[k] == null || !md.submeshes[k]) continue;
             const mat = def.material(mr.mats[k], lite);
-            if (mat) sink(entry('mesh', i, k, mat, ov, mr.order, mr.layer, dist, flat, this, mr.mesh));
+            if (mat) {
+              const draw = entry('mesh', i, k, mat, ov, mr.order, mr.layer, dist, flat, this, mr.mesh);
+              draw.unitBack = !!mr.unitBack;
+              sink(draw);
+            }
           }
         }
       }

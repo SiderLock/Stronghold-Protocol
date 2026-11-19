@@ -5,11 +5,23 @@
 import { layerGainRoom } from '../../../shared/constants.js';
 
 export class BattleEconomy {
-  addDp(playerId, n) {
+  // Optional source is presentation attribution; the return value and DP arithmetic stay unchanged.
+  addDp(playerId, n, source = null) {
     const ps = this.getPlayer(playerId);
     if (!ps || !Number.isFinite(n)) return 0;
+    const before = ps.dp;
     ps.dp = Math.max(0, Math.min(this.flags.dpMax, ps.dp + n));
+    const reason = source?.def?.subProf;
+    if ((n > 0 && ['agent', 'charger', 'pioneer'].includes(reason)) || (n < 0 && reason === 'merchant')) {
+      this.resourceNumber(source, 'cost', ps.dp - before, reason);
+    }
     return ps.dp;
+  }
+
+  /** Settled display-only resource receipt. Live render hosts opt in; headless/golden runs need no extra events. */
+  resourceNumber(unit, resource, amount, reason) {
+    if (!this.opts.resourceNumbers || !unit?.alive || !unit.deployed || unit.hidden || !Number.isFinite(amount) || amount === 0) return;
+    this._ev(['resource', unit.id, resource, amount, reason]);
   }
 
   /**
@@ -34,7 +46,60 @@ export class BattleEconomy {
     pp.layerGains[bondId] = (pp.layerGains[bondId] ?? 0) + add;
     if (ps && ps.bonds[bondId]) ps.bonds[bondId].layers = (ps.bonds[bondId].layers ?? 0) + add;
     this._ev(['layer', playerId, bondId, add]);
+    this.emit('bondLayersChanged', { playerId, bondId, n: add });
     return add;
+  }
+
+  /** Battle-local layers, separate from the permanent live copy and its 999 cap. */
+  tempLayers(playerId, bondId) {
+    return this._temporaryLayers?.get(playerId)?.get(bondId) || 0;
+  }
+
+  /** Detached display snapshot, including boss gains and the frozen unite carry. */
+  tempLayersSnapshot() {
+    return Object.fromEntries([...(this._temporaryLayers || [])].map(([pid, layers]) => [pid, Object.fromEntries(layers)]));
+  }
+
+  /** Effective layers for gameplay; temporary layers never consume permanent cap room. */
+  effectiveBondLayers(playerId, bondId) {
+    return Math.max(0, Number(this.getPlayer(playerId)?.bonds?.[bondId]?.layers) || 0) + this.tempLayers(playerId, bondId);
+  }
+
+  /** Actual positive gain, capped at 10000 temporary layers per bond; no permanent layerGain hook. */
+  addTempLayers(playerId, bondId, n) {
+    if (this.finished || this.kind === 'unite' || !this.getPlayer(playerId) || typeof bondId !== 'string' || !bondId || !Number.isFinite(n) || n <= 0) return 0;
+    return this._changeTempLayers(playerId, bondId, Math.min(1e4 - this.tempLayers(playerId, bondId), Math.floor(n)));
+  }
+
+  /** Explicit temporary-layer adjustment; expiring equipment does not revoke earned layers. */
+  removeTempLayers(playerId, bondId, n) {
+    if (this.finished || this.kind === 'unite' || !Number.isFinite(n) || n <= 0) return 0;
+    return -this._changeTempLayers(playerId, bondId, -Math.min(this.tempLayers(playerId, bondId), Math.floor(n)));
+  }
+
+  _changeTempLayers(playerId, bondId, n) {
+    if (!n) return 0;
+    this._temporaryLayers ||= new Map();
+    if (!this._temporaryLayers.has(playerId)) this._temporaryLayers.set(playerId, new Map());
+    const layers = this._temporaryLayers.get(playerId);
+    const total = this.tempLayers(playerId, bondId) + n;
+    if (total > 0) layers.set(bondId, total);
+    else layers.delete(bondId);
+    if (!layers.size) this._temporaryLayers.delete(playerId);
+    // Keep normal/boss receipts until next prep. Unite only carries the own battle's frozen ledger.
+    const pp = this.kind !== 'unite' ? this._pp(playerId) : null;
+    if (pp) {
+      if (total > 0) (pp.tempLayerGains ||= {})[bondId] = total;
+      else if (pp.tempLayerGains) {
+        delete pp.tempLayerGains[bondId];
+        if (!Object.keys(pp.tempLayerGains).length) delete pp.tempLayerGains;
+      }
+    }
+    this.emit('bondLayersChanged', { playerId, bondId, n });
+    const receipt = { playerId, bondId, n, total };
+    if (n > 0) this.emit('tempLayerGain', { ...receipt });
+    this.emit('tempLayerChange', receipt);
+    return n;
   }
 
   /**

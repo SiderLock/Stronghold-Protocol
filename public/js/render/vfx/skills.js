@@ -649,6 +649,15 @@ export function skillPlan(idx, unitKey, skillId, opts = {}) {
     if (kk && projs[kk] && !plan.projectiles.includes(kk)) plan.projectiles.push(kk);
   }
   let uses = Array.isArray(skill.uses) ? skill.uses : [];
+  // A unit entry copied from another node of the unit's prefab (规程 铸铁: our record's skcom_heal_self is the
+  // extractor's alias of her skchr_sidero_1 node) keeps the shared skill prefab's own keys too: the client's skill
+  // prefab of that id still carries them (skcom_heal_self's common_heal_hit_01) [ASSUMED both play].
+  const shared = isObj(idx?.skills) ? idx.skills[id] : null;
+  if (shared && shared !== skill && uses.length && uses.every((u) => isObj(u) && u.node && lc(u.node) !== id)) {
+    const have = new Set(uses.flatMap((u) => (Array.isArray(u.keys) ? u.keys.map(lc) : [])));
+    const extra = (Array.isArray(shared.uses) ? shared.uses : []).filter((u) => isObj(u) && Array.isArray(u.keys) && u.keys.some((k) => !have.has(lc(k))));
+    if (extra.length) uses = [...uses, ...extra];
+  }
   if (id === 'skchr_yu_3') {
     // Official ProjectileProbElimateBehaviour places annex_01 at the removed bullet, never on Yu's attacks.
     // GlobalAuraAbility's annex_02 requires the ally buff's ON_TAKE_DAMAGE trigger; no matching sim event exists.
@@ -1342,14 +1351,36 @@ export function chargeKeys(plan) {
  *   cover       fx kinds of the same owner at that tile that the reached effect draws (skipped while it plays)
  *   during      only while the skill lasts (SkillFx._lasts: on, its activation frame, COVER_AFTER_S after its end, or a
  *               binding of its owner still held — a lasting area's strikes); another fx of that kind is the kit's own
+ *   fly         the kit lands the unit at once and emits no 'atk' (旅骨's 炼金单元, 承曦格雷伊's ball): after the area's
+ *               marks, fly this projectile from the caster to the tile (SkillFx._flyThrown). The trail is the
+ *               projectile's main effect; its onHit plays once when the flight lands (wiring._arrive); onReached stays
+ *               with the area (bindsReached). Not set on a skill whose attacks already fly the same projectile — the
+ *               trail would play twice
+ *   hits        oneshot prefabs of the area's tick (ON_BUFF_TRIGGER), played at the tile once per makeZone pulse for
+ *               the zone's time (SkillFx._zoneHits). Not part of `keys`: those loop for the hold. The client plays
+ *               them on each enemy in the area; the sim sends no per-enemy fx, so the tile stands for the pulse
+ *               [ASSUMED] (history §37.202)
+ *   drift       the kit re-sends the area every second under one `key` as it moves (引星棘刺 S2): its reached
+ *               effects play once and follow it (SkillFx._drift); the field view keeps its procedural, growing ring
  * or, instead of a projectile (history §32.14.43):
  *   attack      the node of the plan attack the fx stands for: its cast / range rows play on the owner at the fx, its hit
  *               groups and aims on the damage the fx's frame deals after it (SkillFx kit hits)
+ * or a shell the kit fires and moves itself (history §37.242):
+ *   launch      the last node name of a to-tile ability of the owner's current mode (its facing variant): the fx fires
+ *               it now — its cast rows on the owner for its facing, `projectile`'s flying effect straight from the
+ *               muzzle to the fx's point over the kit's flight time `extra.t` (SkillFx._launch)
+ *   ends        the fx kind of a launch binding this fx ends: the owner's oldest shell in the air stops where it is
+ *               (the kit's explosion, which may come before the end point), then this binding plays
  * The R11 entries (0.3.0 official-effects audit, history §32.14.44) bind a kit area or strike to the official prefab
  * the client plays there: the areas are the skill projectiles' reached effects (the projectile stays where it lands —
  * AuraHitBehaviour — for the area's life), the strikes their hit effects.
  */
-const binding = (o) => Object.freeze({ ...o, ...(o.cover ? { cover: Object.freeze(o.cover) } : {}), ...(o.keys ? { keys: Object.freeze(o.keys) } : {}) });
+const binding = (o) => Object.freeze({
+  ...o,
+  ...(o.cover ? { cover: Object.freeze(o.cover) } : {}),
+  ...(o.keys ? { keys: Object.freeze(o.keys) } : {}),
+  ...(o.hits ? { hits: Object.freeze(o.hits) } : {}),
+});
 export const FX_BINDINGS = Object.freeze({
   // Official cetsyr_s_3[collect_hp_ratio] ON_BUFF_TRIGGER CreateEffect on BUFF_OWNER.
   // The kit's existing HP redistribution event supplies this moment (no client timer / guessed pulse).
@@ -1370,14 +1401,33 @@ export const FX_BINDINGS = Object.freeze({
   // 锡人 S1 / S2 (chess_char_2_19-tinman.js: the 'zone' on the struck tile, id = him, dur = the area's time): the client's
   // flask (projectile_chr_tinman_s1 / _s2) lands there — its reached effects are the ring (tinman_skill_0N_range_01,
   // looping), the flask on the ground (_token_01, looping) and the splash (_start_01 / _02)
-  skchr_tinman_1: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_tinman_s1', at: 'point', hold: 'fx', holdS: 8, during: true, cover: ['zone'] }) }),
-  skchr_tinman_2: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_tinman_s2', at: 'point', hold: 'fx', holdS: 8, during: true, cover: ['zone'] }) }),
+  // The tick hit tinman_skill_0N_hit_01 (ON_BUFF_TRIGGER of tinman_s_1[dot] / tinman_s_2[buff], index.json) plays once a
+  // second at the tile for the area's time, as 旅骨's (`hits`, history §37.207)
+  skchr_tinman_1: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_tinman_s1', at: 'point', hold: 'fx', holdS: 8, during: true, cover: ['zone'], hits: ['tinman_skill_01_hit_01'] }) }),
+  skchr_tinman_2: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_tinman_s2', at: 'point', hold: 'fx', holdS: 8, during: true, cover: ['zone'], hits: ['tinman_skill_02_hit_01'] }) }),
   // 引星棘刺 S1 / S3 (chess_char_5_15-thorn2.js: a 'zone' on each chosen ally's tile, id = her, duration): the unit she
   // throws (projectile_chr_thorn2_s1 / _s3) lands there — thorn2_token_start, the unit (thorn2_skill_0N_token, looping),
-  // S1's ring (thorn2_skill_01_range). S2's unit drifts (its zone re-sent every second): not bound — the procedural area
-  // stays (open)
+  // S1's ring (thorn2_skill_01_range). S2's unit drifts and grows (its zone re-sent every second under one key, 12 s):
+  // `drift` — the landing (thorn2_token_start) and the unit (thorn2_skill_02_token) follow it; its growing ring stays the
+  // procedural zone (the client scales thorn2_skill_02_range live; we cannot) (the owner, 2026-11-14: every alchemist's
+  // 炼金单元 has its official effect, history §37.207)
   skchr_thorn2_1: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_thorn2_s1', at: 'point', hold: 'fx', holdS: 6, during: true, cover: ['zone'] }) }),
+  skchr_thorn2_2: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_thorn2_s2', at: 'point', hold: 'fx', holdS: 12, during: true, drift: true }) }),
   skchr_thorn2_3: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_thorn2_s3', at: 'point', hold: 'fx', holdS: 19, during: true, cover: ['zone'] }) }),
+  // 旅骨 S1 / S2 (ver-hbound.js: the alchemy unit's 'zone' on the tile, id = her, dur = projectile_delay_time, skill =
+  // the skill id; the sim lands it at once and emits no 'atk'). The client's ProjectileToTileAbility throws
+  // projectile_chr_hbound_s1 / _s2 (ParacurveMovement, speed 10): the trail hbound_trail_01, and on the tile the looping
+  // range hbound_skill1_range_01 / hbound_skill2_range_01 (spawn GROUND) for the projectile's life. The tick hit
+  // hbound_skill1_hit_01 / hbound_skill2_hit_01 is ON_BUFF_TRIGGER of hbound_s_1[dot] / hbound_s_2[buff], not an onHit
+  // (index.json). `fly` draws the trail; `hits` the tick, once per makeZone pulse, at the tile [ASSUMED] (history §37.202)
+  skchr_hbound_1: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_hbound_s1', at: 'point', hold: 'fx', holdS: 8, during: true, cover: ['zone'], fly: true, hits: ['hbound_skill1_hit_01'] }) }),
+  skchr_hbound_2: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_hbound_s2', at: 'point', hold: 'fx', holdS: 31, during: true, cover: ['zone'], fly: true, hits: ['hbound_skill2_hit_01'] }) }),
+  // 承曦格雷伊 S2 (ver-greyy2.js: the ball's 'zone' on the aimed tile, re-sent every interval with the full
+  // projectile_delay_time, id = her, skill = skchr_greyy2_2). projectile_chr_greyy2_s2 (AdvancedMovement, speed 8):
+  // trail greyy2_skill_02_trail, onReached the looping greyy2_skill_02_range, onHit greyy2_skill_02_hit_02 once as it
+  // lands. The ball does not move, so the first mark's cover swallows the later zones (unlike 引星棘刺 S2). Her cast
+  // row greyy2_skill_02_start already plays on her; it is not this area (history §37.202)
+  skchr_greyy2_2: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_greyy2_s2', at: 'point', hold: 'fx', holdS: 8, during: true, cover: ['zone'], fly: true }) }),
   // 波登可 S2 ('zone' of her spores, id = her, dur): projectile_chr_podego_s2's reached podego_skill_02_range
   skchr_podego_2: Object.freeze({ zone: binding({ owner: 'id', projectile: 'projectile_chr_podego_s2', at: 'point', hold: 'fx', holdS: 5, during: true, cover: ['zone'] }) }),
   // 歌蕾蒂娅 S3 ('tornado', id = her, duration): projectile_chr_glady_s3_2's reached glady_skill_03_range / _02
@@ -1403,6 +1453,17 @@ export const FX_BINDINGS = Object.freeze({
   skchr_lemuen_3: Object.freeze({
     lock: binding({ owner: 'src', keys: ['lemuen_skill_03_crosshair_range', 'lemuen_skill_03_crosshair_02'], hold: 'lock', during: true }),
     bombard: binding({ owner: 'id', projectile: 'projectile_chr_lemuen_s3_attack', at: 'point', holdS: 2, during: true }),
+  }),
+  // 涤火杰西卡 S3 (kits/ops/op-jesca2.js fireBomb / explode): a 'bombardShell' (id = her, the farthest tile ahead, `t` its
+  // flight time) is her mode S3's ExtraBomb (ProjectileToTileAbility: cast jesca2_skill_03_start_02 / _down for her
+  // facing, projectile_chr_jesca2_s3_bomb flying straight at speed 5 with its main jesca2_skill_03_trail_02); its
+  // 'bombard' (id = her, where it went off) is that projectile's EffectBehaviour _effectsWhenStop jesca2_skill_03_hit_02
+  // (index.json lists it under `effects`, not onHit / onReached). Until round 83 both were 蕾缪安's procedural mortar
+  // shell and blast (GitHub report: her S3's attack effects looked wrong). No `during` on the explosion: a shell fired
+  // at the skill's last moment still lands after it
+  skchr_jesca2_3: Object.freeze({
+    bombardShell: binding({ owner: 'id', launch: 'ExtraBomb', projectile: 'projectile_chr_jesca2_s3_bomb', during: true }),
+    bombard: binding({ owner: 'id', keys: ['jesca2_skill_03_hit_02'], at: 'point', oneshot: true, ends: 'bombardShell' }),
   }),
   // 泡泡 S2 (chess_char_2_08-bubble.js): she makes no attack; every damage instance she takes strikes back at its source
   // ('counter': id = her, target = the attacker). The client's bubble_s_2 does it at ON_TAKE_DAMAGE — DamageViaAttr and
@@ -1558,7 +1619,15 @@ export function enemyCoverOf(unitKey, prefabKey, kind) {
 /** Every key a skill's bindings can play (preloading). */
 export function bindingKeys(idx, skillId) {
   const out = new Set();
-  for (const bind of Object.values(FX_BINDINGS[lc(skillId)] || {})) for (const k of bindingEffects(idx, bind)) out.add(k);
+  for (const bind of Object.values(FX_BINDINGS[lc(skillId)] || {})) {
+    for (const k of bindingEffects(idx, bind)) out.add(k);
+    // the tick oneshots and, when the binding flies the shot itself, the trail (preloading; neither is a reached effect)
+    for (const k of bind.hits || []) if (lc(k)) out.add(lc(k));
+    if ((bind.fly || bind.launch) && bind.projectile) {
+      const main = lc(idx?.projectiles?.[lc(bind.projectile)]?.main);
+      if (main) out.add(main);
+    }
+  }
   return [...out];
 }
 

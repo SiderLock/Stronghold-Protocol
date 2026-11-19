@@ -44,7 +44,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import { getData, loadData } from './data.js';
-import { getBotStrategy } from './match/botStrategies.js';
+import { getBotStrategy, getBotStrategySeats } from './match/botStrategies.js';
 import { noteLlmIgnored, releaseIgnoresExternalAi, validateExternalConfig } from './match/llmGate.js';
 import { ROOT, listenAddress, bindCandidates, serveDirs, makeLogger, parseTrustProxy, assetIndexOptionsFrom, versionsFrom, parseRoomCode } from './http/config.js';
 import { WS_MAX_PAYLOAD, createSessionStack, attachWebSocket } from './http/websocket.js';
@@ -61,6 +61,7 @@ import { createPluginPolicy } from './plugins/policy.js';
 import { createRoomSets } from './plugins/roomSets.js';
 import { createMatchHosts } from './match/host/index.js';
 import { createRehearsalPool } from './match/rehearsalPool.js';
+import { processWorkQueue } from './match/workQueue.js';
 import { createVersionSets } from './versions.js';
 import { versionById } from '../shared/versions.js';
 import { t } from '../shared/i18n.js';
@@ -136,6 +137,12 @@ export async function startServer(opts = {}) {
   } catch (cause) {
     throw new Error(`Invalid SP_BOT_STRATEGY: ${cause.message}. Unset SP_BOT_STRATEGY to use the original bot (legacy).`, { cause });
   }
+  try {
+    const seats = getBotStrategySeats(process.env.SP_BOT_STRATEGY_SEATS);
+    if (Object.values(seats).some((s) => s.id === 'external')) validateExternalConfig();
+  } catch (cause) {
+    throw new Error(`Invalid SP_BOT_STRATEGY_SEATS: ${cause.message}. Unset SP_BOT_STRATEGY_SEATS to use SP_BOT_STRATEGY for every seat.`, { cause });
+  }
   const { port, host } = listenAddress(opts);
   const { publicDir, dataDir, sharedDir, packsDir, pluginsDir } = serveDirs(opts);
   const simDir = path.join(ROOT, 'server', 'sim');
@@ -164,8 +171,10 @@ export async function startServer(opts = {}) {
   const visual = createVisualSets({ registry: packs, log });
   // the server owner's policy (plugins/config.json), the content sets of the gameplay plugins (served at /cs/<cs16>/…),
   // what a room's plugins make of both, and the match hosts a room with gameplay plugins plays in (DESIGN §32.6)
+  const versionCfg = versionsFrom(opts, log);
+  const versions = createVersionSets({ enabled: versionCfg.enabled, defaultId: versionCfg.default, dataDir, vanilla: content, defaultData: data, log });
   const policy = createPluginPolicy({ pluginsDir, log });
-  const contents = createContentSets({ registry: packs, vanillaData: data, log, maxSets: () => policy.get().maxSets });
+  const contents = createContentSets({ registry: packs, vanillaData: data, versions, log, maxSets: () => policy.get().maxSets });
   const roomSets = createRoomSets({ registry: packs, visual, contents, policy });
   // a child process per content set; SP_MATCH_HOST=worker asks for a worker thread instead (match/host/index.js header:
   // an out-of-memory abort in a worker thread ends the whole server)
@@ -176,8 +185,6 @@ export async function startServer(opts = {}) {
   const rehearsalPool = createRehearsalPool({ data, workers: rehearsalWorkers, log });
   // the official versions (DESIGN §35.23, M1): which ones (the option, else SP_VERSIONS …), their content, and — only
   // when one beyond 第二期下半 is enabled — the match hosts their rooms play in (counted apart from the plugin hosts)
-  const versionCfg = versionsFrom(opts, log);
-  const versions = createVersionSets({ enabled: versionCfg.enabled, defaultId: versionCfg.default, dataDir, vanilla: content, defaultData: data, log });
   // (the test options of matchHost apply to both pools, but never the version pool's kind or its own SP_MAX_VERSION_HOSTS)
   const versionHosts = versions.nonDefault.length
     ? createMatchHosts({ contents: versions, log, options: { transport, ...(opts.matchHost || {}), kind: 'version', maxWorkers: Math.max(1, versionCfg.maxHosts) } })
@@ -194,13 +201,17 @@ export async function startServer(opts = {}) {
     counts: () => {
       const s = lobby.stats();
       const phases = new Set();
+      const activeVersions = new Set();
       let rehearsals = 0;
       for (const room of lobby.rooms.values()) {
         if (room.match?.phase) phases.add(room.match.phase);
+        if (room.match && room.version) activeVersions.add(room.version);
         rehearsals += room.match?._rehearsalTasks?.size || 0;
       }
+      const work = processWorkQueue.stats(), workers = rehearsalPool.stats();
       return { rooms: s.rooms, matches: s.matches, humans: s.humans, spectators: s.spectators,
-        phase: [...phases].sort().join('+') || 'idle', rehearsals };
+        phase: [...phases].sort().join('+') || 'idle', versions: [...activeVersions].sort().join('+') || 'none', rehearsals,
+        workQueued: work.queued, workPeakMs: Math.round(work.maxSliceMs), workerQueued: workers.queued, workerRunning: workers.running };
     },
   });
   const serveStatic = createStaticHandler({ publicDir, dataDir, sharedDir, simDir, packsDir, pluginsDir, packs, content, runtimeCache: opts.runtimeCache, log, assetIndex, views, visual, contents, versions });

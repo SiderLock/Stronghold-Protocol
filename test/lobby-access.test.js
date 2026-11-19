@@ -202,7 +202,7 @@ test('directory observation works before and during matches and preserves the tw
   before.connected = false;
   lobby.onDisconnect(before);
   error(access(third, r, true), ERR.ROOM_FULL);
-  error(access(host, r, true), ERR.ALREADY, 'players cannot change into observers in place');
+  error(access(host, r, true), ERR.ROOM_STARTED, 'a running match refuses the role change, keeping the participant seated');
   assert.deepEqual(lobby.removeSpectator(host, { playerId: before.playerId }), { ok: true });
   assert.equal(r.match.spectators.has(before.playerId), false);
   assert.equal(roomSummary(r).spectatable, true);

@@ -9,6 +9,7 @@ import { compileSystem, PSys } from '../../public/js/render/vfx/psys.js';
 import { Shape } from '../../public/js/render/vfx/shapes.js';
 import { Rng } from '../../public/js/render/vfx/rng.js';
 import { mat4, mat4Trs, quatEuler } from '../../public/js/render/vfx/math.js';
+import { FrameData, buildParticles, buildParticleTrails, cameraBasis } from '../../public/js/render/vfx/geom.js';
 
 const ID = { m: mat4(), scale: [1, 1, 1] };
 const frameAt = (x, y, z, rot = [0, 0, 0, 1], s = [1, 1, 1]) => ({ m: mat4Trs([x, y, z], rot, s), scale: s });
@@ -33,6 +34,21 @@ function run(ps, seconds, frame = ID, dt = 1 / 60) {
 }
 
 describe('emission', () => {
+  test('low quality preserves positive one-particle bursts and sub-emitters without reviving authored zero or disabled emission', () => {
+    for (const [count, emission, probability, expected] of [[1, 0.25, 1, 1], [8, 0.25, 1, 2], [0, 0.25, 1, 0], [1, 0, 1, 0], [1, 0.25, 0, 0], [0.4, 0.25, 1, 0], [1, 0.1, 1, 0]]) {
+      const def = compileSystem(sys({ E: { m_Bursts: [{ time: 0, countCurve: count, cycleCount: 1, probability }] } }));
+      const ps = new PSys(def, { emission, burstFloorScale: emission * 2 });
+      ps.play(ID); run(ps, 1 / 60);
+      assert.equal(ps.count, expected, `normal burst count=${count} scale=${emission} probability=${probability}`);
+      const sub = new PSys(def, { emission, burstFloorScale: emission * 2, sub: true });
+      sub.setFrame(ID); sub.trigger(1, 2, 3, null);
+      assert.equal(sub.count, expected, 'sub-emitter uses the same low-tier floor');
+    }
+    const legacy = new PSys(compileSystem(sys({ E: { m_Bursts: [{ time: 0, countCurve: 1, cycleCount: 1 }] } })), { emission: 0.25 });
+    legacy.play(ID); run(legacy, 1 / 60);
+    assert.equal(legacy.count, 0, 'the new floor is opt-in; legacy profiles retain their rounding');
+  });
+
   test('rate over time emits rate × duration particles, then stops (non-looping)', () => {
     const ps = new PSys(compileSystem(sys({ E: { rateOverTime: 20 } })), {});
     ps.play(ID);
@@ -227,6 +243,37 @@ describe('sub-emitters', () => {
 });
 
 describe('trails', () => {
+  test('distance sorting, ribbons and orphan trails stay identical when shared scratch buffers grow and shrink', () => {
+    const cam = cameraBasis(30, [0, -5, -8], 540, 0.7);
+    const renderer = { mode: 'billboard', align: 'view', sortMode: 1, maxSize: 0.5, minSize: 0 };
+    function make(count, mode) {
+      const ps = new PSys(compileSystem(sys({ I: { startLifetime: 2, startSpeed: 1 },
+        E: { m_Bursts: [{ time: 0, countCurve: count, cycleCount: 1, probability: 1 }] },
+        extra: { TrailModule: { mode, lifetime: 4, ratio: 1, minVertexDistance: 0.01, dieWithParticles: false } },
+      })), { seed: 7 });
+      ps.play(ID); run(ps, 0.1);
+      for (let i = 0; i < ps.count; i++) { ps.px[i] = i * 0.1; ps.py[i] = (i % 2) * 0.1; }
+      return ps;
+    }
+    function geometry(ps) {
+      const frame = new FrameData();
+      buildParticles(ps, renderer, cam, frame, 1);
+      buildParticleTrails(ps, cam, frame);
+      return { quad: [...frame.quad.subarray(0, frame.nq * 27)],
+        strip: [...frame.strip.subarray(0, frame.ns * 12)], indices: [...frame.index.subarray(0, frame.ni)] };
+    }
+    const small = make(4, 1), expected = geometry(small);
+    assert.ok(expected.strip.length > 0 && expected.indices.length > 0);
+    for (const size of [64, 2, 128, 3]) {
+      geometry(make(size, 1));
+      const orphan = make(size, 0);
+      run(orphan, 2.1);
+      assert.ok(orphan.orphans.length > 0);
+      assert.ok(geometry(orphan).strip.length > 0);
+      assert.deepEqual(geometry(small), expected);
+    }
+  });
+
   test('the trail module records points every minVertexDistance', () => {
     const ps = new PSys(compileSystem(sys({ top: { moveWithTransform: 1 }, I: { startLifetime: 2, startSpeed: 3 },
       E: { m_Bursts: [{ time: 0, countCurve: 1, cycleCount: 1, repeatInterval: 0.01, probability: 1 }] },

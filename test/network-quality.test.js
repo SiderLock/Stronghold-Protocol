@@ -10,12 +10,55 @@ import { startServer } from '../server/index.js';
 import { TestClient } from './helpers/wsClient.js';
 import { StateReceiver, STATE_DELTA_VERSION } from '../shared/stateDelta.js';
 import { negotiateStateDelta } from '../server/stateTransport.js';
+import { createConnectionMetrics } from '../server/connectionMetrics.js';
+import { Lobby } from '../server/lobby.js';
 
 class Socket extends EventEmitter {
   constructor() { super(); this.readyState = 1; this.bufferedAmount = 0; this.sent = []; }
   send(data, cb) { this.sent.push(JSON.parse(data)); cb?.(); }
   terminate() { this.readyState = 3; this.emit('close'); }
 }
+
+test('slow-handler evidence distinguishes synchronous computation from async waiting and stays rate-limited', () => {
+  let at = 1000;
+  const evidence = [], context = { room: 'TEST', version: 'act2autochess', phase: 'COMBAT' };
+  const metrics = createConnectionMetrics({ now: () => at, onSlow: (sample, supplied) => evidence.push({ ...sample, ...supplied }) });
+  try {
+    metrics.recordHandler('g.ready', 4, 4, context);
+    assert.equal(evidence.length, 0);
+    metrics.recordHandler('g.ready', 4, 700, context);
+    assert.deepEqual(evidence, [{ type: 'g.ready', syncMs: 4, totalMs: 700, ...context }]);
+    assert.equal(metrics.handler.read(), 700);
+    at += 10000;
+    metrics.recordHandler('room.start', 300, 300, context);
+    assert.equal(evidence.length, 1, 'slow logs do not flood a busy server');
+    assert.equal(metrics.handler.read(), 300, 'rate-limiting does not discard timing evidence');
+    at += 30000;
+    metrics.recordHandler('room.start', 300, 300, context);
+    assert.equal(evidence.length, 2);
+    for (const invalid of [-1, NaN, Infinity]) metrics.recordHandler('g.ready', invalid, invalid, context);
+    assert.equal(evidence.length, 2);
+  } finally { metrics.close(); }
+});
+
+test('a broken slow-handler logger cannot break requests or timing measurements', () => {
+  const metrics = createConnectionMetrics({ onSlow: () => { throw new Error('logger failure'); } });
+  try {
+    assert.doesNotThrow(() => metrics.recordHandler('room.start', 150));
+    assert.equal(metrics.snapshot().handlerMs, 150);
+  } finally { metrics.close(); }
+});
+
+test('slow-operation room context contains version and compute queues without identity or credential data', () => {
+  const room = { code: 'TEST', version: 'act2autochess@V2_1',
+    seats: [{ name: 'private name', playerId: 'private player', token: 'private token' }, { isBot: true }],
+    match: { phase: 'PREP', round: 7, hosted: true } };
+  const lobby = { roomOf: () => room, rehearsalPool: { stats: () => ({ queued: 14, running: 1 }) } };
+  const context = Lobby.prototype.performanceContext.call(lobby, { secret: 'private secret' });
+  assert.deepEqual(context, { room: 'TEST', version: room.version, phase: 'PREP', round: 7, hosted: true,
+    seats: 2, bots: 1, work: null, rehearsal: { queued: 14, running: 1 } });
+  assert.doesNotMatch(JSON.stringify(context), /private|token|secret|name|playerId/);
+});
 const publicState = (n, fields = {}) => ({ t: 'm.public', phase: 'PREP', round: 1, deadline: 20000,
   paused: false, serverNow: n, players: [], fields: [], ...fields });
 

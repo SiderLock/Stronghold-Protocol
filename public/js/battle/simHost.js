@@ -16,7 +16,7 @@ export class InPageSimHost {
   }
   start(spec, opts = {}) {
     this.spec = spec;
-    this.battle = this.sim.spec.createBattleFromSpec(spec, this.sim.ds, opts);
+    this.battle = this.sim.spec.createBattleFromSpec(spec, this.sim.ds, { resourceNumbers: true, ...opts });
     this.meter = this.sim.spec.attachLpMeter(this.battle);
     return this;
   }
@@ -33,6 +33,10 @@ export class InPageSimHost {
     }
     // Lazy reads keep the vanilla runner's snapshot/event timing unchanged.
     return { get snap() { return b.snapshot(); }, get ev() { return b.drainEvents() || []; }, state: b, ticks, slices };
+  }
+  // Battle-local snapshot includes non-settling boss/unite layers too.
+  tempLayersSnapshot() {
+    return this.battle?.tempLayersSnapshot() || {};
   }
   progress() { return this.sim.spec.battleProgress(this.battle); }
   uniteLeft() { return this.sim.spec.uniteLeft(this.battle); }
@@ -130,6 +134,10 @@ export class WorkerSimHost {
     return this;
   }
   async step(n, opts) { return this.accept(await this.rpc('step', [n, opts])); }
+  tempLayersSnapshot() {
+    if (this.stopped) return {};
+    return Object.fromEntries(Object.entries(this.packet?.tempLayersSnapshot || {}).map(([pid, own]) => [pid, { ...own }]));
+  }
   progress() { return this.packet.progress; }
   uniteLeft() { return this.packet.left; }
   compactResult() { return this.packet.result; }

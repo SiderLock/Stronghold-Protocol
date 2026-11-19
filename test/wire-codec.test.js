@@ -19,8 +19,10 @@ const nameOf = (f) => typeof f === 'string' ? f : f[0];
 // explicit: adding a business field must not silently weaken coverage or renumber the fixed catalog.
 const V1_EXTENSIONS = Object.freeze({
   hello: ['delta'],
-  'room.create': ['assetCache', 'test', 'version', 'soloUnlimited'], 'room.join': ['assetCache', 'testAck'],
+  // 0.4.0: room.create also carries the laddered official mode and the lobby-chosen room plugins
+  'room.create': ['assetCache', 'test', 'version', 'soloUnlimited', 'modeId', 'plugins'], 'room.join': ['assetCache', 'testAck'],
   'lobby.quickMatch': ['assetCache'], 'room.spectate': ['assetCache', 'testAck'],
+  'b.progress': ['ops'], // 0.3.4: leader ops / damage progress
   'b.result': ['cs'], // 0.3.0 content identity (DESIGN §8.4)
 });
 // Published v1 has no new numeric IDs: these post-v1 business types deliberately use its JSON fallback.
@@ -30,8 +32,12 @@ const V1_JSON_FALLBACK = Object.freeze({
     // 0.3.1 business types (skins / unequip rule / plugin offers / test console) — post-v1, JSON fallback
     'room.skins', 'g.unequip', 'g.offer', 'g.offerRefresh', 'g.test',
     'room.aiRequest', 'room.aiVote', 'room.cancelVersionVote', 'room.card', 'room.proposeVersion',
-    'room.setAiTakeover', 'room.setSoloUnlimited', 'room.versionVote', 'state.resync'],
-  s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel'],
+    'room.setAiTakeover', 'room.setSoloUnlimited', 'room.versionVote', 'state.resync',
+    // P2P relay (0.3.4), lobby plugin preview and 规程's bond group / 选择自编 / 指令 (0.4.0) — post-v1, JSON fallback
+    'p2p.enable', 'p2p.signal', 'p2p.ready', 'plugins.preview', 'g.bondGroup', 'g.diyBring', 'g.command', 'g.commandChoice'],
+  s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel',
+    // P2P relay frames (0.3.4) never joined v1: they ride the JSON fallback like the other post-v1 types
+    'p2p.config', 'p2p.frame', 'p2p.signal'],
 });
 
 test('v1 complete catalog fingerprint prevents accidental published field or enum renumbering', () => {
@@ -70,7 +76,12 @@ test('wire ids cover every business message and C2S field or declared v1 extensi
       assert.equal(message.fields.map(nameOf).includes(field), false, 'published v1 positions must not be extended in place');
     }
   }
-  assert.deepEqual(WIRE_ENUMS.phase, Object.values(PHASE));
+  // Published v1 froze the phase enum. 0.4.0's CUSTOM_CHECK (选择自编) came later: it rides the readable-string escape
+  // (encodeWire keeps an unknown enum value as its spelling), so the v1 positions of every older phase stay unchanged.
+  assert.deepEqual(WIRE_ENUMS.phase, Object.values(PHASE).filter((phase) => phase !== 'CUSTOM_CHECK'));
+  assert.ok(Object.values(PHASE).includes('CUSTOM_CHECK'));
+  assert.deepEqual(roundTrip({ t: 'm.public', phase: 'CUSTOM_CHECK', round: 1, players: [], fields: [] }, 's2c'),
+    { t: 'm.public', phase: 'CUSTOM_CHECK', round: 1, players: [], fields: [] });
   assert.ok(Object.isFrozen(WIRE_MESSAGES) && Object.isFrozen(WIRE_RECORDS.bond) && Object.isFrozen(WIRE_MESSAGES[8][3]));
   assert.throws(() => WIRE_RECORDS.bond.push('changed'), TypeError);
 });
@@ -187,7 +198,8 @@ function noPublicExtensions(message) {
     const known = new Set(fields.map(nameOf));
     for (const k of Object.keys(v)) assert.ok(k === 't' || known.has(k)
       || (fields === WIRE_RECORDS.card && k === 'soldOut')
-      || (path === 'm.public' && ['emergencyFrozen', 'emergencyFrozenAt', 'emergencyReason', 'bossPairs', 'rerollRequests'].includes(k)),
+      || (path === 'm.public' && ['emergencyFrozen', 'emergencyFrozenAt', 'emergencyReason', 'bossPairs', 'rerollRequests', 'leaderTop'].includes(k))
+      || (path === 'm.public.players[]' && ['winStreak', 'winStreakLevel', 'bossDamageLevel'].includes(k)),
       `${path}.${k} needs an explicit position or declared v1 extension`);
     for (const field of fields) if (typeof field !== 'string' && Object.hasOwn(v, field[0])) {
       const [key, type] = field;

@@ -94,6 +94,15 @@ export function mergeLocalSkins(doc, local) {
       if (isSpine(rec.spine?.back)) skin.spine.back = { ...rec.spine.back };
     }
     if (!skin.spine && !skin.portrait && !skin.illust && !skin.avatar) continue;
+    for (const key of ['voice', 'voiceJp', 'voiceEn', 'voiceKr', 'voiceNative']) {
+      if (!isObj(rec[key])) continue;
+      const slots = {};
+      for (const [slot, value] of Object.entries(rec[key])) {
+        const lines = (Array.isArray(value) ? value : [value]).filter(line => typeof line === 'string' && line.startsWith('/assets/'));
+        if (lines.length) slots[slot] = Array.isArray(value) ? lines : lines[0];
+      }
+      if (Object.keys(slots).length) skin[key] = slots;
+    }
     skins[skinId] = skin; char.skins = skins; chars[rec.charId] = char; added++;
   }
   return added ? { ...doc, chars } : doc;

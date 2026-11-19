@@ -29,12 +29,12 @@ import { buildBoard, objToBoard, boxProjectUV, ROWS, COLS, DEVICE_H, AREAS } fro
 import { surfaceUV } from './atlas.js';
 import {
   focusUniforms, makeTexture, boardMaterial, glassMaterial, decalMaterial, pipeMaterial, unlitMaterial, gateMaterial, glowMaterial,
-  waterMaterial, mireMaterial, infectionMaterial, smogMaterial, dashTexture, environmentMap, sceneMaterial, sceneWaterDecalMaterial,
+  waterMaterial, mireMaterial, infectionMaterial, smogMaterial, duelGrassMaterial, dashTexture, environmentMap, sceneMaterial, sceneWaterDecalMaterial,
   sceneEnvTexture, applyWaterMaterial, trapMaterial,
 } from './materials.js';
 import { syncThreeCamera } from '../projection.js';
 import { sceneWaterInfo, isSceneWater } from './load.js';
-import { sceneBuckets, sceneGroupVisible } from './sceneGeometry.js';
+import { sceneBuckets, sceneGroupVisible, scenePieceMatches } from './sceneGeometry.js';
 export { sceneGroupVisible };
 
 /** Lighting rig (tuned against the official screenshots: bright even tops, darker sides, soft shadows). */
@@ -201,6 +201,7 @@ export class BoardScene {
       mire: mireMaterial(T, this.tex, this.focus),
       infection: infectionMaterial(T, this.tex, this.focus),
       smog: smogMaterial(T, this.tex, this.focus),
+      duelGrass: duelGrassMaterial(T, this.focus),
       shadowCatcher: new T.ShadowMaterial({ opacity: 0.32, color: 0x000000 }),
       platform: this.tex.platform ? trapMaterial(T, this.tex.platform, this.focus, pack?.materials?.trap?.MT_trap_1106_achplat || null, LIGHTING.key.dir) : null,
       crate: this.tex.crate ? trapMaterial(T, this.tex.crate, this.focus, pack?.materials?.trap?.MT_trap_1105_accrate
@@ -341,7 +342,7 @@ export class BoardScene {
   setStage(stage) {
     if (this.destroyed) return;
     const official = stage ? this.scenePacks.get(stage.id) || null : null;
-    const key = stage ? `${stage.id || ''}|${official ? official.key : ''}|${(stage.rows || []).join('/')}|${JSON.stringify((stage.devices || []).map((d) => [d.key, d.pos, d.active, d.dir]))}` : '';
+    const key = stage ? `${stage.id || ''}|${official ? official.key : ''}|${stage.scenePiece?.group || ''}|${(stage.rows || []).join('/')}|${JSON.stringify((stage.devices || []).map((d) => [d.key, d.pos, d.active, d.dir]))}` : '';
     if (key === this.stageKey) return;
     this.stageKey = key;
     this.stage = stage || null;
@@ -351,7 +352,8 @@ export class BoardScene {
     // Only the active scene needs GPU resources. CPU packs can rebuild a revisited scene without another download.
     for (const key of this.sceneRes.keys()) if (key !== official?.key) this._disposeScene({ key });
     if (!stage) { applyWaterMaterial(this.mat.water, null); return; }
-    const board = buildBoard(stage, { uv: this.pack?.uv || null, area: this.area, platformMesh: !!this.platformGeometry() });
+    // a 规程 view's stage (render/arenaView.js) holds one piece in a void grid: all of it is built, whatever the area
+    const board = buildBoard(stage, { uv: this.pack?.uv || null, area: stage.scenePiece ? null : this.area, platformMesh: !!this.platformGeometry() });
     this.board = board;
     const M = this.meshes = {};
     this.official = official && this._buildScene(official) ? official : null;
@@ -422,14 +424,20 @@ export class BoardScene {
 
   /**
    * The official scene's meshes: the base plus the fields of the built areas, one mesh per material and lightmap
-   * page (`mergeSceneChunks`). A switched-off HIDDEN part is left out before the merge.
+   * page (`mergeSceneChunks`). A switched-off HIDDEN part, and a group the client saved disabled
+   * (`inactive`), are left out before the merge.
    */
   _buildScene(pack) {
     const T = this.THREE;
     const res = this._sceneResources(pack);
     this.sceneWater = [];
+    // 规程's scene is its three pieces whole (regulation_scenes.py layout 'pieces'): the stage a view draws names the
+    // one piece it shows and where that piece's cells are in the grid (render/arenaView.js scenePiece). A pieces scene
+    // without that, or a stage with it on a scene cut before (an older extract), is not drawn: the procedural board shows.
+    const piece = this.stage?.scenePiece || null;
+    if (!scenePieceMatches(pack, piece)) return false;
     let n = 0;
-    for (const { key: mk, chunk: c, info } of sceneBuckets(pack, this.area)) {
+    for (const { key: mk, chunk: c, info } of sceneBuckets(pack, this.area, piece)) {
       const surface = isSceneWater(info, c.material);
       const water = surface || info?.kind === 'water';
       let mat = res.mats.get(mk);
@@ -459,6 +467,7 @@ export class BoardScene {
       const mesh = new T.Mesh(g, mat);
       mesh.castShadow = false; mesh.receiveShadow = false;
       mesh.renderOrder = water ? 1 : mat.userData.blend === 'blend' ? 2 : mat.userData.blend === 'cutout' ? -3 : -4;
+      if (piece) mesh.position.set(piece.dc || 0, piece.dr || 0, 0);
       mesh.matrixAutoUpdate = false; mesh.updateMatrix();
       this.root.add(mesh);
       this.meshes[`scene${n++}`] = mesh;
@@ -480,7 +489,7 @@ export class BoardScene {
       if (d.kind === 'crate') this.staticCrates.push(d);
       else if (d.kind === 'platform' && plat) platforms.push(placeMesh(plat, { x: d.c, y: d.r, z: d.z0 }));
       else if (d.kind === 'blower' && wind && this.mat.wind) blowers.push(placeMesh(wind, { x: d.c, y: d.r, z: d.z0 + 0.078, rot: DIR_TURNS[d.dir] ?? 0 }));
-      else if (d.kind === 'blower' || d.kind === 'turret') crates.push(placeMesh(boxWithTop(this.pack?.uv, d.kind), { x: d.c, y: d.r, z: d.z0 }));
+      else if (d.kind === 'blower' || d.kind === 'turret' || d.kind === 'cannon') crates.push(placeMesh(boxWithTop(this.pack?.uv, d.kind), { x: d.c, y: d.r, z: d.z0 }));
       else if (d.kind === 'mound') crates.push(placeMesh(this.boxGeometry(), { x: d.c, y: d.r, z: d.z0, s: 0.95, sz: 0.55 }));
       else if (d.kind === 'bush') crates.push(placeMesh(bushData(), { x: d.c, y: d.r, z: d.z0 }));
     }
@@ -576,6 +585,7 @@ export class BoardScene {
     // The infection (活性源石) glow is our own flat patch; an official scene already carries that floor in its own
     // geometry and textures, so drawing ours on top just overlaps it (#549).
     if (T.infection.length && !this.official) this.meshes.infection = this._mesh(quads(T.infection, 0.007, 0.02), this.mat.infection, opt);
+    if (T.duelGrass.length) this.meshes.duelGrass = this._mesh(quads(T.duelGrass, 0.009, 0.015), this.mat.duelGrass, opt);
     if (T.smog.length) {
       // two crossed haze cards per grille tile, standing up
       const pos = [], uv = [], idx = [];
@@ -745,7 +755,7 @@ export class BoardScene {
     let flash = 0;
     for (let i = this.flashes.length - 1; i >= 0; i--) { const f = this.flashes[i]; f.t += dt; if (f.t > 1.2) this.flashes.splice(i, 1); else flash = Math.max(flash, 1 - f.t / 1.2); }
     for (const m of [this.mat.gateEndAdd, this.mat.gateEndAb]) if (m) m.uniforms.uFlash.value.setRGB(flash, flash * 0.12, flash * 0.1);
-    for (const k of ['water', 'mire', 'infection', 'smog']) this.mat[k].uniforms.uTime.value = t;
+    for (const k of ['water', 'mire', 'infection', 'smog', 'duelGrass']) this.mat[k].uniforms.uTime.value = t;
     if (this.official) for (const m of this.sceneWater || []) m.uniforms.uTime.value = t;
     this.renderer.render(this.scene, this.camera);
     this.frames++;
@@ -806,7 +816,8 @@ export function boxData(size, height) {
 
 /** Device box with an atlas top (blower fallback ▶▶ hatch, turret target plate) and grey sides. */
 function boxWithTop(uvTable, kind) {
-  const size = kind === 'turret' ? 0.72 : 0.86, h = kind === 'turret' ? 0.34 : DEVICE_H.platform;
+  const size = kind === 'turret' ? 0.72 : kind === 'cannon' ? 0.55 : 0.86;
+  const h = kind === 'turret' ? 0.34 : kind === 'cannon' ? 0.62 : DEVICE_H.platform;
   const b = boxData(size, h);
   const top = surfaceUV(uvTable?.mech || { src: 'D', rect: [1088, 708, 356, 310] });
   const side = surfaceUV(uvTable?.graySide || { src: 'D', rect: [272, 1664, 272, 120] });

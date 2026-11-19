@@ -693,15 +693,16 @@ export const VOICE_PREP_SLOTS = Object.freeze(['gacha', 'squad', 'squadFirst']);
 
 /**
  * Index charword_table.json into per-character voice slots, in voiceIndex order (one slot may have several lines).
- * Only the base word key (`wordKey === charId`) is used: the dump has no folder for a skin variant's word key
- * (`char_x_ita`, `char_x_epoque#28`, …) — those files simply do not exist upstream.
+ * Base indexing uses `wordKey === charId`. The installed-outfit exporter selects `byWordKey` to keep each official
+ * outfit voice bank separate, using skin_table.voiceId and the voice assets named by the charword table.
  * @param {any} charword parsed excel/charword_table.json
  * @param {string} [lang] voiceId prefix — the zh_CN table carries the `CN_*` lines; the other dubs share the numbering
  * @param {Iterable<string>|null} [only] slot names to keep; null/omitted keeps every slot (VOICE_BATTLE_SLOTS is what
  *   the plan uses by default, so a battle's own lines are planned and the prep-only ones are not)
- * @returns {Map<string, Record<string, string[]>>} charId → slot → voiceAsset ('char_263_skadi/CN_023')
+ * @param {{ byWordKey?: boolean }} [options] index every bank by its official wordKey
+ * @returns {Map<string, Record<string, string[]>>} charId (or wordKey) → slot → voiceAsset ('char_263_skadi/CN_023')
  */
-export function indexVoice(charword, lang = 'CN', only = null) {
+export function indexVoice(charword, lang = 'CN', only = null, { byWordKey = false } = {}) {
   const keep = only ? new Set(only) : null;
   const out = new Map();
   const words = charword?.charWords;
@@ -712,10 +713,11 @@ export function indexVoice(charword, lang = 'CN', only = null) {
     if (!e || typeof e !== 'object') continue;
     const charId = e.charId, slot = VOICE_SLOTS[e.placeType], vid = e.voiceId;
     if (!charId || !slot || (keep && !keep.has(slot)) || typeof vid !== 'string' || !vid.startsWith(`${lang}_`)) continue;
-    if (e.wordKey !== charId) continue;
+    const key = byWordKey ? e.wordKey : charId;
+    if (typeof key !== 'string' || !key || (!byWordKey && e.wordKey !== charId)) continue;
     if (typeof e.voiceAsset !== 'string' || !e.voiceAsset) continue;
-    if (!seen.has(charId)) seen.set(charId, new Map());
-    const slots = seen.get(charId);
+    if (!seen.has(key)) seen.set(key, new Map());
+    const slots = seen.get(key);
     if (!slots.has(slot)) slots.set(slot, new Map());
     // the same line can be listed twice (an operator's 升变 / alt records): keep its lowest voiceIndex, once
     const m = slots.get(slot);

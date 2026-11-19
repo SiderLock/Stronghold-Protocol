@@ -180,6 +180,19 @@ describe('official skill effects in headless Chrome', { skip }, () => {
     assert.ok(changed(r.img, r.src.x, r.src.y, 90) > 800);
   });
 
+  test('low quality keeps a skill loop visible and changing to medium restarts its persistent cue', async () => {
+    const r = await shot('ifrit-s3-low', 'char_134_ifrit', { s: 2, tier: 'low' }, [['on'], 50]);
+    assert.equal(r.stats.tier, 'low');
+    assert.ok(r.keys.includes('ifrit_skill_03_buff'));
+    assert.ok(changed(r.img, r.src.x, r.src.y, 90) > 300);
+    const next = await page.evaluate(() => {
+      window.__fx.setTier('lite'); window.__fx.step(2, 1 / 60); window.__fx.render();
+      return { tier: window.__fx.stats().tier, keys: window.__fx.liveKeys(true) };
+    });
+    assert.equal(next.tier, 'lite');
+    assert.ok(next.keys.includes('ifrit_skill_03_buff'), String(next.keys));
+  });
+
   test("an enemy's skill (index v2, enemy_1209_sfden's InvisibleShield): the 'cast' slot plays its range on the enemy", async () => {
     const r = await shot('enemy-sfden-cast', 'enemy_1209_sfden', { s: 0 }, [['cast', 0], 40]);
     assert.equal(r.plan.sid, 'invisibleshield');

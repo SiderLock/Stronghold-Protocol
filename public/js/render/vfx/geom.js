@@ -89,6 +89,7 @@ const _p = [0, 0, 0], _q = [0, 0, 0, 1], _v = [0, 0, 0], _w = [0, 0, 0];
 const _ax = [0, 0, 0], _ay = [0, 0, 0], _az = [0, 0, 0];
 const _s = new Float32Array(16);
 const _idx = [];
+let _sortDepth = new Float32Array(0);
 
 const STREAM_SIZE = {
   UV: 2, UV2: 2, UV3: 2, UV4: 2, AnimBlend: 1, AnimFrame: 1, Center: 3, VertexID: 1, SizeX: 1, SizeXY: 2, SizeXYZ: 3,
@@ -206,7 +207,7 @@ function sortOrder(ps, mode, cam) {
   _idx.length = n;
   for (let i = 0; i < n; i++) _idx[i] = i;
   if (mode === 1) {
-    const d = new Float32Array(n);
+    const d = _sortDepth.length >= n ? _sortDepth : (_sortDepth = new Float32Array(Math.max(n, _sortDepth.length * 2)));
     for (let i = 0; i < n; i++) { ps.worldPos(i, _w); const dx = _w[0] - cam.pos[0], dy = _w[1] - cam.pos[1], dz = _w[2] - cam.pos[2]; d[i] = dx * dx + dy * dy + dz * dz; }
     _idx.sort((a, b) => d[b] - d[a]); // far first
   } else if (mode === 2) _idx.sort((a, b) => ps.age[a] - ps.age[b]);   // oldest in front: youngest drawn first
@@ -469,8 +470,11 @@ export function buildParticleTrails(ps, cam, fd, tint) {
     // ribbon: one strip through the particles by age (oldest last = tail)
     const n = ps.count;
     if (n >= 2) {
-      const order = Array.from({ length: n }, (_, i) => i).sort((a, b) => ps.age[a] - ps.age[b]);
-      const rp = new Float32Array(n * 3);
+      const order = _idx;
+      order.length = n;
+      for (let i = 0; i < n; i++) order[i] = i;
+      order.sort((a, b) => ps.age[a] - ps.age[b]);
+      const rp = _trailPts.length >= n * 3 ? _trailPts : (_trailPts = new Float32Array(Math.max(n * 3, _trailPts.length * 2)));
       for (let k = 0; k < n; k++) { ps.worldPos(order[k], _w); rp[k * 3] = _w[0]; rp[k * 3 + 1] = _w[1]; rp[k * 3 + 2] = _w[2]; }
       buildRibbon(rp, n, (k, u) => {
         const i = order[k]; const t = ps.age[i] / ps.life[i];
@@ -515,7 +519,7 @@ export function buildParticleTrails(ps, cam, fd, tint) {
     for (const ob of ps.orphans) {
       const n = ob.n;
       if (n < 2) continue;
-      const tp = new Float32Array(n * 3);
+      const tp = _trailPts.length >= n * 3 ? _trailPts : (_trailPts = new Float32Array(Math.max(n * 3, _trailPts.length * 2)));
       for (let k = 0; k < n; k++) {
         const o = (n - 1 - k) * 4; // newest first
         if (tr.world || def.space === 1) { tp[k * 3] = ob.pts[o]; tp[k * 3 + 1] = ob.pts[o + 1]; tp[k * 3 + 2] = ob.pts[o + 2]; }

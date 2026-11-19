@@ -16,6 +16,7 @@
 // Every page must finish with zero console errors, page errors, failed requests or HTTP errors.
 // Screenshots: test/e2e/out/real-*.png.
 
+import { seedReleaseRead } from '../helpers/releaseNotes.js';
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync } from 'node:fs';
@@ -60,6 +61,7 @@ class Client {
       }
     });
     page.on('dialog', (d) => d.dismiss().catch(() => {}));
+    await seedReleaseRead(page);
     await page.goto(`${this.base}/${query}`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => !!globalThis.__SP__ && !!document.querySelector('.screen'), { timeout: 30000 });
   }
@@ -277,7 +279,8 @@ class Client {
     assert.ok(name && name.length > 0, 'bond popup has a name');
     await sleep(250);
     await this.shot(`bond-${this.label}`);
-    await this.click('.bpop__close');
+    await this.click('.bslot .bond');
+    await this.page.waitForSelector('.bpop', { hidden: true });
     this.note(`bond popup ${name}`);
     return true;
   }

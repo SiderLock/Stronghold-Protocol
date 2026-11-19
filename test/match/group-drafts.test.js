@@ -70,6 +70,46 @@ test('strategy uniqueness is group-local; repeated, other-page and stale-stage r
   } finally { m.dispose(); }
 });
 
+for (const duringDraft of [false, true]) {
+  test(`twenty-player opening keeps a departed seat's team strategy (${duringDraft ? 'during draft' : 'before draft'})`, () => {
+    const h = makeMatch({ humans: 20, seed: 63, fake: true }).start();
+    const m = h.m;
+    let departed = m.order.at(-1);
+    try {
+      if (!duringDraft) m.onLeave(departed.playerId);
+      for (const ps of m.order) if (!ps.left) m.handle(ps.playerId, { t: 'g.infoReady' });
+      h.sched.advance(1);
+      assert.equal(m.phase, PHASE.BAND_DRAFT);
+      if (duringDraft) {
+        const lastGroup = m.draft.groups.at(-1);
+        departed = m.players.get(m.draftTurn(lastGroup.playerIds[0]));
+        m.onLeave(departed.playerId);
+      }
+      const stage = m.draft;
+      assert.ok(m.draftGroup(departed.playerId).order.includes(departed.playerId));
+      for (const group of stage.groups) {
+        while (!group.done) {
+          h.sched.advance(1);
+          if (group.done) break;
+          const pid = m.draftTurn(group.playerIds[0]);
+          assert.ok(m.manualDraftPicker(m.players.get(pid)), 'the departed turn is resolved by the AI');
+          const bandId = m.gd.bandIds().find(id => id !== 'band_amedic' && !m.bandTaken(id, pid));
+          assert.deepEqual(m.handle(pid, { t: 'g.band', bandId }), { ok: true });
+        }
+      }
+      h.sched.advance(1);
+      assert.equal(stage.picks[departed.playerId], 'band_amedic');
+      assert.equal(departed.bandId, 'band_amedic');
+      assert.equal(departed.lp, 0);
+      assert.equal(departed.alive, false);
+      assert.equal(Object.keys(stage.picks).length, 20);
+      assert.equal(m.phase, PHASE.BATTLE_CHECK);
+      assert.equal(m.errorCount, 0);
+      checkInvariants(m);
+    } finally { m.dispose(); }
+  });
+}
+
 test('public draft views expose every independent current picker and no scheduler handles', () => {
   const band = bandMatch();
   try {
@@ -179,7 +219,9 @@ test('departed and eliminated strategy groups never block remaining live groups'
   try {
     const [a, b] = m.draft.groups;
     for (const pid of a.playerIds) m.onLeave(pid);
+    h.sched.advance(1);
     assert.ok(a.done);
+    assert.ok(a.playerIds.every(pid => m.draft.picks[pid] && m.players.get(pid).lp === 0));
     assert.equal(m.phase, PHASE.BAND_DRAFT);
     finishBandGroup(m, b);
     h.sched.advance(1);
@@ -193,8 +235,9 @@ test('departed and eliminated strategy groups never block remaining live groups'
     for (const pid of empty.playerIds) before.m.onLeave(pid);
     for (const pid of live.playerIds) before.m.handle(pid, { t: 'g.infoReady' });
     before.sched.advance(1);
-    assert.deepEqual(before.m.draft.groups[0].order, []);
+    assert.deepEqual(new Set(before.m.draft.groups[0].order), new Set(empty.playerIds));
     assert.ok(before.m.draft.groups[0].done);
+    assert.ok(empty.playerIds.every(pid => before.m.draft.picks[pid] && before.ps(pid).lp === 0));
     finishBandGroup(before.m, before.m.draft.groups[1]);
     before.sched.advance(1);
     assert.equal(before.m.phase, PHASE.BATTLE_CHECK);

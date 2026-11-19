@@ -6,7 +6,7 @@
 // stage (inclusive time: Spine pose, impostor redraw, Pixi render, three.js board, battle runner, sim, …).
 //
 // Usage: CHROME_PATH=<chrome> node tools/perfbench.mjs [--specs a,b] [--quality high,low] [--cpu 1,4,6] [--warm 20]
-//        [--sample 6] [--width 844] [--height 390] [--dpr 2] [--fx off,lite,full] [--profile] [--out test/e2e/out/perf] [--json]
+//        [--sample 6] [--width 844] [--height 390] [--dpr 2] [--fx off,low,lite,full] [--profile] [--out test/e2e/out/perf] [--json]
 //   --fx       设置「官方特效」 tiers to measure (the official battle effects, render/vfx; default off; needs extracted effects)
 //   --specs    names of public/dev/perf/index.json (default: all)      --warm    seconds before sampling (default 20)
 //   --sample   seconds per sample (default 6)                          --profile also record and summarise a CPU profile
@@ -160,7 +160,7 @@ async function main() {
         const o = s.officialFx;
         console.log(`${spec.padEnd(18)} ${quality.padEnd(6)} fx ${fx.padEnd(4)} ${String(cpu).padStart(2)}x  fps ${String(s.fps).padStart(6)}  p95 ${String(s.p95).padStart(6)} ms  >33ms ${String(s.over33).padStart(5)}%`
           + `  sim ${s.simMsPerTick} ms/tick  view CPU ${s.viewCpuMs} ms  render ${s.renderMs} ms  units ${s.units}  load ${s.lod}`
-          + (o && o.tier !== 'off' ? `  fx ${o.effects} effects / ${o.particles} particles / ${o.draws} draws / ${o.texMB} MB` : '')
+          + (o && o.tier !== 'off' ? `  fx avg ${o.effects} effects / ${o.particles} particles / ${o.draws} draws (peak ${o.peakDraws ?? o.draws}) / ${o.texMB} MB` : '')
           + `${errors.length ? `  ERRORS ${errors.length}` : ''}`);
         if (summary) console.log(`  ${summary.stages.filter((x) => x.pct > 0).map((x) => `${x.stage} ${x.pct}%`).join(' · ')}`);
       }

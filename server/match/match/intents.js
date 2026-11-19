@@ -19,12 +19,16 @@ export class MatchIntents {
         if ((msg.setupRevision ?? 0) !== this.setupRevision) return fail(ERR.BAD_TARGET, 'setup changed; confirm the current revision');
         if (!ps.infoReady) { ps.infoReady = true; this.markPublic(); this.maybeEndInfo(); }
         return OK;
+      case 'g.bondGroup': return this.pickBondGroup(ps, msg.idx, msg.setupRevision);
       case 'g.rerollVote': return this.voteSetupReroll(ps, msg.voteId, msg.agree);
       case 'g.band': return this.pickBand(ps, msg.bandId, msg);
+      case 'g.diyBring': return this.confirmDiyBring(ps, msg.slots);
       case 'g.bandSkip': return this.skipBand(ps, msg);
       // the strategy highlighted in the draft screen (what a timed-out turn takes, timeoutBand)
       case 'g.bandFocus': return this.bandFocus(ps, msg.bandId ?? null, msg);
       case 'g.buy': return ps.buy(msg.slot);
+      case 'g.command': return ps.useCommand(msg.effectId, msg.target);
+      case 'g.commandChoice': return ps.pickCommand(msg.choiceId, msg.idx);
       case 'g.refresh': return ps.refresh();
       case 'g.freeze': return ps.freeze();
       case 'g.levelUp': return ps.levelUp();
@@ -90,8 +94,10 @@ export class MatchIntents {
     if (this.emergencyFrozen) return;
     if (!ps.botControlled || this.ended) return;
     this.offersChanged();
-    if (this.phase === PHASE.INFO_CHECK && !ps.infoReady) { ps.infoReady = true; this.markPublic(); this.maybeEndInfo(); }
+    if (this.phase === PHASE.INFO_CHECK && !ps.infoReady) { this.pickBotBondGroup(ps); ps.infoReady = true; this.markPublic(); this.maybeEndInfo(); }
     else if (this.phase === PHASE.BAND_DRAFT && this.draftTurn(ps.playerId) === ps.playerId) this.scheduleBandBot(this.draftGroup(ps.playerId));
+    // 选择自编: a seat that turns AI-controlled (托管, AI handover) confirms its bring at once, as at the step's start
+    else if (this.phase === PHASE.CUSTOM_CHECK && ps.diyBring == null) { this._applyDiyBring(ps, this._diyChoice(ps)); this.markPublic(); this.maybeEndCustom(); }
     else if (this.phase === PHASE.SP_DRAFT && this.spTurn(ps.playerId) === ps.playerId) this.scheduleSpBot(this.spGroup(ps.playerId));
     else if (this.phase === PHASE.PREP && ps.alive && !ps.ready) this.scheduleBotPrep(ps, 0);
   }
