@@ -140,7 +140,10 @@ export function commandPlan(ps, skill, target, ctx) {
 export const commandPassive = {
   onBattleResult(ps, s, ctx, ev) {
     reconcileCommandChests(ps, ev.result);
-    reconcileCommandChests(ps, ev.unite?.perPlayer?.[ps.playerId]);
+    // settle() hands over every 联防 wave (`uniteResults`, plan.history + the last one): a 宝箱 touched in any of them is
+    // gone for good (its own wave reconciles immediately in _afterUniteWave; this keeps the hook correct on its own).
+    for (const wave of ev.uniteResults || []) reconcileCommandChests(ps, wave?.perPlayer?.[ps.playerId]);
+    if (!ev.uniteResults && ev.unite) reconcileCommandChests(ps, ev.unite.perPlayer?.[ps.playerId]);
   },
   onPrepStart(ps, s, ctx) {
     for (const p of buffs(s, 'prep_start_random_equip_in_round')) if (ctx.round === p.round) {

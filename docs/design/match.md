@@ -162,7 +162,7 @@ or special hammer, elite Catherine a special or ultimate hammer, Victoria a spec
 a coin/tea/mimic, and Kjerag ice. Members follow the pinned official trait/bond descriptions; unpublished small-chance
 weights remain [ASSUMED] 10% total. Other versions' pools and existing gift-stock semantics are unchanged.
 
-人事部记录的特殊刷新包含干员和装备（维护者核对官方录屏，2026-11-11）。干员栏保留第一盟约优先，装备栏重新抽取当前等级内普通装备并遵守库存；空、已购买和冻结栏同样刷新。保留特殊刷新不支付主动刷新费用、不增加主动刷新计数的行为。装备抽样复用已有指令换装池；录屏仅确认刷新范围，没有新增概率权重证据。
+人事部记录的特殊刷新包含干员和装备（维护者核对官方录屏，2026-11-11）。干员栏保留第一盟约优先，装备栏重新抽取当前等级内普通装备并遵守库存；空、已购买和冻结栏同样刷新。保留特殊刷新不支付主动刷新费用、不增加主动刷新计数的行为。装备抽样复用已有指令换装池；录屏仅确认刷新范围，没有新增概率权重证据。本分支的干员栏（含羁绊保底）从抽取者所属的固定分组卡池抽（[D010](../development/DECISIONS.md#d010)），不会动用其他组的库存。
 
 SERVER_MOST_BOND uses the triggering garrison event to distinguish its sale variant from the prep-start variant. Sale rewards exclude BOARD_ALL_CHESS counting-only bonds (绝技 has no member operators) before comparing member counts; official captures with 3 绝技 and 2 助力 show Ethan granting 罗比菈塔. Rewards are capped at the current shop level and cannot return the source operator in either form, including copies just returned by the sale. Prep-start grants retain the upstream bond selection, row conditions and shop-level cap. Tied maxima and stock handling are unchanged; an out-of-stock member bond does not fall back to a smaller bond.
 

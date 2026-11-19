@@ -142,7 +142,9 @@ export class PlayerEconomy {
       const cur = this.shop.slots[i];
       if (cur && cur.frozen) continue;
       if (hasBond(cur)) continue;
-      const id = this.m.pool.roll(this.m.rngShop, {
+      // The drawer's own fixed pool group (D010, basics.js `pool`): the first group's stock says nothing about this
+      // player's group, and drawing from it would both hand out copies the group has exhausted and spend group 0's.
+      const id = this.pool.roll(this.m.rngShop, {
         maxTier: this.shop.level,
         filter: (cid) => {
           const rec = this.gd.chess(cid);
