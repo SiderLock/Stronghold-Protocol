@@ -370,6 +370,30 @@ test('SERVER_GAIN_SPECIAL_REFRESH_BOND_CHAR: one charge, count is how many slots
   assert.deepEqual(queued.ps.shop.slots.map((slot) => slot.id), ['chess_char_1_01_a', 'chess_char_1_01_a', 'chess_char_1_01_a', itemId]);
 });
 
+test('SERVER_GAIN_SPECIAL_REFRESH_BOND_CHAR draws from the drawer\'s own fixed pool group (D010)', (t) => {
+  // Six players (3 + 3): the shop must draw from the second group's stock, never the first group's.
+  const h = makeMatch({ mode: 'coop', difficulty: 'NORMAL', humans: 6, bots: 0, seed: 21, registry: REG, fake: true, data: RAW }).start();
+  t.after(() => { assert.equal(h.m.errorCount, 0); h.m.dispose(); });
+  h.toPrep(1);
+  const ps = h.ps('p_3');
+  assert.notEqual(ps.pool, h.m.pool, 'six players form two fixed groups');
+  const kjerag = [...ps.pool.entries.keys()].filter((id) => (h.m.gd.chess(id)?.bonds || []).includes('kjeragShip'));
+  assert.ok(kjerag.length, 'the regulation pool has 谢拉格 operators');
+  for (const id of kjerag) ps.pool.take(id, ps.pool.left(id));
+  const shared = kjerag.find((id) => h.m.pool.left(id) > 0);
+  assert.ok(shared, 'the first group still has a copy this group has exhausted');
+  const before = h.m.pool.left(shared);
+  ps.shop.level = 6; // 谢拉格 operators are high-tier: a level-1 shop could not draw one from any pool
+  ps.shop.frozen = false;
+  ps.shop.slots = ps.shop.slots.map(() => null);
+  ps.shop.bondRefresh = [{ bond: 'kjeragShip', count: 1 }];
+  ps.rollShop();
+  const slots = ps.shop.slots.slice(0, ps.shop.layout.chess);
+  assert.equal(slots.some((slot) => slot && (h.m.gd.chess(slot.id)?.bonds || []).includes('kjeragShip')), false,
+    'no 谢拉格 slot when this group has no copy left');
+  assert.equal(h.m.pool.left(shared), before, 'the first group’s stock is untouched');
+});
+
 test('SERVER_UPGRADE_SELF_EQUIP: both operator forms return the upgraded instances without unequipping unchanged items', () => {
   for (const id of ['chess_char_4_15_a', 'chess_char_4_15_b']) {
     const s = setup();

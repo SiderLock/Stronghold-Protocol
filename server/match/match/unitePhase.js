@@ -11,6 +11,7 @@ import { uniteLeft } from '../../sim/spec.js';
 import { FLOW_TICKER_PRIORITY, DELAYS, OK, fail } from './common.js';
 import { msg } from '../../../shared/i18n.js';
 import { onStartUnite } from '../botEmotes.js';
+import { reconcileCommandChests } from '../bandCommands.js';
 
 export class MatchUnite {
   // Each wave has fresh ballots; approval ends all later waves after the current battle finishes.
@@ -175,9 +176,25 @@ export class MatchUnite {
     return standing + (plan.notReentered.get(pid) || 0);
   }
 
+  /**
+   * Every 联防 wave's battle receipt decides the command chests it touched (`fields.js` writes `commandChests` per
+   * player): a 宝箱 destroyed in an earlier wave must not be rebuilt for the next wave (D013 runs up to
+   * MAX_UNITE_ROUNDS) or survive into the next round. Each wave arrives as its own result, and only the last one used to
+   * reach settle()'s battle-result hook, so earlier waves' losses were dropped.
+   */
+  _reconcileUniteChests(result) {
+    const per = result && result.perPlayer;
+    if (!per || typeof per !== 'object') return;
+    for (const [playerId, pp] of Object.entries(per)) {
+      const ps = this.players.get(playerId);
+      if (ps && pp) reconcileCommandChests(ps, pp);
+    }
+  }
+
   /** Run the next unused pair only while enemies remain; otherwise settle all completed waves. */
   _afterUniteWave(plan, result) {
     if (this.phase !== PHASE.UNITE || this.unitePlan !== plan) return;
+    this._reconcileUniteChests(result);
     const next = nextUnitePlan(plan, result);
     if (next) this.startUnite(next);
     else this.settle(plan, result);
