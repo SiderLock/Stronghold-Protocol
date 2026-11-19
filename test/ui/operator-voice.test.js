@@ -58,9 +58,10 @@ test('voice roster deduplicates forms and preserves names for the search list', 
 
 test('unselected Chinese is never used as a missing dub or missing slot fallback', async () => {
   const { voiceLine } = await import('../../public/js/audio.js');
-  assert.deepEqual(voiceLine(audio, id, 'select', 'en', () => 0, false), { url: '/en.mp3', fallback: null });
-  assert.equal(voiceLine(audio, id, 'select', 'kr', () => 0, false), null);
-  assert.equal(voiceLine(audio, id, 'select', 'en', () => 0, true).fallback, '/cn.mp3');
+  // This fork's sixth parameter is the outfit's voice record (皮肤语音), so allowChinese rides seventh.
+  assert.deepEqual(voiceLine(audio, id, 'select', 'en', () => 0, null, false), { url: '/en.mp3', fallback: null });
+  assert.equal(voiceLine(audio, id, 'select', 'kr', () => 0, null, false), null);
+  assert.equal(voiceLine(audio, id, 'select', 'en', () => 0, null, true).fallback, '/cn.mp3');
 });
 
 test('battle playback applies the download preference guard without changing explicit Chinese playback', async t => {

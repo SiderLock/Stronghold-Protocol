@@ -26,7 +26,10 @@ function blockAt(src, open) {
   throw new Error('unbalanced braces');
 }
 
-const at = CSS.indexOf(PHONE);
+// The file opens several short-screen media blocks; the card's override is the one that styles .combat-metrics.
+const at = [...CSS.matchAll(/@media \(max-height: 600px\) and \(pointer: coarse\)[^{]*\{/g)]
+  .map((m) => m.index)
+  .find((i) => blockAt(CSS, CSS.indexOf('{', i)).includes('.combat-metrics {')) ?? -1;
 const phone = at < 0 ? '' : blockAt(CSS, CSS.indexOf('{', at));
 
 describe('作战统计 on short touch screens: the HUD proportion', () => {

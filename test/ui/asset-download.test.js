@@ -272,14 +272,16 @@ test('predownload supports multiple dubs, repairs old empty choices and never mu
 
 test('a paused download rebuilds its voice selection when resumed after a preference change', async () => {
   const id = 'char_102_texas';
-  let settings = { languages: ['en'], operators: {} };
+  let settings = { languages: ['cn'], operators: {} };
   const got = [];
+  // This fork's transfer aborts an in-flight body read when the queue pauses, so the pause lands between files: the
+  // image finished, the first dub started, and the switch to 日文 rebuilds the voice selection on resume.
   const queue = createAssetDownload({ concurrency: 1, readVoiceSettings: () => settings, lookupImported: async () => new Set(),
     fetch: fixture({ image: '/assets/a.png', audio: {
       voice: { [id]: { select: '/assets/audio/voice/cn/a.mp3' } },
       voiceEn: { [id]: { select: '/assets/audio/voice/en/a.mp3' } },
       voiceJp: { [id]: { select: '/assets/audio/voice/jp/a.mp3' } },
-    } }, async (url) => { got.push(url); if (url === '/assets/a.png' && got.length === 1) queue.pause(); return file(); }) });
+    } }, async (url) => { got.push(url); if (got.length === 2) queue.pause(); return file(); }) });
   await queue.start();
   assert.equal(queue.get().phase, 'paused');
   settings = { ...settings, languages: ['jp'] };

@@ -1395,7 +1395,10 @@ describe('multi-device & browser compatibility (static)', () => {
       const rel = path.relative(ROOT, file);
       const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
       assert.doesNotMatch(src, /:has\(/, `${rel}: :has() (Firefox ESR 115, Safari < 15.4)`);
-      assert.doesNotMatch(src, /@container|container-type|@layer/, `${rel}: container queries / cascade layers`);
+      // A container query inside `@supports (container-type: …)` is progressive enhancement: a browser without support
+      // skips the block instead of breaking (装载卡组's deck height, loadout.css). Everything else stays banned.
+      assert.doesNotMatch(src.replace(/@supports\s*\(container-type:[^)]*\)\s*\{[\s\S]*?\n\}/g, ''),
+        /@container|container-type|@layer/, `${rel}: container queries / cascade layers`);
       for (const r of cssRules(src)) {
         assert.ok(!/(^|[\s,])&/.test(r.selector), `${rel}: CSS nesting in '${r.selector}'`);
         const decls = r.body.split(';').map((d) => d.trim()).filter(Boolean);

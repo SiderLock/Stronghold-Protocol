@@ -939,11 +939,11 @@ button.room-matchmaking:disabled { opacity: .45; cursor: default; }
 /* Expanded rooms remain readable and scroll vertically on phones, including portrait and short landscape. */
 @media (max-width: 1000px) {
   .rs .rs-seats:is(.seats--expanded, .seats--dense) {
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, max(145px, 2.25rem)), 1fr));
-    justify-content: stretch; gap: max(8px, .12rem); padding: max(8px, .12rem);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, max(calc(145px * var(--sp-ui, 1)), 32px, 2.25rem)), 1fr));
+    justify-content: stretch; gap: max(calc(8px * var(--sp-ui, 1)), .12rem); padding: max(calc(8px * var(--sp-ui, 1)), .12rem);
   }
-  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat { min-height: max(210px, 3.8rem); }
-  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__art { min-height: max(150px, 2.5rem); }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat { min-height: max(calc(210px * var(--sp-ui, 1)), 32px, 3.8rem); }
+  .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__art { min-height: max(calc(150px * var(--sp-ui, 1)), 32px, 2.5rem); }
   .rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__portrait { object-fit: contain; object-position: center; }
   .rs .rs-seats:is(.seats--expanded, .seats--dense) .seat__swap,
   .rs .rs-seats:is(.seats--expanded, .seats--dense) .rseat__pick,

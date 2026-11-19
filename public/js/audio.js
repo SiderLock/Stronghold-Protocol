@@ -461,7 +461,9 @@ export function voiceLine(audio, charId, slot, lang = 'cn', random = Math.random
   const skinCn = lines(skin?.voice?.[slot]);
   const skinDub = tree ? lines(skin?.[tree]?.[slot]) : [];
   const dubPick = draw(skinDub) ?? draw(dub);
-  if (dubPick) return { url: dubPick, fallback: sameName(skinCn, dubPick) ?? sameName(cn, dubPick) ?? (allowChinese ? draw(cn) : null) };
+  // `allowChinese` gates every Chinese line, the same-name one included: an unselected Chinese dub is never requested,
+  // not even as a silent playback fallback (test/ui/operator-voice.test.js).
+  if (dubPick) return { url: dubPick, fallback: allowChinese ? (sameName(skinCn, dubPick) ?? sameName(cn, dubPick) ?? draw(cn)) : null };
   const cnPick = allowChinese ? draw(skinCn) ?? draw(cn) : null;
   if (!cnPick) return null;
   // the outfit's own Chinese line: the operator's Chinese line of the same name is what plays if this file will not load
