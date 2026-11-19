@@ -4,7 +4,7 @@
 // (support directMods: additive with every other percentage, PRTS 盟约记录). Effects only apply to the owning
 // player's units (`unit.ownerId === playerId`): two players sharing a boss / 联防 field never buff each other.
 // Layer-dependent values read the LIVE layers (`battle.getPlayer(pid).bonds[id].layers`): an IN_BATTLE layer gain
-// (engine `layerGain` hook, which fires before the layers are written) schedules one deferred recompute per player.
+// (post-write `bondLayersChanged` hook) schedules one deferred recompute per player.
 //
 //   精准 preciShip     members ATK +(base_atk + atk_per_stack·L); tier 2 (3 distinct): members + RANGED operators,
 //                      which also ignore power_def_penetrate DEF / power_magic_resist_penetrate RES (defIgnorePct / resIgnorePct)
@@ -81,6 +81,7 @@ import {
   num, bondRecord, buffParams, bondTier, bondLayers, isMember, isElite, isGroundOp, onField, playerOps, passiveBuff,
   fxOn, N4, N8, directMods, COLS, isFirstPeriod,
 } from '../../support/index.js';
+import { installArcaneExtra, arcaneRider } from '../regulation.js';
 
 export const ID = Object.freeze({
   preci: 'preciShip', swift: 'swiftShip', skillful: 'skillfulShip', arcane: 'arcaneShip', stead: 'steadShip',
@@ -171,9 +172,13 @@ function applyPassives(battle, st) {
   }
   if (t[ID.arcane]) {
     const bb = st.bb[ID.arcane];
-    const m = num(bb.base_damage_scale, 1) + num(bb.damage_scale_per_stack) * L(battle, st, ID.arcane);
-    st.arcaneMul = Math.max(0, m);
-    st.arcaneLowMul = Math.max(0, m * num(bb.power_weak_scale, 1));
+    // 盟约 奥术: arts taken ×(base_damage_scale + per·L). 规程's buff has atk_base instead and no such field;
+    // a missing field must not be read as 1 (that would apply a ×1 vulnerability the season does not have).
+    if (bb.base_damage_scale != null) {
+      const m = num(bb.base_damage_scale, 1) + num(bb.damage_scale_per_stack) * L(battle, st, ID.arcane);
+      st.arcaneMul = Math.max(0, m);
+      st.arcaneLowMul = Math.max(0, m * num(bb.power_weak_scale, 1));
+    }
   }
   if (t[ID.skillful]) {
     const bb = st.bb[ID.skillful];
@@ -480,6 +485,7 @@ function raidRedeploy(battle, u, r, c) {
 
 export function install(battle) {
   if (!battle || !Array.isArray(battle.players) || !battle.players.length) return;
+  installArcaneExtra(battle);
   const states = [];
   for (const p of battle.players) {
     const st = makeState(battle, p);
@@ -501,7 +507,7 @@ export function install(battle) {
 
   // live layers
   if (states.some((st) => Object.keys(st.tiers).some((id) => LAYERED.has(id)))) {
-    battle.on('layerGain', (c) => {
+    const refresh = (c) => {
       const st = byPid[c.playerId];
       if (!st || !st.tiers[c.bondId] || !LAYERED.has(c.bondId) || st.pending) return;
       st.pending = true;
@@ -510,7 +516,8 @@ export function install(battle) {
         applyPassives(battle, st);
         if (st.tiers[ID.skillful]) updateAura(battle, st);
       });
-    });
+    };
+    battle.on('bondLayersChanged', refresh);
   }
 
   // 灵巧 aura (deploy / death immediately, relocations through a cheap poll)
@@ -657,15 +664,20 @@ export function install(battle) {
         if (src.alive && bb.damage_scale != null) battle.applyStatus(src, 'fragile', { duration: num(bb['weak[limit]'], 5), value: num(bb.damage_scale, 1) - 1, source: t });
         return;
       }
-      if (!arcane || c.type !== 'arts' || t.side !== 'enemy' || !t.alive) return;
+      if (!arcane || t.side !== 'enemy' || !t.alive) return;
       const src = c.source;
       if (!src || src.kind !== 'op') return;
       const st = byPid[src.ownerId];
       if (!st || !st.tiers[ID.arcane] || !st.members[ID.arcane].has(src)) return;
       const bb = st.bb[ID.arcane];
-      const low = st.tiers[ID.arcane] >= 2 && t.hpRatio < num(bb.hp_ratio);
-      // one 奥术 instance per target, the strongest (both players of a pair field included): see the header
-      battle.applyStrongest(t, KEY.arcane, { duration: num(bb.weak_duration, 3), value: low ? st.arcaneLowMul : st.arcaneMul, mods: arcaneMods, source: src });
+      if (bb.base_damage_scale != null) {
+        if (c.type !== 'arts') return;
+        const low = st.tiers[ID.arcane] >= 2 && t.hpRatio < num(bb.hp_ratio);
+        // one 奥术 instance per target, the strongest (both players of a pair field included): see the header
+        battle.applyStrongest(t, KEY.arcane, { duration: num(bb.weak_duration, 3), value: low ? st.arcaneLowMul : st.arcaneMul, mods: arcaneMods, source: src });
+        return;
+      }
+      arcaneRider(battle, c, bb);
     });
   }
 }

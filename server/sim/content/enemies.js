@@ -123,6 +123,7 @@ import { REFLECTION_KITS } from './enemies/reflection.js';
 import { FLY_KITS } from './enemies/fly.js';
 import { SPECIAL_KITS } from './enemies/special.js';
 import { LEADER_KITS } from './enemies/leaders.js';
+import { REGULATION_KITS } from './enemies/regulation.js';
 import { hypot } from '../detmath.js';
 
 export {
@@ -177,7 +178,10 @@ export function registerMeta() {}
 // global dispatchers
 
 function onSpawn(b, e) {
-  const kit = KITS[e.def.raw?.effectRef ?? e.defId];
+  // Regulation-only keys stay out of KITS: test/content/enemies_bosses.test.js requires every KITS key in the default
+  // enemies.json. The fallback is the act3 record (absent from the default table).
+  const key = e.def.raw?.effectRef ?? e.defId;
+  const kit = KITS[key] || REGULATION_KITS[key];
   if (typeof kit !== 'function') return;
   const ab = abOf(b, e);
   const list = safe(b, e, () => kit(ab, e, b)) || [];
@@ -376,7 +380,7 @@ export const STATS_ONLY = Object.freeze({
   enemy_1381_winman: 'plain', enemy_1381_winman_2: 'plain', enemy_1387_winshd: '封冻/供暖器 zones absent', enemy_1415_mmkabi_2: 'chains absent',
   enemy_1433_dsbasi: 'plain', enemy_1433_dsbasi_2: 'plain', enemy_1438_dspred: '赘生甲壳 absent',
   enemy_2002_bearmi: 'plain', enemy_2002_bearmi_2: 'plain',
-  enemy_9012_acloon: '炎佑 is a bond summon (bonds.js)', enemy_10040_cnvbln: '狂欢时刻 absent', enemy_10043_sailor: 'bridges/cannons absent',
+  enemy_9012_acloon: '炎佑 is a bond summon (bonds.js)', enemy_10040_cnvbln: '狂欢时刻 absent', enemy_10043_sailor: 'bridges absent; cannon teleport speed is devices.js',
   enemy_10073_mpcar: 'plain', enemy_10124_uashld_2: 'taunt is data; 矿工游击队 absent',
 });
 

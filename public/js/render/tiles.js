@@ -174,8 +174,8 @@ export function stripeSegments(r, c, inset = 0.05, step = STRIPE_STEP) {
   }
   return out;
 }
-function drawStripes(g, cam, r, c, z, inset, lw, p) {
-  g.lineStyle(lw, 0xffc27a, 0.55, 0.5);
+function drawStripes(g, cam, r, c, z, inset, lw, p, color = 0xffc27a) {
+  g.lineStyle(lw, color, 0.55, 0.5);
   for (const [xa, ya, xb, yb] of stripeSegments(r, c, inset)) {
     cam.project(xa, ya, z, p);
     g.moveTo(p.x, p.y);
@@ -201,7 +201,7 @@ function variantMat(t) {
 }
 
 /** Device roles we draw, and whether they stand on the tile as a 3D prop. */
-const DEVICE_ROLES = new Set(['crate', 'platform', 'mound', 'blower', 'turret', 'waterPlatform', 'bush', 'sealedFloor']);
+const DEVICE_ROLES = new Set(['crate', 'platform', 'mound', 'blower', 'turret', 'waterPlatform', 'bush', 'sealedFloor', 'cannon']);
 /** Textured box props: role → { size (tiles), height, top / side materials }. */
 export const DEVICE_BOX = Object.freeze({
   crate: { size: 0.84, height: 0.74, top: 'crateTop', side: 'crateSide' },
@@ -210,11 +210,13 @@ export const DEVICE_BOX = Object.freeze({
   sealedFloor: { size: 0.92, height: 0.05, top: 'sealed', side: 'forbidSide' },
   blower: { size: 0.86, height: 0.28, top: 'blowerTop', side: 'forbidSide' },
   turret: { size: 0.72, height: 0.34, top: 'turretTop', side: 'forbidSide' },
+  cannon: { size: 0.55, height: 0.62, top: 'turretTop', side: 'forbidSide' },
 });
 /** Box prop of a battle device unit by its defId (sim `spawnDevice`: stage device keys). */
 export function deviceBoxOf(defId) {
   const k = String(defId || '');
   if (k.includes('accrate') || k.includes('crate')) return DEVICE_BOX.crate;
+  if (k.includes('cnnon')) return DEVICE_BOX.cannon;
   if (k.includes('aclasert') || k.includes('turret')) return DEVICE_BOX.turret;
   if (k.includes('achplat') || k.includes('plat')) return DEVICE_BOX.platform;
   if (k.includes('blower')) return DEVICE_BOX.blower;
@@ -567,7 +569,7 @@ export class TileField {
         g.beginFill(style.color, style.fill);
         g.drawPolygon(pts);
         g.endFill();
-        if (style.stripes) drawStripes(g, cam, r, c, z, inset, Math.max(1.5, sc * 0.05), p);
+        if (style.stripes) drawStripes(g, cam, r, c, z, inset, Math.max(1.5, sc * 0.05), p, style.stripeColor);
       }
     }
   }
@@ -652,6 +654,7 @@ export class TileField {
         }
       };
       switch (t.glyph) {
+        case 'w': add('infect', 'glow', P.BLEND_MODES.ADD, 0xff454e, 1); break;
         case 'g': add('smog', 'smoke', P.BLEND_MODES.NORMAL, 0xb8c4c0, 2); break;
         case 'd': add('sea', 'soft', P.BLEND_MODES.ADD, 0x5fe0ff, 1); break;
         case 'i': add('infect', 'glow', P.BLEND_MODES.ADD, ORIGINIUM.glow, 1); break;

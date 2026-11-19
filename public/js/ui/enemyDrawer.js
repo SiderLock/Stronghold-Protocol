@@ -7,7 +7,7 @@
 //              match's factions and the enemy leader on boss rounds. The primary enemy preview is the pen on the board
 //              (the right 🔍▶▶ pans the camera there; tapping an enemy in the pen opens its detail card) — research 09 §6.2.
 
-import { html, Icon, Tabs, MicroLabel } from './components.js';
+import { html, Icon, Tabs } from './components.js';
 import { Img, UnitThumb, BondGlyph, BandIcon, RichText, GIcon } from './gameComponents.js';
 import { groupEnemies, factionTypes, briefingBondTip } from './gameLogic.js';
 import { matchInfoModel, DiyBannedLine } from './matchInfo.js';
@@ -55,13 +55,13 @@ function EnemiesTab({ pub, priv, onEnemy }) {
     </div>` : html`<p class="edrawer__empty"><${GIcon} name="target" />${t('暂无敌方情报')}</p>`}
     ${boss ? html`<div class="eboss">
       <${UnitThumb} kind="enemy" id=${boss.enemyKey} size="md" />
-      <div><${MicroLabel} tone="gold">${t('ENEMY LEADER // 敌方领袖')}</${MicroLabel}><b>${boss.name}</b>
+      <div><span class="sw-sec__name"><i>[</i> ${t('ENEMY LEADER // 敌方领袖')} <i>]</i></span><b>${boss.name}</b>
         <span class="t-lo">${t('第 {r} 回合 · 最终攻势', { r: data.get('config')?.modes?.[pub.modeId]?.bossRound ?? pub.lastRound ?? 14 })}</span></div>
     </div>` : null}
   </div>`;
 }
 
-function InfoTab({ pub, priv, onChess, bandId = null, bandOwner = null, effects = null }) {
+function InfoTab({ pub, priv, onChess, onBond, bandId = null, bandOwner = null, effects = null }) {
   const model = matchInfoModel(pub, {
     bonds: data.list('bonds'), chess: (id) => data.lookup('chess', id), mode: data.get('config')?.modes?.[pub?.modeId],
     // the own 自选 pieces this match leaves out of the shop (m.private.diyBanned) — not while scouting a teammate
@@ -78,16 +78,22 @@ function InfoTab({ pub, priv, onChess, bandId = null, bandOwner = null, effects 
   return html`<div class="edrawer__body">
     ${band ? html`<div class="iband">
       <${BandIcon} bandId=${band.bandId} size="md" />
-      <div><${MicroLabel} tone="mint">STRATEGY // ${bandOwner ? t('{bandOwner} 的策略', { bandOwner }) : t('我的策略')}</${MicroLabel}><b>${band.name} <small class="t-lo">${band.effectName}</small></b>
+      <div><span class="sw-sec__name"><i>[</i> STRATEGY // ${bandOwner ? t('{bandOwner} 的策略', { bandOwner }) : t('我的策略')} <i>]</i></span><b>${band.name} <small class="t-lo">${band.effectName}</small></b>
         <${RichText} text=${band.descRaw || band.desc} class="iband__desc" /><${StrategyProgress} effect=${bandEffect} /></div>
     </div>` : null}
     ${stage ? html`<p class="istage"><${Icon} name="rook" />${t('战场：')}<b>${stage.name || stage.id}</b></p>` : null}
-    <h4 class="ihead">${t('本局禁用干员情况')} <small class="num">${banned.length}</small></h4>
-    <div class="ibonds">
-      ${withBans.length ? withBans.map((b) => html`<span key=${b.bondId} class=${cx('ibond', disabled.has(b.bondId) && 'is-off')} title=${briefingBondTip(b.name, stateOf(b.bondId), perBond.get(b.bondId) || 0)}>
-        <${BondGlyph} bondId=${b.bondId} /><span>${b.name}</span>
-        ${perBond.get(b.bondId) ? html`<span class="ibond__ban num" title=${t('该盟约中被禁用的干员数')}><${Icon} name="user" />${perBond.get(b.bondId)}</span>` : null}
-      </span>`) : html`<span class="t-dim">${t('本局没有禁用盟约')}</span>`}
+    <h4 class="ihead"><span class="sw-sec__name"><i>[</i> ${t('本局禁用干员情况')} <i>]</i></span> <small class="num">${banned.length}</small></h4>
+    <div class=${cx('ibonds', model.regulation && 'ibonds--disc')}>
+      ${withBans.length ? withBans.map((b) => {
+        const off = disabled.has(b.bondId);
+        const bans = perBond.get(b.bondId) || 0;
+        // [ASSUMED] 规程 draws these bonds as the briefing's discs (lit first, grey when the core
+        // is absent). The chip hooks stay: .ibond, the unclassed name, .ibond__ban, data-bond.
+        return html`<button key=${b.bondId} type="button" class=${cx('ibond', model.regulation && 'ibond--disc', off && 'is-off', !off && bans > 0 && 'is-partial')} data-bond=${b.bondId} onClick=${() => onBond(b.bondId)} title=${briefingBondTip(b.name, stateOf(b.bondId), bans, model.regulation && b.isCore)}>
+          <${BondGlyph} bondId=${b.bondId} /><span>${b.name}</span>
+          ${bans ? html`<span class="ibond__ban num" title=${t('该盟约中被禁用的干员数')}><${Icon} name="user" />${bans}</span>` : null}
+        </button>`;
+      }) : html`<span class="t-dim">${t('本局没有禁用盟约')}</span>`}
     </div>
     ${banned.length ? html`<div class="ibanned">${banned.map((id) => html`<button key=${id} type="button" class="ibanned__one" onClick=${() => onChess(id)}>
       <${UnitThumb} kind="chess" ownerId=${null} id=${id} size="sm" dim=${true} /></button>`)}</div>` : null}
@@ -96,17 +102,17 @@ function InfoTab({ pub, priv, onChess, bandId = null, bandOwner = null, effects 
 }
 
 /**
- * @param {{ tab:'enemies'|'info', onTab:(t:string)=>void, pub:any, priv:any, onClose:Function, onEnemy:(key:string, count:number)=>void, onChess:(id:string)=>void,
+ * @param {{ tab:'enemies'|'info', onTab:(t:string)=>void, pub:any, priv:any, onClose:Function, onEnemy:(key:string, count:number)=>void, onChess:(id:string)=>void, onBond:(id:string)=>void,
  *   bandId?: string|null, bandOwner?: string|null, effects?: any[]|null }} props
  *   bandId / bandOwner: while watching a teammate's prep board or battle, the watched player's 策略 (m.public players[].bandId)
  *   replaces one's own in the 本局信息 tab (game.js scoutBandId; user playtest #2 item 2)
  */
-export function EnemyDrawer({ tab, onTab, pub, priv, onClose, onEnemy, onChess, bandId = null, bandOwner = null, effects = bandOwner ? null : priv?.effects }) {
+export function EnemyDrawer({ tab, onTab, pub, priv, onClose, onEnemy, onChess, onBond, bandId = null, bandOwner = null, effects = bandOwner ? null : priv?.effects }) {
   return html`<div class="edrawer brackets" role="dialog" aria-label=${tab === 'info' ? t('本局信息') : t('敌方情报')}>
     <div class="edrawer__top">
       <${Tabs} size="sm" value=${tab} onChange=${onTab} items=${[{ id: 'info', label: t('本局信息') }, { id: 'enemies', label: t('敌方情报') }]} />
       <button type="button" class="edrawer__close tapx" aria-label=${t('关闭')} onClick=${onClose}><${Icon} name="close" /></button>
     </div>
-    ${tab === 'info' ? html`<${InfoTab} pub=${pub} priv=${priv} onChess=${onChess} bandId=${bandId} bandOwner=${bandOwner} effects=${effects} />` : html`<${EnemiesTab} pub=${pub} priv=${priv} onEnemy=${onEnemy} />`}
+    ${tab === 'info' ? html`<${InfoTab} pub=${pub} priv=${priv} onChess=${onChess} onBond=${onBond} bandId=${bandId} bandOwner=${bandOwner} effects=${effects} />` : html`<${EnemiesTab} pub=${pub} priv=${priv} onEnemy=${onEnemy} />`}
   </div>`;
 }

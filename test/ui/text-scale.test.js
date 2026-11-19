@@ -216,7 +216,7 @@ describe('文字大小: the CSS text root', () => {
     const samples = [
       ['components.css', /\.btn \{[^}]*font-size: calc\(\.18 \* var\(--t\)\)/s],
       ['screens/game.css', /\.set-row__label \{[^}]*font-size: calc\(\.18 \* var\(--t\)\)/s],
-      ['screens/game-panels.css', /\.dtext \{ font-size: calc\(\.15 \* var\(--t\)\); line-height: 1\.65;/],
+      ['screens/game-panels.css', /\.dtext \{ font-size: max\(calc\(\.15 \* var\(--t\)\), 12px\); line-height: 1\.65;/],
       ['screens/guide.css', /\.guide__tips li \{ font-size: calc\(\.18 \* var\(--t\)\)/],
       ['screens/lobby.css', /\.pcard__desc \{[^}]*font-size: calc\(\.16 \* var\(--t\)\)/],
     ];
@@ -251,7 +251,7 @@ describe('文字大小: the CSS text root', () => {
       ['screens/game-panels.css', /\.spcard__desc \{ flex: none; font-size: \.2rem/, '.spcard__desc (7 clamped lines)'],
       ['screens/game-panels.css', /\.dhp span \{[^}]*font-size: \.12rem/, '.dhp span (a fixed-height HP bar)'],
       ['screens/game-shop.css', /\.scard__name \{[^}]*font-size: \.19rem/, 'the shop card'],
-      ['screens/game.css', /\.bslot \.bond__name \{[^}]*font-size: \.14rem/, 'the bond strip'],
+      ['screens/bond.css', /\.bslot \.bond__name \{[^}]*font-size: \.14rem/, 'the bond strip'],
       ['screens/game.css', /\.bossbar__txt \{[^}]*font-size: \.14rem/, 'the boss bar'],
       ['screens/game.css', /\.lp--md \{ font-size: \.24rem; \}/, 'the top bar LP'],
       ['screens/game.css', /\.sp-coarse \.set-diag__text \{ font-size: 16px; \}/, 'the 16 px iOS-zoom guard'],

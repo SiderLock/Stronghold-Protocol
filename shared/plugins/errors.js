@@ -200,10 +200,15 @@ export const PLUGIN_ERRORS = Object.freeze({
     zh: '插件的版本号 "version" 没写，或者写法不对', en: 'The plugin\'s "version" is missing or not a version number',
     fix: { zh: '写成三段数字，例如 "1.0.0"；以后每次改了插件都把它调大一点（1.0.1、1.1.0 …）。', en: 'Write three numbers such as "1.0.0"; raise it whenever the plugin changes (1.0.1, 1.1.0 …).' },
   },
+  PLUGIN_VERSIONS: {
+    level: 'problem', doc: D.manifest,
+    zh: '适配的官方版本 "versions" 写法不对', en: 'The supported official versions "versions" are invalid',
+    fix: { zh: '填写非空、无重复的官方版本 ID 数组；省略时玩法插件只适配 act2autochess。', en: 'Use a non-empty array of distinct official version ids; omission limits gameplay plugins to act2autochess.' },
+  },
   PLUGIN_APP: {
     level: 'problem', doc: D.manifest, autofix: 'setApp',
     zh: '适配的游戏版本 "app" 没写，或者写法不对', en: 'The game versions the plugin is made for, "app", are missing or not a range',
-    fix: { zh: '写成一个版本范围，例如 ">=0.3.0 <0.4.0"（本游戏现在是 {app}）。', en: 'Write a range such as ">=0.3.0 <0.4.0" (this game is {app}).' },
+    fix: { zh: '写成一个版本范围，例如 ">=0.4.0 <0.5.0"（本游戏现在是 {app}）。', en: 'Write a range such as ">=0.4.0 <0.5.0" (this game is {app}).' },
   },
   PLUGIN_APP_MISMATCH: {
     level: 'warning', doc: D.manifest, autofix: 'setApp',

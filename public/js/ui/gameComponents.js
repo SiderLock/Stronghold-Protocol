@@ -5,6 +5,7 @@ import { useState, useMemo } from '../../vendor/hooks.module.js';
 import { html, Icon, TierChip, Tooltip } from './components.js';
 import { data, useData, localAsset } from '../data.js';
 import { parseRichText, rtClassName } from './richText.js';
+import { fillShowTags } from './showTags.js';
 import { t as tr } from '../../../shared/i18n.js';
 import { useStore, store } from '../store.js';
 import { skinsStore, ownerSkin, tokenSkinShown } from './skins.js';
@@ -111,11 +112,12 @@ export function LocalSprite({ group = 'ui/battle', name, class: cls, fallback = 
 }
 
 /**
- * Rich text (official markup) → spans. Newlines become <br>.
+ * Rich text (official markup) → spans. Newlines become <br>. A {showtag_value_N} the caller did not fill (ui/showTags.js
+ * itemText / garrisonText give the live or starting value) reads 0 rather than the raw placeholder (§37.201).
  * @param {{ text: any, class?: string, as?: string }} props
  */
 export function RichText({ text, class: cls, as = 'span' }) {
-  const segs = useMemo(() => parseRichText(text), [text]);
+  const segs = useMemo(() => parseRichText(typeof text === 'string' ? fillShowTags(text, null) : text), [text]);
   const Tag = as;
   return html`<${Tag} class=${cx('rt', cls)}>${segs.map((s, i) => (s.br
     ? html`<br key=${i} />`
@@ -187,6 +189,25 @@ export function UnitThumb({ kind = 'chess', id, golden, size = 'md', tier, showT
     ${kind === 'token' ? html`<span class="uthumb__tag">${tr('召唤')}</span>` : null}
     ${si ? html`<span class="uthumb__si" data-standin=${si.charId} aria-hidden="true">${tr('替补')}</span>` : null}
     ${badge}
+  </span>`;
+}
+
+/** Square operator portrait with a bottom-left rarity badge; no cut corners. */
+export function SquareOperatorThumb({ id, rec = null, ownerId, dim = false, title }) {
+  const chess = rec || data.lookup('chess', id);
+  const name = title ?? chess?.name ?? '';
+  const tier = Math.max(1, Math.min(6, Number(chess?.tier) || 1));
+  const tierKey = `bondChar/img_chess_level_${tier}`;
+  const manifest = data.get('assets');
+  const standIn = rec && typeof rec.standInFor === 'string' && rec.standInFor;
+  return html`<span class=${['square-op-thumb', dim && 'is-dim', chess?.isGolden && 'is-golden'].filter(Boolean).join(' ')}
+    style=${`--square-op-tier-color: var(--tier-${tier})`} title=${name}>
+    <span class="square-op-thumb__art">
+      <${OperatorImage} m=${manifest} chess=${chess} ownerId=${ownerId}
+        fallback=${html`<span class="square-op-thumb__glyph">${[...(name || '?')][0]}</span>`} />
+    </span>
+    <${Img} class="square-op-thumb__tier" src=${uiUrl(manifest, tierKey)} fallback=${html`<span class="square-op-thumb__tier square-op-thumb__tier--text">${['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ'][tier - 1]}</span>`} />
+    ${standIn ? html`<span class="square-op-thumb__standin" aria-hidden="true">${tr('替补')}</span>` : null}
   </span>`;
 }
 
@@ -269,9 +290,15 @@ export function CoinGlyph({ class: cls }) {
 }
 
 /** Bond glyph image (white mask tinted by CSS) or first-letter fallback. */
-export function BondGlyph({ bondId, class: cls }) {
+export function BondGlyph({ bondId, class: cls, mask = false }) {
   const b = data.lookup('bonds', bondId);
   const src = bondIconUrl(data.get('assets'), bondId);
+  // `mask`: the icon's shape filled with the current text colour (the 规程 card: the official cards draw a bond's icon in
+  // the same colour as its name — the theme's bondColor —, not the fixed mint filter below)
+  if (mask && src) {
+    const url = `url("${src}")`;
+    return html`<span class=${cx('bglyph', 'bglyph--mask', cls)} title=${b?.name || bondId} style=${{ WebkitMaskImage: url, maskImage: url }}></span>`;
+  }
   return html`<span class=${cx('bglyph', cls)} title=${b?.name || bondId}>
     <${Img} src=${src} fallback=${html`<span class="bglyph__txt">${[...(b?.name || '?')][0]}</span>`} />
   </span>`;

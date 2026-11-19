@@ -74,7 +74,7 @@ export const NET_DEFAULTS = Object.freeze({
  * Intents that also draw from the per-connection heavy bucket: g.watch (its reply is a large state resend, m.field),
  * room.loadout (a ≤ 160-entry map and ≤ 256 operator settings validated against the game data; the client debounces its
  * edits), room.ownership
- * (a ≤ 160-id list, the same way), room.diy (≤ 8 自选 picks checked against the data, the same way), room.spectate
+ * (a ≤ 160-id list, the same way), room.diy (≤ 12 自选 picks checked against the data, the same way), room.spectate
  * (taking a spectator seat in a running match resends its state like a watcher's g.watch — server/lobby.js spectate),
  * lobby.spectate / lobby.watch with on:true/list:true (a paginated room directory, at most 50 rows per reply), and
  * room.setPlugins (a new visual set: every member downloads its art manifest — server/plugins/visualSet.js).
@@ -86,7 +86,7 @@ export const NET_DEFAULTS = Object.freeze({
  * room.proposeVersion (DESIGN §35.23) stays host-proposed: an accepted proposal by a lone human switches the room's
  * version — every page then downloads that version's data.
  */
-export const HEAVY_TYPES = new Set(['lobby.spectate', 'lobby.watch', 'room.requestSeat', 'room.answerSeat', 'g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'room.setPlugins', 'room.skins', 'room.card', 'room.rerollSetup', 'room.proposeVersion', 'state.resync']);
+export const HEAVY_TYPES = new Set(['lobby.spectate', 'lobby.watch', 'room.requestSeat', 'room.answerSeat', 'g.watch', 'room.loadout', 'room.ownership', 'room.diy', 'room.spectate', 'room.setPlugins', 'plugins.preview', 'room.skins', 'room.card', 'room.rerollSetup', 'room.proposeVersion', 'state.resync']);
 
 /** Close codes (see header). */
 export const CLOSE = Object.freeze({ REPLACED: 4001, HELLO_TIMEOUT: 4002, POLICY: 1008, SHUTDOWN: 1001 });
@@ -935,7 +935,9 @@ export class Network {
       // surface as an error toast in the browser)
       if (msg.t === 'b.progress' && !validRid(rid)) return;
       this.reply(conn, errorMsg(isErrCode(res.error) ? res.error : ERR.INTERNAL, rid, res.detail));
-    } else if (validRid(rid)) this.reply(conn, res?.reply ? { ...res.reply, rid } : { t: 'ok', rid });
+    } else if (validRid(rid)) this.reply(conn, res && typeof res === 'object' && res.reply && typeof res.reply === 'object'
+      ? { ...res.reply, rid, t: typeof res.reply.t === 'string' ? res.reply.t : 'ok' }
+      : { t: 'ok', rid });
   }
 
   /** @param {Connection} conn @param {any} msg @param {number} now */

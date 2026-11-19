@@ -43,6 +43,46 @@ function view(info, opts = {}, assets = store()) {
   return new UnitView(ctx, { id: 1, side: 'ally', kind: 'chess', defId: 'char_x', tier: 3, x: 5, y: 12, maxHp: 1000, ...info }, opts);
 }
 
+test('resting bench operators shrink at the feet and move forward within the original pick tile', () => {
+  for (const camera of [cam(), presetCamera('bossPrep', { width: 1280, height: 720, side: 'R' })]) {
+    const a = view({ kind: 'op', x: 4, y: 7 }, { prep: true });
+    const b = view({ kind: 'op', x: 4, y: 7 }, { prep: true, bench: true });
+    try {
+      a.setItems(['one']); b.setItems(['one']);
+      a.update(0, camera, 0); b.update(0, camera, 0);
+      const feet = camera.project(4, 7, 0);
+      const down = camera.project(4, 6.85, 0).y - feet.y;
+      assert.ok(down > 0);
+      assert.equal(b.x, 4); assert.equal(b.y, 7);
+      assert.equal(b.body.scale.x, 0.9);
+      assert.ok(Math.abs(b.root.position.y - a.root.position.y - down) < 1e-8);
+      assert.ok(Math.abs(b.shadow.position.y - a.shadow.position.y - down) < 1e-8);
+      assert.ok(Math.abs(b._headTiles / a._headTiles - 0.9) < 1e-8);
+      assert.equal(b.hud.scale.x, 1);
+      assert.equal(b.itemPips[0].width, a.itemPips[0].width);
+      // The same view is reused when dragging and when placed on the battlefield.
+      b.lift = 1; b.update(0, camera, 0);
+      assert.equal(b.body.scale.x, 1);
+      assert.equal(b.screen.y, camera.project(4, 7, 1).y);
+      b.lift = 0; b.bench = false; b.update(0, camera, 0);
+      assert.equal(b.body.scale.x, 1);
+      assert.equal(b.root.position.y, a.root.position.y);
+    } finally { a.destroy(); b.destroy(); }
+  }
+});
+
+test('bench tuning leaves battle operators and preparation summons unchanged', () => {
+  for (const [kind, prep] of [['op', false], ['token', true]]) {
+    const v = view({ kind, y: 7 }, { prep, bench: true });
+    try {
+      const camera = cam();
+      v.update(0, camera, 0);
+      assert.equal(v.body.scale.x, 1);
+      assert.equal(v.screen.y, camera.project(v.x, v.y, v.z).y);
+    } finally { v.destroy(); }
+  }
+});
+
 test('prep pips retain both equipment slots and a zero-slot morph, then remove only unequipped pips', () => {
   const v = view({}, { prep: true });
   v.setItems(['one', 'two', 'morph']);
@@ -52,6 +92,86 @@ test('prep pips retain both equipment slots and a zero-slot morph, then remove o
   v.setItems([]);
   assert.equal(v.itemPips.length, 0);
   v.destroy();
+});
+
+test('equipment icons show the complete inventory in balanced centred rows with a fixed bottom edge', () => {
+  const v = view({}, { prep: true });
+  try {
+    const camera = cam();
+    const expected = new Map([[1, [1]], [2, [2]], [3, [3]], [4, [2, 2]], [5, [3, 2]], [6, [3, 3]], [7, [3, 2, 2]]]);
+    let bottom, size;
+    // Reuse the same view, including shrink / reflow while retained URLs are unchanged.
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 4, 2]) {
+      const urls = Array.from({ length: n }, (_, i) => `equipment-${i}`);
+      v.setItems(urls);
+      v.update(1 / 60, camera, 0);
+      assert.deepEqual(v.itemPips.map(p => p._url), urls, `all ${n} equipment icons remain visible`);
+      const rows = [];
+      for (const pip of v.itemPips) {
+        assert.ok(pip.visible);
+        let row = rows.find(r => Math.abs(r[0].position.y - pip.position.y) < 1e-6);
+        if (!row) { row = []; rows.push(row); }
+        row.push(pip);
+        size ??= pip.width;
+        assert.equal(pip.width, size, 'adding equipment does not shrink icons');
+        assert.equal(pip.height, size);
+      }
+      rows.sort((a, b) => a[0].position.y - b[0].position.y);
+      assert.deepEqual(rows.map(r => r.length), expected.get(n), `${n} items`);
+      for (const row of rows) {
+        const centre = row.reduce((sum, pip) => sum + pip.position.x, 0) / row.length;
+        assert.ok(Math.abs(centre - v.screen.x) < 1e-6, 'each row is centred under the carrier');
+        for (let i = 1; i < row.length; i++) {
+          assert.ok(row[i].position.x - row[i - 1].position.x > size, 'icons do not overlap');
+        }
+      }
+      const nextBottom = rows.at(-1)[0].position.y + size / 2;
+      bottom ??= nextBottom;
+      assert.ok(Math.abs(nextBottom - bottom) < 1e-6, 'extra rows expand upward');
+      if (rows.length > 1) assert.ok(rows[1][0].position.y - rows[0][0].position.y > size);
+    }
+  } finally { v.destroy(); }
+});
+
+test('removing multi-row equipment releases sprites and late image loads cannot restore unequipped icons', async () => {
+  let resolveImages;
+  const pending = new Promise(resolve => { resolveImages = resolve; });
+  const v = view({}, { prep: true }, { ...store(), image: () => pending });
+  try {
+    v.setItems(Array.from({ length: 7 }, (_, i) => `equipment-${i}`));
+    const removed = v.itemPips.slice(2);
+    v.setItems(['equipment-0', 'equipment-1']);
+    assert.ok(removed.every(p => p.destroyed));
+    resolveImages({ width: 180, height: 180 });
+    await tick();
+    assert.equal(v.itemPips.length, 2);
+    v.setItems([]);
+    v.update(1 / 60, cam(), 0);
+    assert.equal(v.itemPips.length, 0);
+  } finally { v.destroy(); }
+});
+
+test('equipment progress stays below the fixed bottom row, including at minimum icon size', () => {
+  const v = view({}, { prep: true });
+  try {
+    v.screen.x = 100; v.screen.y = 200;
+    v.setItemProgress([{ current: 0, total: 8 }]);
+    for (const scale of [12, 60, 120]) {
+      let top;
+      for (const n of [1, 4, 6, 7]) {
+        v.setItems(Array.from({ length: n }, (_, i) => `equipment-${i}`));
+        v._updateHud(0, scale, 100, 100, 1, 0);
+        const bottom = Math.max(...v.itemPips.map(p => p.position.y + p.height / 2));
+        assert.ok(v.itemProgressText.position.y >= bottom + 2 - 1e-6, 'progress clears the equipment by at least two pixels');
+        top ??= v.itemProgressText.position.y;
+        assert.equal(v.itemProgressText.position.y, top, 'wrapping does not move the progress text');
+        assert.equal(v.itemProgressText.text, '0 / 8');
+      }
+      v.setItems([]);
+      v._updateHud(0, scale, 100, 100, 1, 0);
+      assert.equal(v.itemProgressText.position.y, v.screen.y + scale * 0.14, 'no phantom equipment spacing after removal');
+    }
+  } finally { v.destroy(); }
 });
 
 describe('tier chips', () => {

@@ -92,10 +92,11 @@ the summons the same way, and the summons rank after the operators of all player
 field — units deploy one after another with a fixed delay from the battle start — and "两处阵地将前后拼接为一处阵地").
 
 外勤医疗's prepared slot is a preparation view record, not a combat `Unit`. The `battleStart` handler creates either
-预备干员-医疗 or Touch after counting deployed elites. [ASSUMED] Its effective targeting order precedes ordinary
-initial deployments (`preBattleAggroSeq`); its actual `deploySeq` still identifies the later runtime spawn. Prepared
-slots on a shared field follow player order [ASSUMED]. A later `spawnMapChar` without this option keeps its ordinary
-summon order (§30.22).
+预备干员-医疗 or Touch after counting deployed elites, on every player whose match bands include the grant — a teammate
+whose own 规程 command is a different effect, and a field kept after the holder has left. [ASSUMED] Its effective
+targeting order precedes ordinary initial deployments (`preBattleAggroSeq`); its actual `deploySeq` still identifies
+the later runtime spawn. Prepared slots on a shared field follow player order [ASSUMED]. A later `spawnMapChar`
+without this option keeps its ordinary summon order (§30.22).
 
 Register hooks before the first step (e.g. `opts.setup(battle)` or right after `new Battle`).
 
@@ -196,9 +197,33 @@ without a previous state still takes that opening damage. Later combat, HP loss 
 退场状态的干员强制退场", user playtest #5 item 2): `start()` deploys it with everyone (initial `deploy` fires), then — before
 `battleStart` — withdraws it with reason `FORCED_EXIT` (constants.js `'forcedExit'`) and HP 0 (the end-of-phase HP ratio, as after
 `kill`): it is down on its tile (`isDown`, b.snap `down`) with its full redeploy timer and redeploys by the normal rule; no `kill` hook, no `'killed'` death (knock-out
-effects such as 深海 / 不屈 revives or 崇高牺牲 layers fired in its own combat), no `deaths` count. Right after `battleStart`
+effects such as 深海 / 不屈 revives or 崇高牺牲 layers fired in its own combat), no `deaths` count. A reached 阿戈尔 revive tier is the exception: after every player's devour pass, a down member joins `egirReviveScan` and the bond's free redeploy brings it back (full HP, `deploy {initial:false}`, fx `revive` / `bond:egirShip`), spending one `max_free_respawn_cnt` of this battle. 规程 `bondeffect_egir_2` sets `respawn: false` and does not. With no slot left the operator stays down on the full timer. [ASSUMED] the carried-down state is this battle's first knock-out (BV1auHq67Eoi 21:25–21:40). Right after `battleStart`
 its timer is re-read (`deathAt + respawnTime × persist.redeployMul × s.redeployMul`), so a redeploy-time effect switched on
 by a `battleStart` handler covers it like a later knock-out (机变 征召 −50 %; 征召's row check does not count it [ASSUMED]).
+
+### Regulation command inputs
+
+Command-enabled `PlayerBattleInput` adds `commandEffectId` (the live band effect), `commandMarks` (uid/tile targets,
+tag effect, or persistent treasure id/enemy id/coin), `commandReserves` (bench units with `commandReserveFor`), and
+`bondEffectOverrides` (original effect id → replacement effect id). `commandLayerCapBonus` on a unit raises its finite
+per-battle garrison cap. Temporary elite/equipment changes are applied to input copies, never to owned pieces.
+`content/bands/commands.js` installs targeted revival, shield, fear, reserve and treasure effects. Bond installers can
+use `content/support/index.js:playerBondRecord(battle, playerId, bondId)` to resolve per-player replacement records.
+Replacement bodies remain the responsibility of the bond module.
+
+Treasure battles append `perPlayer[pid].commandChests: [{id,alive}]`. Compact results, result digests and server bounds
+include this receipt only when present; the server requires exactly the supplied treasure ids without duplicates.
+The match removes touched treasures before building unite inputs and again at settlement. Only `enemy_9038_achest`
+(the blackboard `enemy_id` of `skill_add_pos_effect_enemy`) spawns, as an ally device on the tile `mapTile` gives
+this field — the owner's board, a 联防 helper's half (`colOffset`), or a boss / pair / hidden half. A leaker's board
+is not on the unite field. `[ASSUMED]` an enemy touches it when `bodyInRangeTile` overlaps that tile after the tick's movement (point enemies:
+the mode's 0.1 circle; huge enemies: their rectangle; flyers included; an enemy killed on the tile in that same tick
+still counts). The device then retreats for good and the
+receipt says `alive: false`. A survivor adds the mark's `coin` through `addCoins` (battle bounty coins, paid with the
+other pending funds next prep, plus the bounty pop). A mark whose tile could not spawn the device does not pay and
+stays. While the mark stands, prep placement refuses that board tile and the private prep view draws it in
+`prepMapChars`. `[ASSUMED]` reserve units
+replace the original body for that battle and are selected from the rightmost legal bench operator at input creation.
 
 ### 1.2 Enemies, routes, ownership
 
@@ -304,6 +329,13 @@ targets from the range (`beforeAttack`) adds `battle.blockedTargets` to its cand
 S2: icicles on random tiles of her range). This replaces the
 playtest #5 QA's melee-only reading (PRTS 索敌的概念 "我方索敌优先级：阻挡（近战限定）"; "远程位干员…无法攻击到这个敌人");
 DESIGN §20 keeps the one-line flip (`Battle.blockedTargets` / `sortEnemyTargets` gated on a melee position again).
+假想敌：茧's ordinary volley and 淤困捕食 (Net), in both forms, filter candidates with `allTargets` before
+ranking HP and applying the per-player / total caps. `unit.hidden` alone describes an off-field state and does not
+cover `s.flags.stealth` / `camou`; 裁度's six-member 叙拉古 replacement grants real stealth, with no boss-specific immunity.
+The official client `26-11-06-12-42-25-70182449` keeps Attack / Net selector `_ignoreTargetFree` and
+`_forceIgnoreCamouflage` at 0. AcidRain's damage / debuff options instead set `ignoreTargetFree:1`; its separate
+area effect and an already-applied poison tick remain unchanged (`test/sim/cocoon-targeting.test.js`).
+
 The parasite 假想敌：淤困 is an exception to the ordinary contact position: when it attaches, it blinks from the contact
 point to its blocker's tile centre and holds 自缚 (`selfBound` / `noMove`) until that block ends (PRTS 假想敌：淤困).
 Its route is recalculated from the new position when movement resumes. The `teleport` fx with `kind: 'parasite'`
@@ -374,7 +406,7 @@ held, as under an attack clip [ASSUMED]. The buff's end — its own duration, or
 浮空 (they all set `stun`, units.js) or the locked target's fall — resumes the route, and the skill's cooldown restarts
 there (PRTS 「同一技能的冷却时间于该技能结束时开始计时」), so 狂欢式演奏's 10 s follows its 10.5 s channel and 死亡之眼's
 24 s follows its 8 s one: it walks between casts. The attack-clip stand above never covers a channel, a channel having no
-normal attack, so until 0.3.4 it walked its route while casting (an in-game observation of 2026-10-29, [ASSUMED] — no table
+normal attack, so until 0.4.0 it walked its route while casting (an in-game observation of 2026-10-29, [ASSUMED] — no table
 states the immobility, nor the 恐惧 / route-wait side of it; DESIGN §37.56). Any enemy whose block ends after
 its strike — its blocker stunned by that strike (流泪小子), knocked out or retreated — stands for the rest of that clip
 before it walks on (PRTS 状态机: an enemy's ATTACK / COMBAT state "攻击结束后回退到MOVE状态"; only a character's COMBAT
@@ -486,7 +518,7 @@ recorded for the player whose half contains the goal it reached, with `sourcePla
 { time, reason: 'cleared'|'timeout'|'forced', killed, total, resolved, errors, unspawned?: [{enemyKey,time,tag}], bossHpLeft?,
   perPlayer: { [playerId]: { killed, total, resolved, killedInTotal, leakedInTotal, perfect,
       leaked: [{ enemyKey, mods, lpr, sourcePlayerId, tag, counted, uniteRuntime?, boss?, spawned }],
-      layerGains: {bondId: n}, coins, damageDealt, bossDamage, healingDone, deaths,
+      layerGains: {bondId: n}, tempLayerGains?: {bondId: n}, coins, damageDealt, bossDamage, healingDone, deaths,
       unitsEnd: [{ uid, id, defId, hpPct, sp, skillActive, alive }],   // operators + board summon pieces; sp = skill.spTotal
       unitStats: [{ id, uid, defId, name, kind, dmg, kills, heal, taken, attacks }] } } }
 ```
@@ -575,6 +607,8 @@ on the match/client side; `morphSlotPolicy` permits a third carried item only wh
 
 ## 2. Units
 
+**莱塔尼亚's enemy-shaped summons** (`content/bonds/lethania.js`; assumptions: DESIGN §5.5 and history §37.222): the bond creates one summon at each enemy knock-out—normally NOTE, or CHORUS in place of NOTE according to the six-operator probability—and, at six operators, triggers an additional summon at a qualifying owned operator's knock-out, using the same NOTE-or-CHORUS probability; its version blackboard supplies the chance and living-summon cap. Each summon belongs to the bond player and appears at the center of the death tile. [ASSUMED] In a shared field every installed player's bond sees any enemy knock-out, regardless of killer or field owner. The explicit token adapter preserves arts damage, movement speed, blocking capacity and the enemy record's MELEE / RANGED shape. Marked pursuers can overlap allies, other summons, downed bodies and non-deployable road tiles; they never own an `_occ` slot. The blocker scans their actual coordinates separately. A NOTE born with attackable enemies on its birth tile enters a local mode. Candidates must occupy that tile and be within the selector's 0.5 raw radius plus the target collider; a target blocked by another ally remains attackable and is never stolen. If an unblocked local target is in contact and NOTE has capacity, it takes the nearest eligible one through the normal block-capacity check [ASSUMED nearest tie]; without capacity it still attacks. Attack selection and pre-move commits stay local while any candidate remains. Once empty, NOTE returns permanently to global selection and does not re-enter if a later enemy comes onto that tile. A NOTE with no local birth candidate uses global selection immediately. CHORUS remains global. CHORUS uses strict 2.4 raw radius plus the target collider for selection and attack, and pauses once in range. Only these tokens pursue: a four-neighbour ground route avoids impassable terrain / obstacles but ignores friendly occupancy and downed bodies; movement spends real speed and synchronizes x/y, tile and range state, without changing `_occ`. Both pause for control, `noMove`, an attack clip, or while they hold an enemy. [ASSUMED] They choose a shortest ground route to a selectable target, with fixed direction tie order. With no living deployed enemy, each summon captures its own current tile center on its first empty-field tick, or when the field transitions from enemies present to none, then returns to that point. A new enemy clears the per-unit idle target. Capture occurs before movement-state gates, but movement still respects those gates; both types spawn at the death tile center before any empty-field tick. A living but unselectable enemy makes them hold. A spawn on a non-ground death tile stays at its center; no off-platform movement rule is inferred. CHORUS anti-air selection is [ASSUMED] because its enemy record has no selector field. Its reported multi-hit cadence and the bond-described +20 ASPD aura for Leithania operators remain separate discrepancies; see §37.140.
+
 `Unit` fields: `id, side ('ally'|'enemy'), kind ('op'|'token'|'enemy'|'device'), defId, def (normalised), name, ownerId
 (playerId), uid (board piece), ownerUnit (tokens), skin (the owner's skinId, display only — stored and published, never read by a rule; absent from `Battle.result()`, docs/SKINS.md), x, y (floats; x = col, y = row), tileR, tileC (allies), homeR, homeC
 (board tile: a retreated operator's redeploys land there; a knocked-out one's on its `body` tile, §1), dir ('UP'|'RIGHT'|'DOWN'|'LEFT'; getters `fwd` = forward vector, `facing` =
@@ -610,7 +644,7 @@ states, traps, "所在格" effects, the PRTS notes that say so, a `rangeTiles` p
 (`roundHalfEven(y)`, `roundHalfEven(x)` — PRTS 作战机制 "四舍六入五成双"; `Math.round` would take 2.5 to 3) is that tile —
 `bodyKeys` / `bodyInKeys` / `bodyOnTile`, `Battle.enemiesOnTiles` —; in a radius when its position is (DESIGN §3), or,
 for the radius effects PRTS marks 碰撞判定, when its circle overlaps the radius (`Battle.foesInColliderRadius`). An enemy held on the field edge is inset by `FIELD_EDGE_INSET` (1/1048576) [ASSUMED] so that rounding keeps it on the edge tile; movement, knockback and a unit's standing tile for range keys still use `Math.round` (§30.27). A huge enemy (巨型单位:
-`enemy.hitArea` from data/enemies.json `hitArea` — 假想敌：胄 / 管 / 盐风主教昆图斯 / 阿利斯泰尔 / “萨米的意志”, PRTS
+`enemy.hitArea` from data/enemies.json `hitArea` — 假想敌：胄 / 管 / 茧 / 械（普通及隐秘核心） / 盐风主教昆图斯 / 阿利斯泰尔 / “萨米的意志”, PRTS
 "受击判定区域为长4.95、宽2.95的长方形，向上偏移1.0") is hit anywhere on a rectangle `w` × `h` tiles centred on its position
 moved `dx` columns right / `dy` rows up: it occupies every tile the rectangle overlaps (`bodyKeys` — 5 × 3 tiles; PRTS
 作战机制 "巨型BOSS单位的每一个占据的格子都可以让其本身通过格子判定"), and radius rules measure to the rectangle (`bodyDist`, 0
@@ -618,9 +652,13 @@ inside) [ASSUMED: PRTS 作战机制 calls collider tests the most common one] �
 target**, a 中点判定 (PRTS 作战机制 "中点判定…案例：阻挡，酒神1天赋的1.3溅射半径"): `enemiesInRadius(x, y, r, true)` counts
 every enemy, a huge one too, by its position (the engine's profession splash and 炮手 aftershocks, and the kits' splash
 centred on an enemy — 焰影苇草 S3's 灼痕 burst, 新约能天使 火力电台, 仇白 S1 留羽). Its position stays its 判定中心 (projectiles fly to it; its own
-attacks, and splash centred on it, measure from it); body size plays no part in blocking or movement: every huge leader is 自缚 + 无法被阻挡 (PRTS 天赋; content/bosses.js
+attacks, and splash centred on it, measure from it); body size plays no part in blocking or movement: the legacy huge leaders listed in `SELF_BOUND` are 自缚 + 无法被阻挡 (PRTS 天赋; content/bosses.js
 `SELF_BOUND` gives it a persistent `noMove` + `unblockable` buff at spawn — it stands where it spawns, its route is never
-walked, so the rectangle stays on the pipe block). Content tests enemies only through the engine
+walked, so the rectangle stays on the pipe block). 三期茧／械的两形态同为 4.95×2.95、向上偏移 1；
+后兽则使用居中的 2.95×2.95 矩形，仍能正常移动，不因受击区域而添加 `SELF_BOUND`。
+来源为官方客户端根 BoxCollider2D，全部 39 个 Boss prefab 的记录见 [audit](research/boss-hit-areas-20261112.md)；
+`test/sim/cocoon-body.test.js` 与 `test/sim/boss-hit-areas.test.js` 覆盖逐格攻击、四侧越界及客户端预览。
+Content tests enemies only through the engine
 queries above or `body.js` (`bodyInRange` for a range, `bodyInKeys` / `bodyOnTile` for a tile rule, `bodyInRadius`,
 `bodyDist`, `bodyTileReach`; wave-B modules via `support/index.js` `onKeys` / `inRange` — ranges), never
 `rangeKeySet.has(tileKey(enemy))`; distance-scaled numbers (farther
@@ -949,7 +987,21 @@ and 扎罗's 溶血骇惧; "受到N真实伤害" over time is damage (PRTS 伤�
 `'dot'` / `'periodic'` (player report D1). Terrain ticks (`content/devices.js`): 深水区's 【水蚀】 is the same kind (PRTS 涨潮控制
 深水 "无来源真实持续伤害（不属于环境伤害，不会触发受击回复）": `noSp`, tags `'dot'` / `'periodic'` / `'deepsea'`); 活性源石's is
 无来源 true damage tagged `'terrain'` — 环境伤害 (PRTS 自然环境), what "受到来自自然环境的伤害" content (纠缠藤蔓) reads — and
-not `'dot'` [ASSUMED] (DESIGN §22.4). The 源石溶剂 drain also ticks on every 敌人类我方单位 of the field (炎佑, a
+not `'dot'` [ASSUMED] (DESIGN §22.4). 规程 `tile_speedup` (glyph `z`) is not a tick. The buff template's
+success branch gives a ground ally whose profession is one of PIONEER / WARRIOR / TANK / SNIPER / CASTER / MEDIC /
+SUPPORT / SPECIAL / TOKEN flat ASPD +`attack_speed` (official 25, from `stage.special.speedup`); the fail branch gives
+a ground enemy move ×`move_speed` (official 1.5) and no ASPD. Both children are infinite and are not removed when the
+parent tile buff ends, so they stay after the unit leaves the tile, until a 重生 clears them or the unit leaves the
+field. Standing on the tile again does not stack (maxStack 1). Flyers skip it (`terrainFor`). Devices are not allies of
+those professions. 规程 盐坨子炮 (`trap_196_cnnon`, role `cannon`) stands on the separator just above the field
+(row = rect.r1 + 1, facing DOWN; `spawnDevice` `allowOutside`) and does not block the road. Every 6 s (`sktok_cnnon`
+SP; the stage runes `char_skill_cd_mul` / `char_attribute_add` are not applied [ASSUMED]) it deals its ATK as physical
+damage to allies on the far tile of range 4-1 and moves one adjacent ground enemy of 重量 ≤ 3 onto that tile.
+Operators can attack it. 寻险水手 (`enemy_10043_sailor`) gains a short move-speed buff from that teleport only.
+Glyph `w` (`tile_duel_grassland`) grants both sides' ground units Stealth through the independent
+`terrain:duelGrass` buff. Leaving clears only that source; blocked enemies are visible and regain it after
+`stage.special.duelGrass.enemyStealthRestoreSec` seconds (`stealthRestore`, fallback 0). The official value is 0, so
+release is immediate. Flyers skip it. Source: official tile/buff prefabs, [field receipt](research/regulation-map09-20261112.json). The 源石溶剂 drain also ticks on every 敌人类我方单位 of the field (炎佑, a
 partner's too: PRTS 备注 "全场范围内的所有敌人类我方单位也会获得此装备的…效果…无视目标可选性"), credited to nobody, once per
 second however many carriers (PRTS 作战机制 "同名buff的默认叠加策略buff只能表现出一个"), while a carrier is on the field
 [ASSUMED]. 奥术法阵 has the same 备注 for its rider: while a carrier is on the field, every damage instance of such a unit
@@ -994,7 +1046,7 @@ registration order. `battle.off(handle)` / `battle.off(name, fn)` / `battle.offO
 | `dollSwitch` | `{ unit, reason, done }` | content switches a 傀儡师 to its <替身> now (归溟幽灵鲨 S2 "技能结束后立刻切换为<替身>": no lethal HP loss); its trait does it unless it already is one or is not on the field, and sets `done` |
 | `dollSwap` | `{ unit, form }` | a 傀儡师 starts a switch — to its <替身> (`form` `'doll'`) or back to its <本体> (`null`); not when it is knocked out as the 替身 (不屈 rolls on it: "切换<替身>与<本体>时"). 远牙's granted `garrison_108_a/b` gains on it too (player-confirmed, DESIGN §28.5), sharing its deployment cap and active-bond checks. |
 | `kill` | `{ killer, victim }` | victim HP reached 0 (a handler may revive by restoring HP) |
-| `death` | `{ unit, reason:'killed'|'leak'|'retreat'|'merchant'|'expired'|'forcedExit', killer, dying, revivedBy? }` | unit removed (`'forcedExit'`: an operator entering 联防 knocked out, §1.1; `dying`: a `retreat` that plays the death animation — 史尔特尔's 余烬, 骑士戒律 + 竞技旗). Revives of a knock-out redeploy the operator inside it, free, where it lies — PRTS "“复活”的实现方式为：受益者因移动之外的原因退场时下次部署的再部署时间和费用归零", so the 被击倒时 and 部署时 effects both run (a deploy-timed skill — `activateOnDeploy` — starts anew: a 突袭 member with one jumps at once, DESIGN §25.17.5): M3茧甲 (`PRIO_RESPAWN` 13) → 埃芒加德 (`PRIO_BAND_REVIVE` 12) — `items/battle.js reviveNow`, which sets `revivedBy` ('item' / 'band'; 阿戈尔 5 does not count such a knock-out as the member's first) — → 阿戈尔 5 (11; a knock-out by the battle-start devour waits for the last devour pass, then the knocked-out members go by board position, DESIGN §25.22.5) → 不屈 (10); until 0.2.0 the two 复活 were `fatal` savers that kept the unit standing |
+| `death` | `{ unit, reason:'killed'|'leak'|'retreat'|'merchant'|'expired'|'forcedExit', killer, dying, revivedBy? }` | unit removed (`'forcedExit'`: an operator entering 联防 knocked out, §1.1; `dying`: a `retreat` that plays the death animation — 史尔特尔's 余烬, 骑士戒律 + 竞技旗). Revives of a knock-out redeploy the operator inside it, free, where it lies — PRTS "“复活”的实现方式为：受益者因移动之外的原因退场时下次部署的再部署时间和费用归零", so the 被击倒时 and 部署时 effects both run (a deploy-timed skill — `activateOnDeploy` — starts anew: a 突袭 member with one jumps at once, DESIGN §25.17.5): M3茧甲 (`PRIO_RESPAWN` 13) → 埃芒加德 (`PRIO_BAND_REVIVE` 12) — `items/battle.js reviveNow`, which sets `revivedBy` ('item' / 'band'; 阿戈尔 5 does not count such a knock-out as the member's first) — → 阿戈尔 5 (11; a knock-out by the battle-start devour waits for the last devour pass, then the knocked-out members go by board position, and a member who entered 联防 already down joins that same scan, DESIGN §25.22.5) → 不屈 (10); until 0.2.0 the two 复活 were `fatal` savers that kept the unit standing |
 | `skillStart` / `skillEnd` | `{ unit, skill, reason }` | mutate `skill.ammoLeft` / `skill.timeLeft` in skillStart (bullets added there raise `skill.ammoMax`, the ammo bar's full mark) |
 | `ammoUsed` | `{ unit, left, skill }` | per ammo consumed |
 | `spGain` | `{ unit, amount, reason:'time'|'attack'|'hurt'|'init'|…, skill }` | mutable `amount` (time gains fire every tick) |
@@ -1007,6 +1059,7 @@ registration order. `battle.off(handle)` / `battle.off(name, fn)` / `battle.offO
 | `dodge` | `{ source, target, dmg }` | an attack was dodged |
 | `boomerangCaught` | `{ unit, attackId, isSkill, x, y }` | a 回环射手 boomerang came back to its thrower (`ai.js throwBoomerang`; `isSkill` = thrown by a skill attack): 娜仁图亚 LPS-Y "每回收5次回旋投射物", S3 "投射物全部回收时" |
 | `layerGain` | `{ playerId, bondId, n, reason, source, tile }` | mutable `n` before recording (魔王 +1 …), then clamped to the room left under `BOND_LAYER_CAP` (999); not emitted for a bond already at the cap; `tile` = `[r, c]` where `source` stands — or was knocked out this very instant ("被击倒时" gains) — else null (`addLayers` opts.tile overrides) |
+| `bondLayersChanged` | `{ playerId, bondId, n }` | After a permanent or temporary layer write. `n` is the actual signed change. Standing effects can read the updated count via `effectiveBondLayers`. A zero change emits nothing. |
 | `merchantPay` | `{ unit, cost, cancel }` | a merchant (行商) is about to pay its periodic DP; change `cost` or set `cancel` |
 | `battleEnd` | `{ result }` | may still add layer gains / coins |
 
@@ -1035,6 +1088,7 @@ logged error names the open frames (`chain: hit(enemy_x→chess_y) > damaged(che
 | `applyStrongest(tgt, key, {duration, value, mods, source})` | §3 — "同名效果取最高" for a non-catalogue effect |
 | `addBuff(unit, buff)`, `removeBuff(unit, key)` | §3 |
 | `spawnToken(ownerUnit | playerId, tokenId, row, col, { def, stats, hp, duration, untargetable, dir, kit, force, anySource, preBattleAggroSeq })` | field tiles; def from data/tokens.json `variants[ownerChessId]` for the owner unit's selected skill / module (`tokenDef`); `dir` defaults to the owner unit's (else the player's: RIGHT, mirrored side LEFT; a legacy `facing` ±1 is still read); `preBattleAggroSeq` is a negative priority reserved for a prepared stage map character, before ordinary initial units; returns the token or null (tile busy; or the owner runs a **non-default** skill that does not produce the token — `producesToken` — unless `anySource`: kit install hooks written for the default skill run under every skill). `spawnDevice(key, row, col, { …, dir })` likewise |
+| `spawnOperator(playerId, chessId, row, col, { loadout, stats, items, dir, kit, skin, uid })` | field tiles; fields a chess that was not on the board (规程 bench switch). Refuses a tile outside the rect, a living unit or a knocked-out operator (`downOn`); does not spend the match hand. `loadout` is `getChess`'s (null = the record's default); `stats` overwrite base stats before setup. Returns the operator, or null (unknown chess, bad tile, or deploy failed — the half-built unit is `removed` and its hooks dropped) |
 | `tokenDef(tokenId, ownerUnit | chessId)`, `producesToken(ownerUnit, tokenId)` | the token def a summon of that owner gets — `getToken(id, owner.defId, owner.def.loadout)`, exact even when two players of one field give the same chess different loadouts (prefer it over an id-only `battle.data.getToken(id, unit.defId)` for summon stats / blackboards); whether the owner's loadout makes the token (DATA.md §14 `sources` has 'skill' or 'talent'; true when the data does not tell: no own variant, player-owned summons) |
 | `spawnEnemy(enemyKey, { routeIndex, route, pos, mods, tag, sourcePlayerId, ownerPlayerId, bounty, countInTotal, inTotal, def })` | returns the enemy, or null past `MAX_ALIVE_ENEMIES`; `def` = inline record (enemies.json shape or normalised) for keys missing from data. A runtime spawn is never `inTotal` (§1.3 — the HUD capsule's own set) unless content passes `inTotal: true` explicitly |
 | `spawnDevice(key, row, col, { hp, obstacle, blockCnt, name, def, res, atk, bat, aspd })`, `setObstacle(r, c, on)` | obstacles re-path enemies; spawnDevice returns null outside the rect, on a living unit or on a knocked-out operator's tile |
@@ -1046,7 +1100,7 @@ logged error names the open frames (`chain: hit(enemy_x→chess_y) > damaged(che
 | `enemiesInKeys(keys, attacker, profile)`, `enemiesOnTiles(keys, attacker, profile)`, `blockedTargets(unit, profile)` | targetable enemies in the range of the tiles — a regular one by its 0.1 collider, each listed once (a `rangeTiles` attacker: by tile) —, or standing on them (`enemiesOnTiles`, the tile rule: the tile of the position; a huge one on its rectangle's tiles); the enemies a unit blocks — always selectable by it, a ranged operator on a melee tile included (§1.2 Blocking) |
 | `setAllyTarget(unit, on)`, `allyTargetsInKeys(keys, attacker)`, `isAllyTarget(unit)` | an **ally target**: an ally unit our attacks select like an enemy — 白铁's 铁钳号·原型机, a summon of the enemy camp ("可被我方干员攻击但不受伤害", PRTS; kits/ops/op-ironmn.js). The attack loop (ai.js `acquireTargets`) appends the registered ones standing on the attacker's range after every enemy (their 嘲讽等级 −2 puts them last: one target ⇒ an enemy first; all in range / more targets ⇒ them too) and ranged attacks fly to them; heals, skills that pick their own victims and enemies never select them (the kit gives it `untargetable` against enemies and cancels the damage it takes in its `hit` hook). A skill that acts on them counts the registered ones like enemies for its automatic start (skills.js `_allyTargetIn` / `allyTargetsOk`, every enemy condition of the trigger rules — the owner's rule of 2026-10-08): one that acts through the unit's own attacks, or whose kit flags `allyTargets: true` because its selectors take them too (`allyTargetsInKeys` / `allyTargetsInRadius`: 蕾缪安 S3's locks, 艾丽妮 S3, 陈 S2, 引星棘刺 S2); [ASSUMED] a skill that picks its victims among enemies only (or whose kit says `allyTargets: false`) is not opened by them and waits for an enemy. None registered ⇒ the loop is unchanged |
 | `allies(ownerId?)`, `aliveEnemies()`, `unitAt(r, c)`, `unitById(id)`, `tileInfo(r, c)`, `lowestHpAllyInRange(unit)` | |
-| `addLayers(playerId, bondId, n, reason, {source})`, `addCoins(playerId, n)` | layers are a no-op when `flags.layerGainsEnabled` is false (unite/boss); a gain adds at most the room left under `BOND_LAYER_CAP` (999, shared/constants.js `layerGainRoom`: the client's `AddBondCount` min(L + n, 999)) on the live copy — or, without one, on the battle's own gains — and returns what it added (0 at the cap: no hook, no event) |
+| `addLayers(playerId, bondId, n, reason, {source})`, `addTempLayers(playerId, bondId, n)`, `removeTempLayers(playerId, bondId, n)`, `tempLayers(playerId, bondId)`, `effectiveBondLayers(playerId, bondId)`, `tempLayersSnapshot()`, `addCoins(playerId, n)` | `addLayers` is a no-op when `flags.layerGainsEnabled` is false; it returns the actual permanent gain under `BOND_LAYER_CAP` (999), after the pre-write `layerGain` modifiers. Temporary layers use a separate battle-local ledger capped at 10000 per player/bond; add/remove return actual positive amounts and never invoke `layerGain`. `tempLayerGain` is a post-write positive receipt; `tempLayerChange` is a post-write signed receipt `{ playerId, bondId, n, total }` on both gain/removal. `tempLayers` reads the temporary count; `effectiveBondLayers` and content support `bondLayers` read permanent + temporary. `tempLayersSnapshot()` returns a detached snapshot for hosts/Workers. Normal/boss/hidden battles report the temporary balance in optional `perPlayer.tempLayerGains`. Unite restores `PlayerBattleInput.tempLayers` before content installation, freezes that ledger (no add/remove), and omits fresh temporary receipts. The match retains the own balance through combat end and SETTLE, converts only at the next `enterPrep`/`onPrepStart`, then clears it. Finished Battles reject further changes; only unite restores a carried ledger. |
 | `getPlayer(playerId)` | `{ playerId, seat, side, colOffset, mirror, dir (default unit direction: RIGHT, mirrored side LEFT), facing (its sign), bonds (live copy, layers updated by addLayers), bandId, playerEffects, lpForBoss, dp, units }` |
 | `mapTile(ps, row, col, abs?)` / `mapDir(ps, dir, abs?)` | board → field tile / direction of a player (the FA right-side mirror) |
 | `onOwnBoard(ps, r, c)` | whether a field tile lies on the player's own board — GEO.FIELD (rows 9–12, cols 2–10) mapped onto this field: the 联防 right-hand helper's +8 columns, the boss field's rows 2–5 (never its hand / 临时整备区 rows 0–1), the mirrored right half; 乌尔比安's S3 【移动】 takes only such tiles (DESIGN §25.17.2) |
@@ -1227,7 +1281,9 @@ record's tier when the operator has several: 锡人, 耶拉, 华法琳 …), els
 charId defaults to the chess id) and plugin chess (`chess_x_` ids; Forge imports leave out `kitRef` on purpose to keep
 the generic kit) keep the by-id lookup, and stand-ins / 自选 pieces keep theirs (`KITS[def.charId]`). 第一期's owned
 自选 pool holds 24 operators that 第二期下半 (today's data) sells as shop chess (星熊, 莫斯提马, 夕, 玛恩纳 …), and 第二期上半's (V2_1) holds 4 that V2_2 made
-shop chess (银灰, 空弦, 卡涅利安, 伺夜). 银灰 is not in 第一期's pool. Those 25 borrow the tier kit under the charId
+shop chess (银灰, 空弦, 卡涅利安, 伺夜). 银灰 is not in 第一期's pool. 规程·序列Ⅰ's owned pool holds 10 more that today's data
+sells as shop chess (能天使, 风笛, 泥岩, 缄默德克萨斯, 圣约送葬人, 琳琅诗怀雅, 新约能天使, 缇缇, 伊内丝, 信仰搅拌机); each has one tier
+file and that file authors all three skills. Those 35 borrow the tier kit under the charId
 (`kits/ops/ver-diy.js`, DESIGN §35.22.9), are in `KITTED_CHARS` and are not keys of `OPERATOR_KITS`. `PENDING_DIY_KIT_CHARS`
 is empty. A shop chess of the same operator still takes the tier key. The default data
 and the plugin content sets built on it carry no `config.version` and keep the by-id lookup of before M0, so the kit
@@ -1275,12 +1331,14 @@ nothing in battle; at db8e226d the key alone made it team support). The audit do
 1.2, which `content/tokens.js` reads with 1, so its 元素脆弱 aura is off on V1_1 (an M2 item, DESIGN §35.22.5). The kits'
 group lists are hand-written (no built record carries character_table's `groupId`). On a version's build the 深海猎人
 lists of 斯卡蒂, 歌蕾蒂娅, 浊心斯卡蒂 and `shared/tier5.js` (归溟幽灵鲨, 乌尔比安) name all six members, 安哲拉 included (shop
-chess in 第一期), and 缪尔赛思's 莱茵生命 list names the shop members (today's five and 第一期's 星源); data without
-`config.version` keeps the lists of before M0 (斯卡蒂's already named 安哲拉), so a Forge pack or plugin official operator
-fielding 安哲拉 or 星源 on the default data counts as before (`abyssalOf` in `shared/tier5.js`, the one list of 歌蕾蒂娅,
-浊心斯卡蒂 and the tier-5 kits; `rhineOf`; the test asserts the predicate each kit calls). 缪尔赛思's list leaves out
-伊芙利特 and 淬羽赫默 (shop chess in 第一期, 自选 picks today) and today's other 自选 members (麦哲伦, 多萝西, 娜斯提), while 淬羽赫默's own list (`op-slent2.js`) counts every member; whether 自选
-members count for 缪尔赛思 is an M2 question. `test/versions-keying.test.js` pins, per data directory, the members each
+chess in 第一期), and 缪尔赛思's 莱茵生命 list names the shop members (today's five and 第一期's 星源; on a 规程 build,
+`config.version.family === 'regulation'`, also 淬羽赫默, a shop chess there — [ASSUMED], she stays off the covenant lists);
+data without `config.version` keeps the lists of before M0 (斯卡蒂's already named 安哲拉), so a Forge pack or plugin
+official operator fielding 安哲拉, 星源 or 淬羽赫默 on the default data counts as before (`abyssalOf` in `shared/tier5.js`,
+the one list of 歌蕾蒂娅, 浊心斯卡蒂 and the tier-5 kits; `rhineOf`; the test asserts the predicate each kit calls).
+缪尔赛思's covenant list leaves out 伊芙利特 and 淬羽赫默 (shop chess in 第一期, 自选 picks today) and today's other 自选
+members (麦哲伦, 多萝西, 娜斯提), while 淬羽赫默's own list (`op-slent2.js`) counts every member; whether 自选 members
+count for 缪尔赛思 is an M2 question. `test/versions-keying.test.js` pins, per data directory, the members each
 list sees.
 Plugin dispatch (DESIGN §32.5, C2): extension registry → `def.raw.dsl` → `def.raw.skillSpec` → `def.raw.kitRef` → official registry → generic; explicit Battle test kits still take precedence. The extension registry stays empty for vanilla; P3a script compositions register SDK kits, enemy installs and battle modules (PLUGINS §13). `kitOf` calls `compileDsl` when the record carries `dsl`. The content-set builder stamps `pluginId`. A bad spec is refused at build. If compilation still throws (`PLUGIN_DSL_*`, or any throw while `raw.dsl` is set), the battle ends `forced` with `content:dsl` and does not field an empty or generic kit (DESIGN §32.7). Any other kit throw still falls back to generic. A one-skill DSL kit binds that default spec for a 自选 piece and a 补位 stand-in. The JSON SkillSpec allowlist is §7.3 without functions (validated by `shared/plugins/skillSpec.js`); `talentMods` adds permanent numeric mods. `kitRef` accepts an official key or file stem, never an import path.
 
@@ -1696,6 +1754,10 @@ Unknown subprofessions fall back to the profession default (test `professions.te
 
 ## 10. Testing content (test/helpers/battleHarness.js)
 
+The enemy-status garrison event maps `check_ab_flag` 16 to `freeze` and 33 to `fear`. Regulation Nymph's fear
+trigger is tested with the real version records and S2 in `test/garrisons/regulation.test.js`, including range,
+active Swift, new entries versus refreshes, the 4/8-layer grant and the 20/40-layer per-battle cap.
+
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -1884,7 +1946,7 @@ server's digests (DESIGN §32.14.16). The match adds phase credits into its sing
 - Raid's one reselect after a revive orders by taunt, then remaining route distance, then id, and jumps while the operator is not blocking (contact on the current tile is refreshed first). Ordinary polls keep remaining-distance order and the empty-range prerequisite.
 - Healing skill activation includes elemental-only injury when the operator's heal profile can cure it. Pinecone S2 growth is deployment-local. Skadi S1 and Stead preserve redirect ancestry and reserve shares from one post-barrier amount. Skadi receives HP loss; Stead recipients receive resolved true damage. The mixed sharing and Stead/barrier order are [ASSUMED] (DESIGN §35.32).
 
-`champagneHold` includes the internal `isolated` ally-selection flag (§29.11): device-type champagne bombs are excluded from ordinary allied auras/inspiration in both creation paths. Other unhealable summons retain their own selection behavior.
+`champagneHold` includes the internal `isolated` ally-selection flag (§29.11): device-type champagne bombs are excluded from ordinary allied auras/inspiration in both creation paths. Other unhealable summons retain their own selection behavior. `champagneLeavesWithOwner` (her `bombKit`, including the 自选 / 规程 borrow of that builder, and the token kit) retreats a living bomb with `expired` on any owner `death`: knock-out, retreat, permanent retreat, and a 联防 `forcedExit`. A bomb spawned in that same tick after she has already left misses the snapshotted `death` listeners and withdraws on its own `deploy`. `champagneHold` is unchanged (D2, 2026-10-08: no HP loss, no heal, never gone because of its HP). [ASSUMED] `token_10031_swire2_gdtrap` has no owner-exit field. Other summons stay.
 
 维什戴尔's `shadowTile` requires `Battle.onFieldBoard` before ranking summon candidates: a board of this field (a
 teammate's half), never a boss field's hand / 临时整备区 rows or an empty half (§31.10). `grid.inRect` alone also admits
@@ -1930,4 +1992,13 @@ No damage/heal settlement or other guardian trigger changes.
 still returns the resulting DP balance; an attributed agent/charger/pioneer gain or merchant deduction emits only
 the actual signed change. `gainSp` keeps its original return contract and emits actual `spTotal` gained after the
 mutable hook and charge/cap normalization for `bond`, `talent`, `skill` only. The event is not a settlement hook.
-Browser hosts (including the worker) and server live battles enable it; previews do not. [§37.3](history/0.3.4.md).
+Browser hosts (including the worker) and server live battles enable it; previews do not. [§37.3](history/0.4.0.md).
+
+### Delayed enemy replacement and completion
+
+Content that schedules an enemy after a death must use `battle.after(delay, callback, { holdsBattle:true })` when
+an otherwise empty field must wait for it. A normal callback alone does not prevent `_checkEnd` from clearing the
+field. The flag lasts only until that one-shot callback fires (or is cancelled); living children then keep the field
+open normally. Ordinary cosmetic callbacks do not receive this flag. Regulation's `replaceLater` snapshots the
+remaining route and position at death, uses this flag for positive delays and spawns zero-delay replacements
+immediately. See [the source record](research/sarkaz-death-spawns-20261113.md).

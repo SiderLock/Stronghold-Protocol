@@ -116,7 +116,7 @@ classes and the content sets running at once — §11 and `docs/DEPLOY.md`.
   "id": "marathon",
   "name": { "zh": "马拉松模式", "en": "Marathon" },
   "version": "0.1.0",
-  "app": ">=0.3.0 <0.4.0",
+  "app": ">=0.4.0 <0.5.0",
   "api": 1,
   "class": "content",
   "scope": ["room"],
@@ -137,7 +137,8 @@ classes and the content sets running at once — §11 and `docs/DEPLOY.md`.
 | `id` | the folder name decides: `^[a-z0-9][a-z0-9-]{1,31}$` (it becomes part of record ids; lower case only); a different `id` in the file is a warning; script/trusted execution requires an explicit matching id in the verified manifest bytes |
 | `name`, `description` | a text in `sourceLang` or `{ "<lang>": "…" }`; `englishName` a text |
 | `version` | semver, required |
-| `app` | the game versions it is made for — `>=0.3.0 <0.4.0`, `0.3.x`, `^0.3.0` … (a pre-release counts as its release); required but for `lang`. Outside it: `compatible: false` and a warning (P1 refuses a gameplay plugin by default) |
+| `versions` | optional, non-empty array of unique official ids from `shared/versions.js`; gameplay plugins default to `["act2autochess"]` when absent; cosmetic plugins still apply to every version |
+| `app` | the game versions it is made for — `>=0.4.0 <0.5.0`, `0.4.x`, `^0.4.0` … (a pre-release counts as its release); required but for `lang`. Outside it: `compatible: false` and a warning (P1 refuses a gameplay plugin by default). 0.4.x also runs plugins made for the 0.3 line (`>=0.3.0 <0.4.0`, `0.3.x`, `^0.3.1` …): 0.4 kept the 0.3 plugin surface and only added `versions` (§37.231) |
 | `api` | the plugin API level, within `shared/constants.js` `PLUGIN_API` (`{ current: 2, min: 1 }`); required but for `lang`. A manifest that uses a part of level 2 (today `offers`, §10b) states `"api": 2` |
 | `class` | §2; every part the manifest names must belong to it |
 | `scope` | `room` (the host's choice for the whole room), `personal` (the player's own setting), `server` (trusted code only), as the class allows — `cosmetic`: room and/or personal; `content`, `script`: room; `ui`, `lang`: personal; `trusted`: server or room |
@@ -335,7 +336,9 @@ also takes away that entry's local-client model (`spineLocal`, which the client 
 that model: a model write the browser leaves out, or whose file fails to load, leaves the local model too. The split
 battle music `audio.bgm.combatAlts` (the mode's own 开战 tracks, 骑士之日 / 无畏者, fixed per round) is not something a
 plugin changes: the client plays it instead of `combat` in the rounds it covers, so a plugin's `combat` is heard only
-where no such track plays. A player's own lobby music (大厅背景与音乐, `ui/lobbyMedia.js`) outranks a plugin's
+where no such track plays. A track a plugin writes replaces that music in every version: the seasons' own tables
+(`audio.seasons`, docs/ASSETS.md "BGM" — 规程's lobby and leaders, 第一期's 开战) give that key up while the plugin is on
+(shared/plugins/visual.js layVisualOps). A player's own lobby music (大厅背景与音乐, `ui/lobbyMedia.js`) outranks a plugin's
 `audio.bgm.lobby` in that player's browser while it is switched on. Writing an
 entry the installation has needs the permission `assets.override`, a new entry `assets.add` — the decision the permission
 is: a write to a path whose entry the installation's manifest already has is an override, whatever it writes there, so an
@@ -678,7 +681,7 @@ Since 0.3.1, a content plugin can carry only `rules`, with no data files or perm
 
 ```json
 { "manifest": 2, "id": "prep-rules", "name": "Prep rules", "version": "1.0.0",
-  "app": ">=0.3.1 <0.4.0", "api": 1, "class": "content", "scope": ["room"],
+  "app": ">=0.4.0 <0.5.0", "api": 1, "class": "content", "scope": ["room"],
   "rules": { "prepLoadout": "prep", "unequip": "allow" } }
 ```
 
@@ -928,12 +931,31 @@ the briefing, the result and the HUD, and left out of the statistics overview un
 cosmetic plugins only still plays the vanilla `cs` and counts as the original game (§9). DESIGN §32.6 keeps the
 decisions, the measurements and the open points.
 
-Gameplay plugins (content, script and trusted) work only in rooms of 第二期下半, the default version. On a server that
-enables the official versions (`SP_VERSIONS`, DESIGN §35.23), a room of another version refuses them: room.setPlugins
-and a version proposal answer VERSION_UNSUPPORTED (`roomSets.resolve({ gameplay: false })`); room.create of such a room
-leaves the server's default gameplay plugins off (warned once in the log), or answers VERSION_UNSUPPORTED when
-`plugins/config.json` fixes every room's plugins (`rooms: "fixed"`); the 插件 panel disables their switches. Cosmetic plugins carry over to every version; a proposal whose cosmetic plugins do not
-resolve on the target version is refused as well.
+Gameplay plugins (content, script and trusted) work in an official version only when their manifest's `versions`
+includes its id. Absent means `["act2autochess"]`, independently of the lobby default: existing plugins, templates and
+Forge imports stay 第二期下半-only. Every gameplay dependency must support the target too. `room.setPlugins` and
+`room.proposeVersion` return `VERSION_UNSUPPORTED` with the unsupported plugin and target version in the detail.
+`VERSION_UNSUPPORTED` means the mode/data is unavailable or a gameplay plugin does not declare the target;
+`PLUGIN_VERSIONS` rejects a malformed manifest declaration (see the error table).
+The 插件 panel enables matching plugins and explains a disabled switch; version proposals remain available in modded rooms.
+On `room.create`, compatible defaults apply and unsupported defaults (including incompatible requirements) are skipped
+with one log warning per selection/version. `rooms: "fixed"` keeps the entire fixed list and refuses an unsupported target.
+Cosmetic plugins carry over to every version. Other validation, permission, dependency and consent checks still apply.
+
+Composition starts from that official version's data and bounds. Unchanged files use `/data/versions/<slug>/`;
+changed files and bounds use the composition's own `/cs/<cs16>/`. A non-default gameplay composition includes `version`
+in its hash input and manifest; the plugin manifest bytes already cover `versions`. Default compositions keep their
+existing hash formula. The browser verifies the composed set and retains its version for data, art and loadout lookups.
+These unofficial matches use the **plugin host pool**, so every composition counts against `limits.maxSets` and the
+plugin host limit; official unmodded versions keep their separate pool (§35.23). This preserves the plugin watchdog,
+script isolation and owner gates without letting a new version bypass the plugin limits. Switching version recomposes
+the same plugins/settings; if gameplay no longer resolves when a vote completes, the original room remains intact.
+
+Studio's 信息 form offers official-version checkboxes for content, script and trusted manifests; 清单 also accepts the
+field. Folder/import checks and Studio's declarative checks validate against the declared versions. Templates and Forge
+conversion still omit it; authors must explicitly opt in. The existing template wizards and trial scenario pickers
+continue to use 第二期下半; this change adds no version-specific authoring wizard.
+
 
 | File | Role |
 |---|---|
@@ -942,6 +964,13 @@ resolve on the target version is refused as well.
 | `server/plugins/policy.js` | the server owner's `plugins/config.json` |
 | `server/match/host/` | the match hosts: `index.js` (one worker or child process per `cs`, the watchdog, the limits), `entry.js` (inside the worker: the bytes checked against `cs`, the data installed before the match code is imported), `proxy.js` (the lobby's room.match for a hosted match: Promise answers) |
 | `public/js/content.js` | the page's copy of the room's content set: downloaded, checked, handed to `data.js` and the battle runner, `room.contentReady` |
+
+**From the lobby** (PR #949, DESIGN §37.267). `plugins.preview { version?, plugins? }` (heavy rate-limit bucket) resolves a
+set for the lobby without holding it (at most 8 unheld sets stay cached, `MAX_KEPT`) and answers `ok` with `content` and the
+policy summary `policy { rooms, default }`; `plugins` left out = the server owner's defaults. `room.create { …, plugins? }`
+creates the room with that selection (left out: the defaults, as before); `rooms: off` / `fixed` apply as for
+`room.setPlugins`. The page installs the previewed set before its settings sync, so the 自选 / loadout pickers show the
+plugin operators; a lobby preview never sends `room.contentReady`.
 
 **Switching** (`room.setPlugins { plugins: [{ id, settings? }] }`). The host chooses plugins by id. The server adds what
 they require (shown as 「自动」), orders them (`shared/plugins/order.js`) and splits them by class: the cosmetic ones, and
@@ -1810,7 +1839,8 @@ lacks). The table below is generated from it (`node tools/plugin.mjs errors --wr
 | The plugin works, with a note in the check | `PLUGIN_TEXT` | “{where}” should be a text or { "<lang>": "text" }; it is ignored | Write "Name" or { "zh": "名字", "en": "Name" }. |
 | The plugin is not listed (skipped); the start log and check say why | `PLUGIN_LANG_CODE` | “{where}” is not a language code | Use a language code such as zh, en, ja, ko or zh-TW. |
 | The plugin is not listed (skipped); the start log and check say why | `PLUGIN_VERSION` | The plugin's "version" is missing or not a version number | Write three numbers such as "1.0.0"; raise it whenever the plugin changes (1.0.1, 1.1.0 …). (the studio fixes it in one click) |
-| The plugin is not listed (skipped); the start log and check say why | `PLUGIN_APP` | The game versions the plugin is made for, "app", are missing or not a range | Write a range such as ">=0.3.0 <0.4.0" (this game is {app}). (the studio fixes it in one click) |
+| The plugin is not listed (skipped); the start log and check say why | `PLUGIN_VERSIONS` | The supported official versions "versions" are invalid | Use a non-empty array of distinct official version ids; omission limits gameplay plugins to act2autochess. |
+| The plugin is not listed (skipped); the start log and check say why | `PLUGIN_APP` | The game versions the plugin is made for, "app", are missing or not a range | Write a range such as ">=0.4.0 <0.5.0" (this game is {app}). (the studio fixes it in one click) |
 | The plugin works, with a note in the check | `PLUGIN_APP_MISMATCH` | The plugin is made for the game {range}; this server is {app} | A cosmetic plugin still works (a reminder only). Once it is checked with this version, widen "app" to include {app}. (the studio fixes it in one click) |
 | The plugin is not listed (skipped); the start log and check say why | `PLUGIN_API` | The plugin API level "api" is missing, not an integer, or not supported | Write "api": {current} (this game supports {min}–{current}). (the studio fixes it in one click) |
 | The plugin is not listed (skipped); the start log and check say why | `PLUGIN_SCOPE` | "scope" is not one this class allows | A cosmetic plugin has ["room", "personal"]: room — the host switches it on for the whole room; personal — a player for themself in 设置. (the studio fixes it in one click) |
@@ -2286,7 +2316,7 @@ to unpack), `PLUGIN_FORGE_JSON` (parse, size, depth, a non-finite number or a nu
 `PLUGIN_FORGE_EXISTS` (the destination exists), `PLUGIN_FORGE_SCRIPT` (a script was not imported and was not run).
 
 The version written into a product is the pack's version when it is a restricted semver with no build metadata,
-otherwise `0.1.0` [ASSUMED]. `app` is `>=0.3.0 <0.4.0` and `api` is 1. A language-pack manifest omits `$schema`,
+otherwise `0.1.0` [ASSUMED]. `app` is `>=0.4.0 <0.5.0` and `api` is 1. A language-pack manifest omits `$schema`,
 `app`, `api` and `permissions`.
 
 ## 17. The catalogue and installing by address (目录与安装)

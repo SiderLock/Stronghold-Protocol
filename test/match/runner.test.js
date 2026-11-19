@@ -313,7 +313,7 @@ test('own battle statistics stay available when viewing a teammate; owner filter
 });
 
 test('evicted observed battles keep match totals; replaying one replaces its snapshot without double counting', async () => {
-  // a seed whose round-2 board is not empty (0.3.4 #121 moved 7310's autoplay seat to 老鲤, which fields nobody in R1–R2)
+  // a seed whose round-2 board is not empty (0.4.0 #121 moved 7310's autoplay seat to 老鲤, which fields nobody in R1–R2)
   const start = realStart(7314);
   const r = rig();
   const recorded = new Map();
@@ -870,4 +870,30 @@ test('settings expose 作战统计 off by default and the match hides the button
   const line = (s) => buildDiagnostics({ state, env: {}, settings: s }).split('\n').find((l) => l.startsWith('settings:'));
   assert.equal(line({ quality: 'high', damageNumbers: true, combatMetrics: true }), 'settings: quality high | damage numbers | combat metrics');
   assert.equal(line({ quality: 'high', damageNumbers: true, combatMetrics: false }), 'settings: quality high | damage numbers');
+});
+
+test('temporary bond display reads recorded gains, preserves permanent layers and keeps the completed own-battle pool', async () => {
+  const start = realStart();
+  const r = rig();
+  try {
+    await r.runner.onStart(start);
+    const e = r.runner._entries.get(start.battleId);
+    const pid = e.spec.players[0].playerId;
+    const ps = e.battle.getPlayer(pid);
+    const id = Object.keys(ps.bonds)[0] || 'display_probe';
+    ps.bonds[id] = { ...(ps.bonds[id] || {}), layers: 10 };
+    e.battle.addTempLayers(pid, id, 100);
+    e.battle.addLayers(pid, id, 2);
+    // A missing/private accessor must not affect UI reads.
+    const read = e.battle._pp;
+    e.battle._pp = () => { throw new Error('display must use public data'); };
+    r.advance(20);
+    assert.equal(r.runner.state().bondLayers[pid][id], 12);
+    assert.equal(r.runner.state().bondTempLayers[pid][id], 100);
+    assert.equal(ps.bonds[id].layers, 12);
+    e.battle._pp = read;
+    e.battle.forceEnd('timeout');
+    assert.equal(r.runner.state().bondTempLayers[pid][id], 100, 'own combat ending does not expire the round pool');
+    assert.equal(r.runner.state().bondLayers[pid][id], 12);
+  } finally { r.runner.dispose(); }
 });

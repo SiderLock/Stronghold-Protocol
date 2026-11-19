@@ -2,6 +2,9 @@
 (scenes/activities/<season>/level_<stage>/level_<stage>.ab, with …/lightingdata.ab beside it) whose tile models are
 baked into "Combined Mesh (root: scene)" objects, plus loose meshes for the parts the game shows and hides.
 
+规程's boards are not in SCENES. Their meshes are three piece prefabs; regulation_scenes.py writes the same
+files, moved onto the rows tools/versions/layouts.mjs borrows. Those ten groups stay out of expected_local_groups.
+
 The scene bundles ship only while the season runs (the hot-update list of an off-season client has none), so they are
 read from the client's AB root when it has them and else from a directory of bundles kept from an in-season version
 (extract.py --scenes <dir>, default .cache/official-scenes/*; tools/local-extract/fetch_scenes.py fills it). Materials
@@ -24,7 +27,9 @@ and the materials' albedo, normal (normal_rgb), metallic-gloss and (only with th
 albedo and lightmaps stay lossy. The manifest scene record's version (SCENE_EXTRACT_VERSION) is what
 setup treats as fresh; scene.json version stays the mesh layout (SCENE_VERSION).
 A chunk's `group` is '' for what the scene shows at rest and the sub-graphic name (HIDDEN@1 …, MapSubGraphicHolder)
-for the meshes the game switches on later.
+for the meshes the game switches on later. A GameObject saved disabled that no sub-graphic owns is tagged
+`inactive` while duplicates are checked, then left out of the file (`chunk_group_exported`): the board never
+turns that group on (GitHub #918).
 """
 import json
 import re
@@ -59,8 +64,9 @@ SCENE_VERSION = 1
 # Manifest `scene` record (kind Scene) of each scene/<stageId> group. scene.json `version` stays SCENE_VERSION so a
 # scene extracted before this still loads. setup / doctor compare this with expected.mjs and ask once when an
 # existing record is older (DESIGN §34.12). 3: emission maps are lossless too, so a version-2 extract (normal and
-# gloss only) is stale and that same prompt asks again. 4: remove exact redundant renderers (#684, §34.24).
-SCENE_EXTRACT_VERSION = 4
+# gloss only) is stale and that same prompt asks again. 4: remove exact redundant renderers (#684, §34.24). 5: 规程's
+# three pieces are written whole (regulation_scenes.py, scene.json layout 'pieces').
+SCENE_EXTRACT_VERSION = 5
 # display-space light value that a lightmap page's 1.0 stands for (decode_rgbm; scene.json lightRange, with
 # lightEncoding 'gamma'). The pages of the eleven scenes stay below 2.8.
 LIGHT_RANGE = 3.0
@@ -172,6 +178,20 @@ def drop_duplicate_renderers(renderers, log):
         log(f"  drop renderer #{r['id']} {r['path']} [{r['group'] or 'base'}]: exact duplicate of "
             f"#{keeper['id']} {keeper['path']} [{keeper['group'] or 'base'}], {triangles} triangles; keep normal bake")
     return [r for r in renderers if r['id'] not in dropped]
+
+
+def chunk_group_exported(group):
+    """Whether a renderer's group is written into scene.bin.
+
+    '' is the rest pose. HIDDEN@n is a MapSubGraphicHolder part the board switches with the field, including a
+    part whose own GameObject is inactive while the sub-graphic owns it. `inactive` is a GameObject the client
+    saved disabled and that no sub-graphic owns (fog_1 / fog_2 under effect/fog_cam; a later extract names the
+    same quads mapeff_survival_shadow_*). It stays in the list `drop_duplicate_renderers` sees, so it cannot
+    become the keeper of a visible copy, and is then left out: nothing in the battle turns it on, and a package
+    extracted before this still skips it in sceneGroupVisible (GitHub #918). [ASSUMED] the battle never enables
+    fog_cam for a phase the board should show.
+    """
+    return group != 'inactive'
 
 
 def scene_bundle(stage_id):
@@ -609,6 +629,8 @@ def export_scene(stage_id, deps, scene_path, ab_root, out_root, manifest, log, m
     log(f'{stage_id}: dropped {len(renderers) - len(kept)} exact duplicate renderer(s); kept {len(kept)}')
     chunks = {}  # (material, lightmap, group) → {'pos': [], …}
     for renderer in kept:
+        if not chunk_group_exported(renderer['group']):
+            continue
         for part in renderer['parts']:
             key = (part['material'], part['lightmap'], renderer['group'])
             ch = chunks.setdefault(key, {'pos': [], 'uv': [], 'uv1': [], 'nrm': [], 'col': [], 'idx': []})

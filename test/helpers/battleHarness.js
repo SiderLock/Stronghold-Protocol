@@ -181,7 +181,7 @@ export function standInRec(chessId, sel = {}, data = getDefaultSource()) {
 
 function buildData(defs) {
   if (!defs) return getDefaultSource();
-  return new DataSource({ chess: defs.chess ?? {}, enemies: defs.enemies ?? {}, tokens: defs.tokens ?? {}, stages: defs.stages ?? {}, waves: defs.waves ?? {} }, getDefaultSource());
+  return new DataSource({ chess: defs.chess ?? {}, enemies: defs.enemies ?? {}, tokens: defs.tokens ?? {}, stages: defs.stages ?? {}, waves: defs.waves ?? {}, ...(defs.effects ? { effects: defs.effects } : {}) }, getDefaultSource());
 }
 
 /**
@@ -338,7 +338,9 @@ export function checkInvariants(b) {
     }
     if (u.alive) {
       if (u.hp < 0 || u.hp > s.maxHp + 1e-6) bad(`hp ${u.hp} / ${s.maxHp}`, u);
-      if (u.deployed && !u.hidden) {
+      // 盐坨子炮 is a separator device on the wall row just above the rect (devices.js spawnCannon, allowOutside).
+      const separatorCannon = u.kind === 'device' && u.mem?.cannon;
+      if (u.deployed && !u.hidden && !separatorCannon) {
         if (u.x < R.c0 - 0.5 - 1e-6 || u.x > R.c1 + 0.5 + 1e-6 || u.y < R.r0 - 0.5 - 1e-6 || u.y > R.r1 + 0.5 + 1e-6) bad(`pos ${u.x},${u.y} outside rect`, u);
       }
       if (u.skill && !u.skill.noSkill) {
@@ -348,8 +350,14 @@ export function checkInvariants(b) {
         if (sk.active && sk.kind === 'duration' && !Number.isFinite(sk.timeLeft)) bad(`skill timeLeft ${sk.timeLeft}`, u);
         if (sk.active && sk.kind === 'ammo' && !Number.isFinite(sk.ammoLeft)) bad(`skill ammoLeft ${sk.ammoLeft}`, u);
       }
-      // occupancy map consistency: a living deployed ally is what its tile says it is
-      if (u.side === 'ally' && u.deployed && b._occ[u.tileR * 21 + u.tileC] !== u) bad(`occupancy map out of sync at ${u.tileR},${u.tileC}`, u);
+      // Ordinary allies own their tile slot. Continuous Leithania pursuers deliberately share coordinates and must
+      // never claim or overwrite that slot.
+      if (u.side === 'ally' && u.deployed) {
+        if (u.mem?.lethaniaPursuit) {
+          if (b._occ.includes(u)) bad('mobile pursuer occupies a deployment slot', u);
+          if (Math.round(u.x) !== u.tileC || Math.round(u.y) !== u.tileR) bad('mobile pursuer tile does not match its position', u);
+        } else if (b._occ[u.tileR * 21 + u.tileC] !== u) bad(`occupancy map out of sync at ${u.tileR},${u.tileC}`, u);
+      }
     } else if (u.removeReason === 'killed' && u.hp !== 0 && !u.bossPool) bad(`killed with hp ${u.hp}`, u);
     else if (u.hp < 0) bad(`negative hp ${u.hp}`, u);
     if (u.side === 'enemy' && u.blockedBy && !u.blockedBy.blocking.includes(u)) bad('block link broken', u);

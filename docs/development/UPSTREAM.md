@@ -254,3 +254,50 @@ Bot 的固定组库存、同组软避让、预演子进程路径保留；刚完�
 
 同日后续经用户授权，源码 `7fdaf85d` 已推送 `origin/dev` 并部署；总公告按不可覆盖的现有机制发布新日期 ID，
 旧正文保留。上线核验与开关评估见 [服务器性能说明](SERVER_PERFORMANCE.md#服务器开关评估2026-11-06)。
+
+## 13. 0.4.0 与规程同步（2026-11-19）
+
+- 来源：作者 `upstream/dev` `c2b4ca01089dd753d3caeca5b6693ba8074e2505`（2026-11-19 01:45:11 +08:00），
+  相对上次合并 `eff7d93a`（2026-11-06）新增 356 个提交、1142 个文件（+92,912 / −57,339）。
+  本次开始 HEAD `58fec108`，含 171 个本地提交；标签 `v0.4.0` 为 `b6d8b2ef`，其后 `upstream/dev` 仍有 82 个提交，
+  `upstream/master` 为 `55f528e9`。以上均为 `git fetch` 后的本地引用。
+- 内容：0.4.0 正式发布；新增第五个官方版本「规程·序列Ⅰ」(`act3autochess@V3_1`，family `regulation`)：
+  核心盟约分组、指令、选择自编、整块战场地图、官方主题包（乌萨斯齐心团 / 可露希尔）、组合装备、临时盟约层数、
+  头像连胜 / 领袖伤害徽章、规程装备奖励池等。上游把大厅预选版本改为规程（`LOBBY_DEFAULT_VERSION`），
+  `DEFAULT_VERSION` 仍是第二期下半。
+- 方式：在 `dev` 上 `git merge --no-commit --no-ff upstream/dev`；71 个文件 144 处冲突按
+  「上游行为为底、回接二十人扩展」逐项解决，语义适配集中在下列入口。
+- 保留：二十席位（`MAX_SEATS` 20、默认 8、容量 4/8/10/16/20）、D010 固定分组卡池、D028 私人自选库存、
+  D029 分组装备库存、D012 组内真人优先并行轮选、D013 多轮联防、D035 同组软避让、D033 断线与恢复、
+  D046 开发功能门禁、公告 / 聊天 / 大厅目录 / 换座 / 素材缓存 / 压缩与渲染优化。
+
+适配要点：
+
+- **规程的选择自编属于私人库存，D028 同样适用**（不乘联机倍数）。上游的联机双倍私人库存会让每个规程
+  联机对局的默认自编库存翻倍；本分支保持基础数量，因此规程 12 个联机对局 golden 重录（见下）。solo 场景不受影响。
+- **规程 solo 的灰盟约选择**（INFO_CHECK 的 `g.bondGroup`）必须连同固定分组卡池 / 装备池一起重建：
+  上游只替换单池 `this.pool`，本分支改为按原分组与倍数重建 `poolGroups` / `playerPools`，否则选组后
+  灰盟约干员仍会出现在组池里（`test/match/bond-groups.test.js` 覆盖）。
+- **组合装备与装备奖励**使用接收者所在组的 `itemPoolFor`；`effectsMeta.rollChess` 同时保留上游的
+  `tierExemptChess` 与本分支的按玩家池 / 自选库存抽取。
+- **`kickBot`** 保留组内策略 / 机变推进，并接上上游的选择自编立即确认与 bot 盟约组选择。
+- **场景渲染**：上游的 `inactive` 分组规则、规程整块地图（`layout: 'pieces'`、`stage.scenePiece`）合入
+  本分支的 `public/js/render/board3d/sceneGeometry.js`，`scene.js` 只画该视角对应的地块。
+- **协议**：`lobby.*` 与 `plugins.*` 意图并存；`room.create` 同时接受 `capacity`、`assetCache`、`modeId`、
+  `plugins`；分组轮选 `draftScope` 与规程 `g.command` / `g.commandChoice` 并存。
+- **皮肤语音**与上游的 `allowChinese` 回退合并为 `voiceLine(audio, charId, slot, lang, random, skin, allowChinese)`。
+- **素材清单**以上游为底，补回本分支 CN 2.7.91 三名干员（`char_4244_tocka` / `char_4246_dminon` /
+  `char_4247_oxi`）的语音树与 `char_4226_veen` 的方言树；`hash` 与 `stats` 按清单重算
+  （`stats.files` +140、`stats.bytes` +4,772,629），其余以清单正文为准。
+- **界面**：上游的规程 HUD / 机变收起 / 徽章 / 主题包与「转为观战」保留，本分支的分组页签、
+  自选库存开关、对手立绘、换座 / 转让房主、聊天空格与 HUD 折叠带同时保留；`HUD_REM` 采用上游的
+  盟约条 1 / 1.98，本分支的商店卡高 `shopCardHeight` 保留。
+
+golden：默认版本（第二期下半）291 个场景全部匹配；规程 6 类中 5 类与上游一致，`matches` 的 12 个联机场景
+按 D028 重录（solo 场景与上游一致）。三个历史版本见下方验证结果。
+
+- 未执行的分支：本次没有推送（截至合并提交时）、没有打包或部署；**全量测试与五组 golden 的最终复核改由 GitHub CI
+  运行**（用户 2026-11-19 要求，本机资源占用过高），本地结果见本目录的
+  [DEV-20261119-01](records/2026-11-19-01-upstream-v0.4.0.md)。
+- 规程素材（34 名干员语音、规程敌人模型 / 特效、3D 场景）尚未下载，运行 `npm run setup` 可补齐；界面与战斗在
+  现有素材上回退到占位图，不影响服务端启动。

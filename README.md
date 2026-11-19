@@ -61,7 +61,7 @@
 
 《明日方舟》季节性自走棋塔防玩法「卫戍协议：盟约」的**非官方同人复刻**：浏览器即开即玩，单人或最多 20 人联机合作。
 
-![version](https://img.shields.io/badge/version-0.3.3-2ea44f)
+![version](https://img.shields.io/badge/version-0.4.0-2ea44f)
 ![license](https://img.shields.io/badge/code%20license-GPL--3.0--or--later-blue)
 ![node](https://img.shields.io/badge/node-22%20%7C%2024-339933)
 
@@ -100,7 +100,7 @@ English summary: [below](#english).
 
 - **独立模拟**（单人）与**同盟模拟**（最多 20 人**合作**，没有 PvP；空位可以加 AI 队友）。
 - 服务器是一个 Node.js 程序，**战斗在各玩家的浏览器里模拟**（和官方一样），服务器只管经济与回合，一台低功耗小主机就能开服。
-- 当前版本 0.3.3：0.3.2 的热修复，修正第一期商店装备空栏与跨版本装备图标缓存；第一期上／下半也允许满整备区互换（维护者决定的有意偏差）。默认仍提供四个官方版本，详见 [CHANGELOG.md](CHANGELOG.md)。
+- 当前版本 0.4.0：新增官方版本「规程·序列Ⅰ」（11 月 8 日开放的「卫戍协议·规程」，现为大厅默认）：单人规程等级 1–20 与极速模拟、指令、5 格装备区、每局盟约抽选、官方战场场景和赛季外观；另有界面主题（含官方主题；“全能的”可露希尔主题包另行提供，在设置里导入）、CN 2.7.91 的新干员和大量修复。共提供五个官方版本，详见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 功能一览
 
@@ -153,7 +153,7 @@ npm run setup      # 检查环境，并从公开镜像下载约 720 MB 美术 / 
 npm start          # 启动服务器：http://localhost:3000
 ```
 
-也可以直接运行启动脚本（Windows `scripts\start-windows.bat`，macOS / Linux `scripts/start.sh`）：首次会自动安装依赖、下载素材，然后启动服务器并打开浏览器。四个官方版本默认都开着，大厅右上角有「版本」。启动脚本和 `npm start` 不用加参数。只开第二期下半时设置 `SP_VERSIONS=act2autochess`（大厅不显示版本按钮），详见 [docs/DEPLOY.md](docs/DEPLOY.md) §11。
+也可以直接运行启动脚本（Windows `scripts\start-windows.bat`，macOS / Linux `scripts/start.sh`）：首次会自动安装依赖、下载素材，然后启动服务器并打开浏览器。五个官方版本默认都开着，大厅默认选中「规程·序列Ⅰ」，右上角有「版本」。启动脚本和 `npm start` 不用加参数。只开第二期下半时设置 `SP_VERSIONS=act2autochess`（大厅不显示版本按钮），详见 [docs/DEPLOY.md](docs/DEPLOY.md) §11。
 
 - **本地客户端素材（可选）**：官方 3D 棋盘、官方战斗特效（0.3.0「官方特效」）、部分官方界面图标（交流按钮与表情面板的边框、模组类型图标等）、灼热 / 炽焰源石虫和 39 个召唤物（多数自选召唤物）的官方模型需要从本机的《明日方舟》PC 客户端提取（Windows 原生客户端、macOS 的 CrossOver 或 PlayCover）。`npm run setup` 检测到客户端时会询问是否提取（需要 Python 3.8+，依赖装在项目内的 `.venv-extract`，不影响系统）；之后可以用 `node tools/setup.mjs --local` 重新提取，或用 `--game "<安装目录或 …/StreamingAssets/AB/Windows>"` 指定路径。没有客户端时游戏照常运行，这几样换成替代样式：2D 棋盘、样式相近的图标、染色的普通源石虫、召唤物头像。表情和「玩法说明」的教程图随上面的素材一起从公开镜像下载，不需要客户端。没有客户端的服务器（例如 Linux VPS）也可以从**同一版本**的整合包（完整包；精简包没有）里复制 `public/assets/local/` 和 `data/local-assets.json`，见 [docs/DEPLOY.md](docs/DEPLOY.md) 的「本地客户端素材」。
 - 素材下载优先使用 GitHub，失败时自动改用 jsDelivr 镜像。
@@ -165,7 +165,7 @@ npm start          # 启动服务器：http://localhost:3000
 |---|---|
 | 开服的电脑 | Windows / macOS / Linux，Node.js 22 或 24（LTS）；磁盘约 1.2–1.4 GB（素材、依赖与本地提取的贴图、场景和特效：完整包解压后约 1.16 GB）；内存空闲约 100 MB，每局再加几 MB |
 | 玩家 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑、手机或平板（横屏） |
-| 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小。已有素材的玩家可以在标题画面点「导入素材包」（「下载完整素材」旁边），从素材包 zip、完整包 zip 或自己的 `public/assets` 文件夹导入，这部分美术不再从开服的电脑下载；需要 HTTPS 或 localhost（[docs/DEPLOY.md](docs/DEPLOY.md) 2.5 节）。0.3.0 的素材包 `Stronghold-Protocol-v0.3.0-assets.zip` 由维护者另行提供下载，不在 Releases 附件里 |
+| 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小。已有素材的玩家可以在标题画面打开「下载资源管理」→「导入素材包」，从素材包 zip、完整包 zip 或自己的 `public/assets` 文件夹导入，这部分美术不再从开服的电脑下载；需要 HTTPS 或 localhost（[docs/DEPLOY.md](docs/DEPLOY.md) 2.5 节）。0.3.0 的素材包 `Stronghold-Protocol-v0.3.0-assets.zip` 由维护者另行提供下载，不在 Releases 附件里 |
 
 显卡较弱时可以在「设置」里调低画质，或在网址后加 `?board=2d`（强制 2D 棋盘）/ `?render=fallback`（不用 WebGL 的简化画面）。
 
@@ -187,7 +187,7 @@ npm start          # 启动服务器：http://localhost:3000
 | `SP_NO_BROWSER` | 空 | 设为 `1` 时启动脚本不自动打开浏览器 |
 | `SP_BOT_EMOTES` | 空 | AI 队友的对局表情回应（战斗、整备、合成、联防、收礼时即刻的 `m.emote` 广播）；设为 `0` 时整体关闭 |
 | `SP_ASSET_INDEX` | 空 | 素材地址带内容哈希、浏览器长期缓存（0.2.6 起默认开启，哈希存在 `.cache/asset-hashes.json`）；设为 `0` 时关闭，素材清单原样下发 |
-| `SP_VERSIONS` | 不设（四个官方版本都开，默认第二期下半） | 收窄启用的版本：不设置与 `all` 相同；`act2autochess` 只开第二期下半，大厅不显示「版本」；也可写逗号分隔的版本 id（如 `act1autochess,act2autochess@V2_1`）。`SP_VERSION_DEFAULT` 指定默认版本，`SP_MAX_VERSION_HOSTS` 限制版本模拟进程数（空闲时不额外启动进程）。详见 [DEPLOY.md](docs/DEPLOY.md) §11 |
+| `SP_VERSIONS` | 不设（五个官方版本都开，大厅默认规程·序列Ⅰ） | 收窄启用的版本：不设置与 `all` 相同；`act2autochess` 只开第二期下半，大厅不显示「版本」；也可写逗号分隔的版本 id（如 `act1autochess,act2autochess@V2_1`）。`SP_VERSION_DEFAULT` 指定默认版本，`SP_MAX_VERSION_HOSTS` 限制版本模拟进程数（空闲时不额外启动进程）。详见 [DEPLOY.md](docs/DEPLOY.md) §11 |
 | `SP_BOT_STRATEGY_SEATS` | 不设（各席位都用 `SP_BOT_STRATEGY`） | 按席位覆盖 AI 策略：逗号分隔的 `席位:ID`（席位 0–3，ID 须已注册），如 `1:ioleta,3:adaptive`；未列出的席位用 `SP_BOT_STRATEGY`，启动时校验。发布包里选 `external` 的席位同样改用内置 AI。详见 [BOT_STRATEGIES.md](docs/BOT_STRATEGIES.md) |
 | `SP_BOT_STRATEGY` / `SP_EXTERNAL_AI_*` / `SP_LLM_*` | 不设（内置 AI） | 外部 AI 与顾问模式目前只在开发分支上。发布包和 Docker 镜像会忽略这些变量，仍用内置 AI，并打一行日志。详见 [DEPLOY.md](docs/DEPLOY.md) |
 
