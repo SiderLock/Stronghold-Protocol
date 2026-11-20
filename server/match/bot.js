@@ -344,10 +344,12 @@ function topThreshold(gd, bond) {
  * Distinct members of `bond` a seat can still hold: its owned ones plus the unowned ones of tier ≤ BOT_MAX_LEVEL the
  * shared pool has copies of (banned chess are not in it).
  */
-function bondReach(m, ps, bond, owned = null) {
+export function bondReach(m, ps, bond, owned = null) {
   const gd = ps?.gd || m.gd;
+  // The bot's own fixed group (D010): the first group's stock says nothing about what this seat can still draw.
+  const pool = ps?.pool || m.pool;
   let n = owned ? owned.counts.get(bond) || 0 : 0;
-  for (const [id, e] of m.pool?.entries || []) {
+  for (const [id, e] of pool?.entries || []) {
     if (!(e.left > 0) || e.tier > BOT_MAX_LEVEL || owned?.bases.has(id)) continue;
     if ((gd.chess(id)?.bonds || []).includes(bond)) n++;
   }
@@ -2379,7 +2381,7 @@ function pagerCarrier(m, ps, h) {
     if (!bonds.includes(h.bond)) continue;
     let all = 0;
     let miss = 0;
-    for (const [id, e] of m.pool.entries) {
+    for (const [id, e] of ps.pool.entries) {
       if (!(e.left > 0) || e.tier > ps.shop.level) continue;
       const cb = gd.chess(id)?.bonds || [];
       if (!cb.some((b) => bonds.includes(b))) continue;
@@ -2684,8 +2686,8 @@ function pagerRefresh(m, ps) {
   let total = 0;
   let miss = 1;
   const slots = gd.shopSlots(ps.shop.level).chess;
-  for (const [, e] of m.pool.entries) if (e.left > 0 && e.tier <= ps.shop.level) total += e.left;
-  for (const [id, e] of m.pool.entries) {
+  for (const [, e] of ps.pool.entries) if (e.left > 0 && e.tier <= ps.shop.level) total += e.left;
+  for (const [id, e] of ps.pool.entries) {
     if (!(e.left > 0) || e.tier > ps.shop.level || h.owned.bases.has(id)) continue;
     if (!(gd.chess(id)?.bonds || []).includes(h.bond)) continue;
     minPrice = Math.min(minPrice, ps.priceOf({ kind: 'chess', id, basePrice: gd.chessPrice(id) }));
@@ -2861,7 +2863,7 @@ export function* buyLoopSteps(m, ps, { fillOnly = false, maxRefreshes = 0, polic
     // 2 / 4 / 6 level-up) come before the level-up spends the funds, while a missing member can still come and be bought
     const bandRefresh = fillOnly && !customPolicy && ctx.focus && ctx.focus === bandMain(m, ps)
       && ps.funds >= refreshCost + minPrice && bandRefreshGain(m, ps, ctx.focus, { sure: true }) >= 1
-      && !!coreGap(m, ctx.focus, ctx.owned, ps) && [...m.pool.entries].some(([id, e]) => e.left > 0 && e.tier <= ps.shop.level
+      && !!coreGap(m, ctx.focus, ctx.owned, ps) && [...ps.pool.entries].some(([id, e]) => e.left > 0 && e.tier <= ps.shop.level
         && !ctx.owned.bases.has(id) && (m.gd.chess(id)?.bonds || []).includes(ctx.focus));
     if (bandRefresh) {
       if (!tryDo(() => ps.refresh())) return;
