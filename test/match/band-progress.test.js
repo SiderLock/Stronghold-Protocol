@@ -2,6 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeMatch } from './harness.js';
 import { createRegistry } from '../../server/match/effectsMeta.js';
+import { loadData } from '../../server/data.js';
+import { setGameData } from '../../server/sim/content/support/index.js';
+import { syncCommand } from '../../server/match/bandCommands.js';
+import { fileURLToPath } from 'node:url';
 
 const quiet = { warn() {}, error() {}, info() {} };
 function setup(t, bandId = 'band_chiave') {
@@ -43,4 +47,21 @@ test('automatic rolls do not advance Chiave and unrelated strategies have no dis
   ps.bandId = 'band_bldsk';
   assert.equal(ps.bandProgressView(), null);
   assert.equal(Object.hasOwn(ps.battleInput(), 'bandProgress'), false);
+});
+
+test('regulation counts the cycle per round, like its refresh handler', t => {
+  const reg = loadData(fileURLToPath(new URL('../../data/versions/act3autochess-v3_1', import.meta.url)), { log: quiet });
+  setGameData(reg);
+  t.after(() => setGameData(null));
+  const h = makeMatch({ data: reg, mode: 'coop', humans: 2, bots: 0, seed: 17, fake: true, registry: createRegistry({ log: quiet }) }).start();
+  t.after(() => h.m.dispose()); h.toPrep(1);
+  const ps = h.ps('p_0'); ps.bandId = 'band_bond'; syncCommand(ps); ps.shop.level = 4; ps.funds = 200;
+  const effect = () => ps.effectsView().find(e => e.iconKind === 'band');
+  const refresh = n => { for (let i = 0; i < n; i++) assert.deepEqual(h.m.handle('p_0', { t: 'g.refresh' }), { ok: true }); };
+  assert.deepEqual(effect().progress, { current: 0, total: 4 });
+  refresh(3);
+  assert.deepEqual(effect().progress, { current: 3, total: 4 }, 'the fourth refresh of the round is shown as 3/4');
+  refresh(1);
+  assert.deepEqual(effect().progress, { current: 0, total: 4 }, 'the cycle restarts after the grant');
+  assert.deepEqual(effect().roundProgress, { current: 1, total: 1 });
 });

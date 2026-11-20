@@ -1241,7 +1241,7 @@ round was over. The official 1 s `broadcastBeginDelay` is not modelled.
 
 ### Read-only strategy progress (#794)
 
-Strategy effect entries may carry `progress: {current,total}` and `roundProgress: {current,total}`. Chiave derives these from existing refresh and lazy round counters; views never advance or reset them. `battleInput.bandProgress` captures the preparation values for a watched battlefield.
+Strategy effect entries may carry `progress: {current,total}` and `roundProgress: {current,total}`. Chiave derives these from existing refresh and lazy round counters (in 规程, whose handler counts the cycle within the round, the per-round `round.refreshes` drives `progress`); views never advance or reset them. `battleInput.bandProgress` captures the preparation values for a watched battlefield.
 
 ## 6. Testing & tools
 

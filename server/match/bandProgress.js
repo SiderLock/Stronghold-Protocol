@@ -8,10 +8,15 @@ export function bandProgressView(ps) {
   const count = key => Number.isFinite(ps.counters[key]) ? Math.max(0, Math.trunc(ps.counters[key])) : 0;
   const total = positive(params.refresh_count), limit = positive(params.max_count);
   if (!total) return null;
+  // The 规程 handler counts the cycle within the round (roundStats().refreshes); the 下半 one counts the whole match.
+  // Reading either source must not reset it.
+  const refreshes = ps.gd?.raw?.config?.version?.family === 'regulation'
+    ? (Number.isFinite(ps.round?.refreshes) ? Math.max(0, Math.trunc(ps.round.refreshes)) : 0)
+    : count('band:chiave:refreshes');
   // Round counters reset lazily in the content handler. Reading a view must not reset them.
   const rewards = ps.counters['band:chiave:r'] === ps.m.round ? count('band:chiave') : 0;
   return {
-    progress: { current: count('band:chiave:refreshes') % total, total },
+    progress: { current: refreshes % total, total },
     ...(limit ? { roundProgress: { current: rewards, total: limit } } : {}),
   };
 }
