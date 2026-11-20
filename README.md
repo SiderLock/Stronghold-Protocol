@@ -1,12 +1,12 @@
 ## 卫戍协议 20 人版
 
-本 fork 基于 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 原作和 [LongQianChen（龙千尘）的多人分支](https://github.com/LongQianChen/Stronghold-Protocol)，持续维护 **最多 20 人合作、固定分组玩法、皮肤与特效、网络和移动端体验**。完整同步基线为 **0.3.1**，另选择性移植了部分上游 0.3.2 开发中的改进；不代表已经完整同步 0.3.2。
+本 fork 基于 [sganggs/Stronghold-Protocol](https://github.com/sganggs/Stronghold-Protocol) 原作和 [LongQianChen（龙千尘）的多人分支](https://github.com/LongQianChen/Stronghold-Protocol)，持续维护 **最多 20 人合作、固定分组玩法、皮肤与特效、网络和移动端体验**。2026-11-19 已把上游 [0.4.0](https://github.com/sganggs/Stronghold-Protocol/releases/tag/v0.4.0)（`b6d8b2ef`，2026-11-15 发布的「卫戍协议·规程」赛季，本分支称「规程·序列Ⅰ」）整体合并进来；此前的完整同步基线是 0.3.1，更早的上游改动按需移植，合并之后的跟进也仍在继续，不代表与上游逐提交一致。
 
 感谢原作者和龙千尘提供实现基础，也感谢社区开发者公开分享代码与思路。[下方致谢](#开发者致谢与功能来源)列出每位作者提供了什么、我们如何采用。
 
 ### 相对上游的主要扩展
 
-以下于 **2026-10-23** 对照作者 `master` 的 [`c9d804f4`](https://github.com/sganggs/Stronghold-Protocol/commit/c9d804f470b8d7422ae04eb66faf671cef21ad52) 核对。这里列的是本分支的功能增量，包含继承龙千尘的多人能力和本 fork 后续适配；不把上游已有的插件系统、基础皮肤选择、Spine 渲染与官方特效播放列为本分支原创。上游后续更新时，差异可能变化。
+以下于 **2026-10-23** 对照作者 `master` 的 [`c9d804f4`](https://github.com/sganggs/Stronghold-Protocol/commit/c9d804f470b8d7422ae04eb66faf671cef21ad52) 核对。这里列的是本分支的功能增量，包含继承龙千尘的多人能力和本 fork 后续适配；不把上游已有的插件系统、基础皮肤选择、Spine 渲染与官方特效播放列为本分支原创。0.4.0 合并进来的规程赛季、界面主题等上游功能同样不计入本表；上游后续更新时，差异可能变化。
 
 | 方向 | 本分支提供的扩展 | 详细说明 |
 |---|---|---|
@@ -89,9 +89,9 @@ English summary: [below](#english).
 
 - [本分支扩展](#相对上游的主要扩展) · [上游改进来源](#已提前采用的上游改进) · [开发者致谢](#开发者致谢与功能来源)
 
-- [声明](#声明) · [简介](#简介) · [功能一览](#功能一览)
+- [声明](#声明) · [简介](#简介) · [游戏版本](#游戏版本) · [功能一览](#功能一览)
 - [快速开始](#快速开始)：[整合包](#方式一整合包推荐) · [从源码运行](#方式二从源码运行) · [系统要求](#系统要求) · [端口与配置](#端口与配置) · [局域网联机](#和朋友一起玩局域网)
-- [插件](#插件) · [联机方式](#联机方式) · [操作](#操作) · [文档](#文档) · [开发与测试](#开发与测试) · [项目结构](#项目结构)
+- [插件](#插件) · [联机方式](#联机方式) · [操作](#操作) · [常见问题](#常见问题) · [文档](#文档) · [开发与测试](#开发与测试) · [项目结构](#项目结构)
 - [许可证](#许可证) · [致谢与数据来源](#致谢与数据来源) · [贡献](#贡献)
 
 ## 简介
@@ -102,10 +102,30 @@ English summary: [below](#english).
 - 服务器是一个 Node.js 程序，**战斗在各玩家的浏览器里模拟**（和官方一样），服务器只管经济与回合，一台低功耗小主机就能开服。
 - 当前版本 0.4.0：新增官方版本「规程·序列Ⅰ」（11 月 8 日开放的「卫戍协议·规程」，现为大厅默认）：单人规程等级 1–20 与极速模拟、指令、5 格装备区、每局盟约抽选、官方战场场景和赛季外观；另有界面主题（含官方主题；“全能的”可露希尔主题包另行提供，在设置里导入）、CN 2.7.91 的新干员和大量修复。共提供五个官方版本，详见 [CHANGELOG.md](CHANGELOG.md)。
 
+## 游戏版本
+
+服务器同时提供**五个官方版本**，都随发布包和 Docker 镜像一起提供（`data/versions/`）。大厅默认选中「规程·序列Ⅰ」，右上角的「版本」可以换；不想换版本时不用做任何设置。
+
+| 版本 | 对应的官方活动 | 官方时间（北京时间） | 说明 |
+|---|---|---|---|
+| **规程·序列Ⅰ**（`act3autochess@V3_1`） | 「卫戍协议·规程」序列Ⅰ | 2026-11-08 起 | 0.4.0 起提供，大厅默认；单人是官方的分级（极速模拟与规程等级 1–20） |
+| 第二期下半（`act2autochess`） | 下半期 V2_2 | 2026-03-27 – 04-25 | 0.3.x 的默认版本，`data/*.json` 就是它；四档难度 |
+| 第二期上半（`act2autochess@V2_1`） | 下半期 V2_1 | 2026-03-14 – 03-27 | 预览 |
+| 第一期下半（`act1autochess`） | 上半期 V1_2 | 2025-11-25 – 12-12 | 预览 |
+| 第一期上半（`act1autochess@V1_1`） | 上半期 V1_1（含 11-18 热修） | 2025-11-14 – 11-25 | 预览 |
+
+- **怎么换**：大厅选中后这台浏览器会记住，之后新建的独立模拟和同盟都用那个版本；同盟的房间跟着房间走，加入别的版本的房间时会先下载并校验该版本的数据（约 5 MB）。切换房间版本由房主发起，在座真人**全部同意**才生效，只有一个真人时立即切换；房间开着改变玩法的插件时不能切换。
+- **预览版本**：第二期上半和第一期的两个版本标「预览」——核心规则已按该版本，悬赏抽取、部分数值和六名敌人的攻击前摇仍是推算；其他语言下，其他版本的干员与盟约文本暂时只有中文。规程也有少量推定项（例如隐秘核心的阈值与战场名），随社区数据或客户端确认修正。
+- **服主**：`SP_VERSIONS` 收窄服务器提供的版本（`SP_VERSIONS=act2autochess` 只开第二期下半，大厅不显示「版本」），`SP_VERSION_DEFAULT` 改默认版本，`SP_MAX_VERSION_HOSTS` 限制版本对局子进程数。非默认版本的对局跑在独立子进程里，第一局开局时才启动，空闲 10 分钟后自动结束，每个约占 100 MB 以上内存。
+- **插件**：0.3.x 的插件在 0.4.0 照常可用；新插件模板写 `>=0.4.0 <0.5.0`。玩法插件要在清单里声明 `versions` 才能进规程房间，没声明的仍只用于第二期下半。
+
+完整的版本差异、房间投票和设置保存方式见[玩法指南 §15](docs/PLAYING.md#15-游戏版本)，开服侧的开关见[部署指南 §11](docs/DEPLOY.md)。
+
 ## 功能一览
 
 - **完整的一局**：确认本局信息 → 策略轮选（40 名策略）→ 14 回合 → 结算称号；险境及以上满足条件时进入第 15 回合「隐秘核心」。
-- **4 种难度**：标准 / 险境 / 绝境 / 终极，独立与同盟各一套参数，均取自官方数据。
+- **难度与分级**：盟约各版本的独立模拟与同盟都是标准 / 险境 / 绝境 / 终极四档，各自一套参数，均取自官方数据；规程的单人换成官方的分级——极速模拟与规程等级 1–20（见[游戏版本](#游戏版本)）。
+- **规程·序列Ⅰ（大厅默认）**：37 名新干员（技能全部实现）、26 个盟约（新增乌萨斯、伊比利亚、莱塔尼亚、聚合）、5 格装备区（放不下的进暂存，休整期结束时清掉）、策略指令与换指令、每局随机抽选的盟约（单人在规程等级 1–4 把核心盟约分成两组选一组，同盟险境以上灰掉一半）、官方整块战场、赛季外观和「选择自编」；结算页按官方写模式名（「规程等级 N」/「极速模拟」）。
 - **休整期**：招募、刷新、冻结、升级调度中心；整备区与临时整备区；从整备区拖到棋盘部署，用**方向轮盘**选择朝向。同盟模拟的卡池按座位分组共享。
 - **晋升精锐**：3 名同名干员自动合成精锐，并获得一次高一阶的免费招募。
 - **干员与调配**：112 名可招募干员（+ 精锐）及其技能、天赋和特质；开局前可以为每名干员选择携带的技能（283 个技能全部手工实现）和精锐的模组，调配页也可以换成活动「物资调配处」那样的卡片视图。
@@ -116,20 +136,22 @@ English summary: [below](#english).
 - **联防**：有人漏怪、又有人完美作战时，完美作战的队友带着阵容帮忙拦截漏掉的敌人。
 - **最终攻势与隐秘核心**：两人共享一个战场，全队共同削减同一条领袖血条；10 个敌方领袖，巨型领袖约 5×3 格的受击范围，以及官方的限伤规则。
 - **结算**：官方样式的个人战报和同盟结算页，卫戍认证等级（官方 60 级、每日防卫目标，按本机记录计算）；卫戍之星、不朽盟约、坚若磐石等 6 个结算称号。
+- **对局展示**：队伍栏头像带官方的完美连胜徽章（连续 3 回合不掉生命值起显示连胜回合数，5 回合起换成星形）；领袖战右侧有伤害排行（伤害最高的三名干员与各自占领袖总血量的比例，可以隐藏）。
 - **断线重连**：同盟模拟断线后 10 分钟内重新打开页面即可回到原座位，掉线期间按原阵容自动作战，也可以「暂离」交给 AI 托管；独立模拟默认在断线后 2 小时内可以回来继续（同一个浏览器）。
 - **交互细节**：漏怪时顶栏用红字 + 「−N」标记待扣的目标生命值（结算时才扣除）；点选、拖放和配发装备都按地上的方格；购买、升级和机变选卡都需要点两次确认；只有一名玩家时除作战外不计时。
 - **画面与声音**：真实 Spine 小人、官方 BGM 与音效、表情（6 套 × 6 个）、作战特效；可选的官方 3D 棋盘（需要从本机客户端提取贴图）。
+- **界面主题**：「设置 → 界面主题」换界面皮肤，只影响这台设备：内置「卫戍协议终端」；装了本地客户端素材时还能选官方主题「卫戍协议终端（官方贴图）」和「乌萨斯齐心团」，「全能的」可露希尔另以主题包提供（在设置里导入）；也可以导入自制主题包（zip 或文件夹），另有「主题动画」开关。
 - **手机与电脑**：触摸拖拽、长按查看详情，推荐横屏；设置里可以调低画质；界面被挖孔、刘海或曲面边缘挡住时可以用「异形屏适配」调整四边，界面偏大时可以在同一栏调小「界面大小」。
 
 ## 快速开始
 
 ### 方式一：整合包（推荐）
 
-[Releases](../../releases/latest) 里有两种整合包，代码和运行依赖完全相同，二选一；已经装好 0.2.x 的，升级时只下载更新包即可：
+[Releases](../../releases/latest) 里有两种整合包，代码和运行依赖完全相同，二选一；已经装好 0.2.0 及以后版本的，升级时只下载更新包即可：
 
 - **完整包** `Stronghold-Protocol-v<版本>.zip`（约 800 MB，解压后约 1.16 GB）：附带全部美术 / 音频（含中文、日文、英文、韩文和本土语言的干员语音、官方 3D 棋盘贴图、各战场的官方场景和官方战斗特效），解压就能玩，不需要再下载任何东西。**推荐。**
 - **精简包** `Stronghold-Protocol-v<版本>-lite.zip`（约 25 MB）：不带素材，第一次启动时自动从公开镜像下载美术、Spine 模型、音频、字体、表情和「玩法说明」教程图（约 720 MB，可中断，再次启动会续传）；官方 3D 棋盘等本地客户端素材不在其中（见下面的「本地客户端素材」；各战场的官方场景可以用 `node tools/setup.mjs --scenes` 在本机下载并提取）。适合下载大文件不方便的情况。
-- **更新包** `Stronghold-Protocol-v<版本>-update.zip`（0.2.1 起提供，大小看改动多少，通常只有几 MB）：只含比之前的 0.2.x 版本改动过的文件，用来把已经装好的 0.2.x（完整包或精简包装的都行）升级到新版本，不用重新下载整个包。用法：先停止服务器（关掉窗口；装了开机自启的运行 `scripts\install-service-windows.ps1 -Stop`），把 zip 里 `Stronghold-Protocol` 文件夹的全部内容合并到安装文件夹、覆盖同名文件（Windows 资源管理器里复制粘贴即可；macOS 不要用访达拖放，它会整个替换文件夹，请用 `unzip -o`，见 [docs/DEPLOY.md](docs/DEPLOY.md) 第 1.5 节），再照常启动。启动时会先核对全部程序文件、删除新版本不再用的旧文件，然后正常运行；如果这个文件夹不是更新包对应的版本（例如 0.1.x，或者程序文件被改过），会提示下载完整包，服务器不启动。全新安装请用完整包或精简包。
+- **更新包** `Stronghold-Protocol-v<版本>-update.zip`（0.2.1 起提供，大小看改动多少，通常只有几 MB）：只含比说明里列出的旧版本改动过的文件，用来把已经装好的旧版本（完整包或精简包装的都行）升级到新版本，不用重新下载整个包。用法：先停止服务器（关掉窗口；装了开机自启的运行 `scripts\install-service-windows.ps1 -Stop`），把 zip 里 `Stronghold-Protocol` 文件夹的全部内容合并到安装文件夹、覆盖同名文件（Windows 资源管理器里复制粘贴即可；macOS 不要用访达拖放，它会整个替换文件夹，请用 `unzip -o`，见 [docs/DEPLOY.md](docs/DEPLOY.md) 第 1.5 节），再照常启动。启动时会先核对全部程序文件、删除新版本不再用的旧文件，然后正常运行；如果这个文件夹不是更新包对应的版本（例如 0.1.x，或者程序文件被改过），会提示下载完整包，服务器不启动。全新安装请用完整包或精简包。
 
 两种包都包含运行和部署文件，以及插件作者需要的工具、模板、Schemas、插件文档和战斗测试助手。完整开发测试与设计文档仍在源码仓库里。
 
@@ -142,6 +164,8 @@ English summary: [below](#english).
    - Windows：双击 **`scripts\start-windows.bat`**。如果弹出「安全警告」，点「运行」；Windows 防火墙弹窗请勾选「专用网络」并允许。
    - macOS / Linux：在解压出的文件夹里运行 `./scripts/start.sh`（或 `bash scripts/start.sh`）。
 4. 浏览器会自动打开 `http://localhost:3000`。窗口里列出的局域网地址可以直接发给同一网络的朋友。关闭窗口（或按 `Ctrl+C`）即停止服务器。
+
+本 fork 自己的 Release 还有一条**四平台便携包**发布线（`Windows-x64.zip` / `linux-x64.tar.gz` / `darwin-arm64.tar.gz` / `darwin-x64.tar.gz`）：包里自带 Node.js 运行时，解压后双击 `启动游戏.bat` 或运行 `bash 启动游戏.sh`，不用另装 Node；包内范围、素材来源与核验方式见 [docs/RELEASE_PACKAGES.md](docs/RELEASE_PACKAGES.md)。
 
 ### 方式二：从源码运行
 
@@ -165,7 +189,7 @@ npm start          # 启动服务器：http://localhost:3000
 |---|---|
 | 开服的电脑 | Windows / macOS / Linux，Node.js 22 或 24（LTS）；磁盘约 1.2–1.4 GB（素材、依赖与本地提取的贴图、场景和特效：完整包解压后约 1.16 GB）；内存空闲约 100 MB，每局再加几 MB |
 | 玩家 | 支持 WebGL 的现代浏览器（Chrome / Edge / Firefox / Safari 最新版），电脑、手机或平板（横屏） |
-| 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小。已有素材的玩家可以在标题画面打开「下载资源管理」→「导入素材包」，从素材包 zip、完整包 zip 或自己的 `public/assets` 文件夹导入，这部分美术不再从开服的电脑下载；需要 HTTPS 或 localhost（[docs/DEPLOY.md](docs/DEPLOY.md) 2.5 节）。0.3.0 的素材包 `Stronghold-Protocol-v0.3.0-assets.zip` 由维护者另行提供下载，不在 Releases 附件里 |
+| 网络 | 首次进入游戏时，每位玩家要从开服的电脑下载几十 MB 素材（之后走浏览器缓存）；对局中流量很小。已有素材的玩家可以在标题画面打开「下载资源管理」→「导入素材包」，从素材包 zip、完整包 zip 或自己的 `public/assets` 文件夹导入，这部分美术不再从开服的电脑下载；需要 HTTPS 或 localhost（[docs/DEPLOY.md](docs/DEPLOY.md) 2.5 节）。0.3.0 的「官方特效」与 0.4.0 的官方界面主题（卫戍协议终端（官方贴图）、乌萨斯齐心团）随完整包提供，「全能的」可露希尔另有主题包；素材包 `Stronghold-Protocol-v<版本>-assets.zip` 由维护者另行提供下载，不在 Releases 附件里 |
 
 显卡较弱时可以在「设置」里调低画质，或在网址后加 `?board=2d`（强制 2D 棋盘）/ `?render=fallback`（不用 WebGL 的简化画面）。
 
@@ -251,27 +275,66 @@ npm start          # 启动服务器：http://localhost:3000
 | 观战 | 自己的作战结束后（或休整期）点左侧队友头像 →「前往查看」；不参战的朋友可以在大厅点「同盟模拟」、输入同盟密钥后点「观战」（每个同盟最多 2 名观战者，本作新增） |
 | 统计（本机） | 标题画面右上角、等待室的「统计」，大厅左上角「成就统计」窗口里的「查看完整统计」：胜率、策略通过率、称号、战斗累计和对局记录（点一行回看结算页）；只存在本机浏览器里，可以导出 / 导入，没清完第一个回合就退出的对局不计入统计（[玩法指南 §13](docs/PLAYING.md#13-统计本机)） |
 | 名片干员 | 等待室里点自己席位卡上的「更换立绘」选一名干员，同盟里的博士都会看到它的立绘；「默认」按博士编号自动分配 |
+| 界面主题 | 「设置 → 界面主题」：选内置外观或已装的官方主题，「导入主题包」加载 zip、「导入文件夹」加载含 `theme.json` 的文件夹；只影响这台设备，不上传 |
+| 界面语言 | 标题画面的语言按钮，或「设置 → 语言」：中文 / English / 日本語 / 한국어 / 繁體中文 |
 
 完整的规则、数值和小技巧见 **[docs/PLAYING.md](docs/PLAYING.md)**（游戏内左下角也有「玩法说明」）。
 
+## 常见问题
+
+**局域网里的朋友打不开启动窗口列出的地址。** 多半是防火墙：Windows 首次启动时在弹窗里勾「专用网络」并允许；访客 Wi-Fi 常开「AP 隔离」；`HOST` 改过时也要一并确认。`npm run doctor` 会打印诊断结果和需要放行的命令（[部署指南 §5](docs/DEPLOY.md#5-排错)）。
+
+**第一次启动一直停在下载素材。** 精简包首次启动要下载约 720 MB，可以中断、下次续传。标题画面「下载资源管理」里能手动下载素材、检查资源，也能导入素材包：手里有素材包 zip、完整包 zip 或自己的 `public/assets` 时，这部分美术就不用从开服的电脑下载。
+
+**3D 棋盘、官方特效、部分召唤物变成了替代样式。** 这些素材要从本机的《明日方舟》客户端提取（`node tools/setup.mjs --local`），没有客户端就按替代样式运行；规程的官方战场场景另用 `node tools/setup.mjs --scenes` 提取或更新（[本地提取参考](docs/LOCAL_ASSET_EXTRACTION.md)）。
+
+**手机上卡顿。** 设置里把帧率调到 30、打开自动分辨率或调低画质；也可以在网址后加 `?board=2d` 强制 2D 棋盘，或用 `?render=fallback` 走不带 WebGL 的简化画面。
+
+**房间说「版本数据载入失败」。** 那个版本的数据没通过校验，点「重试」；一直失败就刷新页面——版本数据按版本缓存在浏览器里。
+
+**服务器重启后对局不见了。** 房间和对局都保存在内存里，重启会结束所有对局；重连窗口是同盟 10 分钟、独立模拟 2 小时。
+
+**我和朋友的版本不一样。** 房间的版本跟着房间走，加入别的版本的同盟会先载入那个版本的数据；切换由房主发起，在座真人全部同意才生效，只有一个真人时立即生效。大厅选的版本只决定你自己新建的对局。
+
 ## 文档
+
+给玩家和服主：
 
 | 文档 | 内容 |
 |---|---|
 | [CHANGELOG.md](CHANGELOG.md) | 更新记录：每个版本修复了什么、哪些反馈经核实不是问题 |
-| [docs/PLAYING.md](docs/PLAYING.md) | 玩法指南：流程、经济、招募与晋升、摆阵、联防、盟约、最终攻势、结算称号 |
-| [docs/PLUGINS.md](docs/PLUGINS.md) · [docs/PLUGIN-GUIDE.md](docs/PLUGIN-GUIDE.md) | 插件格式、安装与服主策略；中文工作台入门、DSL 和对战试验 |
-| [docs/DEPLOY.md](docs/DEPLOY.md) | 部署指南：Windows 开服与开机自启、防火墙、组网 / 隧道、反向代理与 HTTPS、Docker、systemd、排错 |
+| [docs/PLAYING.md](docs/PLAYING.md) | 玩法指南：流程、经济、招募与晋升、摆阵、联防、盟约、最终攻势、结算称号、快捷键、界面主题、统计与游戏版本 |
+| [docs/PLAYER_CAPACITY.md](docs/PLAYER_CAPACITY.md) | 20 人容量与固定分组：可选容量、分组与并行轮选、多人联防与领袖适配、房间协作的边界 |
+| [docs/DEPLOY.md](docs/DEPLOY.md) | 部署指南：Windows 开服与开机自启、防火墙、组网 / 隧道、反向代理与 HTTPS、Docker、systemd、P2P 转发、官方版本、配额与排错 |
+| [docs/SERVER_SETTINGS.md](docs/SERVER_SETTINGS.md) | 服主运行配置：AI 数量上限、下载预算、完整预缓存准入、带宽保护；写进 `runtime/server-settings.json`，运行中约 1 秒生效 |
+| [docs/ANNOUNCEMENTS.md](docs/ANNOUNCEMENTS.md) | 服主公告：发布、置顶、删除，以及给局内玩家发紧急通知的命令与文件格式 |
+| [docs/THEMES.md](docs/THEMES.md) · [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md) | 界面主题：包格式与限制（官方主题、动图、语音、Spine 角色）；从零做一个主题包的中文教程 |
+| [docs/SKINS.md](docs/SKINS.md) | 干员皮肤：记录字段、按席位取图、召唤物换装与独立语音槽、优先级与回退 |
+| [docs/ASSET_CACHE.md](docs/ASSET_CACHE.md) | 素材预缓存：完整目录与 SHA-256 核验、素材包导入、增量包、加载授权与下载恢复 |
 | [docs/WINDOWS.md](docs/WINDOWS.md) | Windows 便携包：怎么打一份「零安装」包（`scripts/make-windows-bundle.mjs`）、包里放了什么、授权注意事项 |
-| [docs/DESIGN.md](docs/DESIGN.md) | 架构与契约（英文）：索引，按章节号找到文件；现行规则在 `docs/design/`（范围与目录分工、坐标与时间、战斗引擎、对局、网络协议、渲染与 UI），各次试玩和各版本的规则修订与依据在 `docs/history/` |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码地图（英文）：服务器、联机协议和前后端共用的战斗模拟，0.2.0 重构后的目录，数据流，黄金结果与导入边界，常见改动从哪里入手 |
+| [docs/RELEASE_PACKAGES.md](docs/RELEASE_PACKAGES.md) | 本 fork 的四平台便携发布包：包内范围、素材来源与排除规则、核验方式 |
+| [docs/LOCAL_ASSET_EXTRACTION.md](docs/LOCAL_ASSET_EXTRACTION.md) | 本地素材提取：皮肤图片与模型、特效、战场场景、官方界面主题，以及所需 Python 环境 |
+
+给开发者和插件作者：
+
+| 文档 | 内容 |
+|---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 参与贡献：准备环境、运行测试、忠实原则、提交与 PR 约定、怎样添加自选干员（中文，末尾附英文摘要） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 代码地图（英文）：服务器、联机协议和前后端共用的战斗模拟，0.2.0 重构后的目录，数据流，黄金结果与导入边界，常见改动从哪里入手 |
+| [docs/DESIGN.md](docs/DESIGN.md) | 架构与契约（英文）：索引，按章节号找到文件；现行规则在 `docs/design/`（范围与目录分工、坐标与时间、战斗引擎、对局、网络协议、渲染与 UI），各次试玩和各版本的规则修订与依据在 `docs/history/` |
 | [docs/SIM.md](docs/SIM.md) | 战斗模拟引擎参考（英文）：钩子、技能描述格式、职业默认行为 |
 | [docs/META.md](docs/META.md) | 对局与经济引擎（英文）：回合流程、商店、联防、最终攻势的实现细节 |
-| [docs/DATA.md](docs/DATA.md) | 由官方数据表生成的游戏数据（英文） |
+| [docs/DATA.md](docs/DATA.md) | 由官方数据表生成的游戏数据（英文），含各版本的数据表与推算项 |
 | [docs/ASSETS.md](docs/ASSETS.md) | 素材来源、目录结构与清单（英文） |
 | [docs/I18N.md](docs/I18N.md) | 界面语言（英文）：界面文字、游戏文本与服务器消息怎样翻译，覆盖范围；**添加一种语言只需在 `public/i18n/` 放一个语言文件**（社区翻译步骤见「Adding a language」，内容包格式见 [docs/PACKS.md](docs/PACKS.md)） |
+| [docs/PACKS.md](docs/PACKS.md) | 内容包（语言包、素材包等）的格式与校验 |
+| [docs/PLUGINS.md](docs/PLUGINS.md) · [docs/PLUGIN-GUIDE.md](docs/PLUGIN-GUIDE.md) | 插件格式、安装与服主策略；中文工作台入门、DSL 和对战试验 |
+| [docs/PLUGIN-API.md](docs/PLUGIN-API.md) · [docs/PLUGIN-DSL.md](docs/PLUGIN-DSL.md) | 插件 API（v1–v2）接口表；插件 DSL（P2）的写法与限制 |
+| [docs/BOT_STRATEGIES.md](docs/BOT_STRATEGIES.md) | 内置 AI 策略：怎样新增、调参，以及用 `SP_BOT_STRATEGY_SEATS` 按席位指定 |
 | [docs/BALANCE.md](docs/BALANCE.md) | 难度模型与测量（英文） |
+| [docs/WIRE_PROTOCOL.md](docs/WIRE_PROTOCOL.md) · [docs/HTTP_CACHE.md](docs/HTTP_CACHE.md) | 紧凑网络协议与带宽维护；页面代码、数据与 HTTP 缓存 |
+| [docs/CI.md](docs/CI.md) | CI 任务、测试分片契约（`ci-shards.json`）、超时策略，以及哪些测量会说谎 |
+| [docs/REFERENCES.md](docs/REFERENCES.md) | 来源与致谢：参考开发者、冻结版本与采用范围 |
 | [docs/research/](docs/research/00-INDEX.md) | 官方规则、数据与界面的调研记录 |
 
 ## 开发与测试
@@ -339,9 +402,12 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 
 An **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess tower-defense mode *Stronghold Protocol: Alliance*, played in the browser: solo, or up to 20-player co-op (AI teammates can fill seats). Co-op rooms offer 4 / 8 / 10 / 16 / 20 seats, defaulting to 8; see [capacity rules](docs/PLAYER_CAPACITY.md). Combat is simulated in each player's browser, so a low-power PC can host.
 
+- **Versions:** five official seasons ship side by side: 规程·序列Ⅰ (`act3autochess@V3_1`, the lobby default since 0.4.0, whose solo play uses the official 极速模拟 / 规程等级 1–20 levels), 第二期下半 (`act2autochess`), 第二期上半, 第一期下半 and 第一期上半. The lobby's 「版本」 button picks one; a room keeps its own version, and switching it takes a unanimous vote of the humans in it. Servers choose the enabled ones with `SP_VERSIONS` / `SP_VERSION_DEFAULT` — see the 官方版本 section of [docs/DEPLOY.md](docs/DEPLOY.md).
 - **Run:** download the full bundle `Stronghold-Protocol-v<version>.zip` (~800 MB, all the art inside, the Chinese, Japanese, English, Korean and own-language operator voices, the official battlefield scenes and the official battle effects included) from [Releases](../../releases/latest) — or the lite one, `…-lite.zip` (~25 MB), which downloads the art (~720 MB) on its first start; from 0.2.1 on, `…-update.zip` holds only the files changed since the earlier 0.2.x releases: stop the server, extract it over an existing 0.2.x folder and start again (the first start deletes the files the new version dropped and verifies the install) — install Node.js 22 or 24, then double-click `scripts\start-windows.bat` (Windows) or run `./scripts/start.sh` (macOS / Linux) and open <http://localhost:3000>. From source: `npm install && npm run setup && npm start` (setup downloads ~720 MB of art from public mirrors, the emotes and the how-to-play pages included; the official 3D board, some official HUD icons, two enemy models and 39 summon models are extracted from a local Arknights client — without one the game uses the 2D board and look-alike stand-ins (the summons show their avatars), and a server can copy `public/assets/local/` and `data/local-assets.json` from the full bundle of the same version).
 - **Languages:** Chinese (the default), English, 日本語, 한국어 and 繁體中文 — switch on the title screen or in Settings. Game texts come from the official clients; the Japanese, Korean and Traditional Chinese interface strings are machine translations (corrections welcome: [docs/I18N.md](docs/I18N.md)).
 - **Play with friends:** create a co-op room and share the 4-letter key or the `?room=KEY` link. On a LAN, use the address printed at start; otherwise use a virtual-LAN tool, a tunnel or a VPS — see [docs/DEPLOY.md](docs/DEPLOY.md).
+- **Interface themes:** 设置 → 界面主题 restyles your own screen only — the built-in look, the two official-themed packs that come with the full bundle, 「全能的」可露希尔 as a separate theme pack, or a third-party `theme.json` pack you import. Format: [docs/THEMES.md](docs/THEMES.md); tutorial: [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md).
+- **Help:** a blocked LAN address, a stuck art download, missing extracted art, phone performance and version-data failures are answered in the Chinese [常见问题](#常见问题) section above.
 - **Disclaimer:** not affiliated with or endorsed by Hypergryph or Yostar. All Arknights names, art, audio, text and data are © their respective owners and are **not** covered by this project's GPL licence. For study and personal non-commercial use only — no selling, paid distribution, paid servers or monetisation of any kind. Content will be removed on request of the rights holders. Provided "as is", without warranty.
 - **License:** code GPL-3.0-or-later ([LICENSE](LICENSE)); game assets excluded.
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) (an English summary at its end); the code map is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
