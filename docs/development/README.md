@@ -38,7 +38,8 @@
 状态见 §14）；所有者重新启用后触发。期间本机完整 `npm test`（12,997 项：12,795 通过、59 失败）发现的两处遗漏已修复：
 `g.peek` / `m.peek` 补进 v1 回退清单、安装版提取器改名可导入的 `local_skins.py`；其余失败均为本机 python3 占位符、
 Node 24.13 插件原生退出、规程素材 / 缓存不全、符号链接权限与既有 0.8 Mbps 压力用例。未打包、未部署；浏览器套件未启用；
-规程素材仍未下载（I006）。
+规程的 3D 场景 / 特效 / 开场已用本机提取器补齐（[DEV-20261124-02](records/2026-11-24-02-regulation-local-extract.md)）；
+34 名干员语音与 19 张指南页仍待 `npm run setup` 下载（I006）。
 
 2026-11-19 已合并作者 `upstream/dev` `c2b4ca01`（0.4.0，356 个提交）到本地 `dev`，接入第五个官方版本
 「规程·序列Ⅰ」(`act3autochess@V3_1`)。二十席位、固定分组卡池 / 装备、组内真人优先并行轮选、多轮联防、
@@ -265,7 +266,7 @@ Windows / WSL Linux 实际启动通过，macOS 完成归档 / 架构 / 权限检
 | I004 | 本地目录、生命周期与准入完成；服务器部署待验证 | [DEV-20261010-12](records/2026-10-10-12-offline-catalog-admission.md) 完成本地目录及严格准入；[DEV-20261011-02](records/2026-10-11-02-manual-catalog-update.md) 新增显式旧目录更新；[DEV-20261014-03](records/2026-10-14-03-asset-catalog-recovery.md) 补齐跨版本 SW 与清空旧缓存的恢复。普通检查 / 校验仍不下载完整目录。目录与文件补齐默认不限速，服主可配置预算；旧目录更新为 5 秒/IP 冷却。服务器生产完整度 / HTTPS / 百人带宽仍需部署后核验。 |
 | I005 | 紧急保护本地完成；生产触发待校准 | [DEV-20261012-03](records/2026-10-12-03-bandwidth-emergency-toggle.md) 保留网卡出口/需求/背压佐证、下载和新访问熔断、对局冻结；自动检测默认关闭，服主可用 CLI 运行时开关，开启后每 60 秒试恢复。待部署后检查默认网卡、真实出口、独立网络识别、lastTrigger 触发证据/误报，以及反代是否绕过 Node；不能用 Windows 模拟代替阿里云验证。 |
 
-| I006 | 规程素材未下载 | 2026-11-19 合并 0.4.0 后，`data/assets.json` 与 `.cache/gamedata` 已包含规程（34 名干员语音、规程敌人模型 / 特效、规程战场），但本机 `public/assets` 尚未补齐，3D 场景也未重新提取。需要时运行 `npm run setup`（或 `node tools/fetch-assets.mjs --add-only`）与 `python3 tools/local-extract/extract.py --webp`；下载量较大，本次未执行。见 [DEV-20261119-01](records/2026-11-19-01-upstream-v0.4.0.md)。 |
+| I006 | 规程素材与本机提取 | 2026-11-19 合并 0.4.0 后 `data/assets.json` 已含规程内容。2026-11-24 用本机客户端提取器补齐：规程十个战场 3D 场景（40 文件 / 168.8 MB）、规程开场（53 文件 / 9.2 MB）、739 个新特效 prefab（含盐坨子炮，`data/local-fx.json` 21,490 → 22,489 条），两本清单逐条与磁盘一致，服务端可提供。**仍缺**：34 名干员语音、19 张指南页（该客户端没有 guide bundle，须 `npm run setup` 或 `node tools/fetch-assets.mjs --add-only` 下载）；官方主题（`--only theme`）可选。见 [DEV-20261124-02](records/2026-11-24-02-regulation-local-extract.md)。 |
 
 新增待办使用递增编号；完成或取消时写明结论并链接任务记录。开发进度、验证结果和线上部署状态分别记录，避免用一个「完成」混淆三者。
 
