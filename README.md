@@ -188,8 +188,8 @@ npm start          # 启动服务器：http://localhost:3000
 
 - **本地客户端素材（可选）**：官方 3D 棋盘、官方战斗特效（0.3.0「官方特效」）、部分官方界面图标（交流按钮与表情面板的边框、模组类型图标等）、灼热 / 炽焰源石虫和 39 个召唤物（多数自选召唤物）的官方模型，要从本机的《明日方舟》PC 客户端提取。Windows 原生客户端、macOS 的 CrossOver 或 PlayCover 都可以。
   `npm run setup` 检测到客户端时会询问是否提取，需要 Python 3.8+，依赖装在项目内的 `.venv-extract`，不动系统环境。之后可用 `node tools/setup.mjs --local` 重新提取，或用 `--game "<安装目录或 …/StreamingAssets/AB/Windows>"` 指定路径。
-  没有客户端时游戏照常运行，这几样换成替代样式：2D 棋盘、样式相近的图标、染色的普通源石虫、召唤物头像。表情和「玩法说明」的教程图随上面的素材从公开镜像下载，不需要客户端。
-  没有客户端的服务器（例如 Linux VPS）也可以从**同一版本**的完整包里复制 `public/assets/local/` 和 `data/local-assets.json`（精简包没有这两样），见 [docs/DEPLOY.md](docs/DEPLOY.md) 的「本地客户端素材」。
+  没有客户端时游戏照常运行，这几样换成替代样式：2D 棋盘、样式相近的图标、染色的普通源石虫、召唤物头像。表情和「玩法说明」的教程图随上面的素材一起从公开镜像下载，不需要客户端。
+  没有客户端的服务器（例如 Linux VPS）也可以从**同一版本**的整合包（完整包；精简包没有这两样）里复制 `public/assets/local/` 和 `data/local-assets.json`，见 [docs/DEPLOY.md](docs/DEPLOY.md) 的「本地客户端素材」。
 - 素材下载优先使用 GitHub，失败时自动改用 jsDelivr 镜像。
 - `npm run doctor`（即 `node tools/doctor.mjs`）可以随时诊断：Node 版本、素材是否完整、端口占用、局域网地址和防火墙。
 
