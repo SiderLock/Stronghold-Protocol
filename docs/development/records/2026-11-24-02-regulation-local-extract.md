@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-11-24 / 2026-11-24，Asia/Shanghai |
-| 状态 | 已完成（提取部分；语音与指南页属下载，见「遗留」） |
+| 状态 | 已完成（提取 + 下载补齐；24 个镜像缺口见「遗留」） |
 | 类型 | 素材提取（本机，资产不进 Git） |
 | 分支与开始 HEAD | `dev`，`0f571f88`（与 `origin/dev` 一致），工作区干净 |
 | 客户端 | 本机 `D:\Hypergryph Launcher\games\Arknights`；打包基线 `26-10-20-11-10-38-04170990` + 热更新 `26-11-13-06-34-18-84612175`（1,586 个下载、13,300 个打包、941 个缺失） |
@@ -60,13 +60,26 @@
 
 - 实现结果：规程十个战场 3D 场景、规程开场素材、739 个新特效 prefab（含盐坨子炮）已提取，并入两本本机清单；服务端可直
   接提供。
-- 未确定或未完成：**规程 34 名干员语音与 19 张指南页属于下载**（客户端没有 guide bundle），仍需
-  `npm run setup` 或 `node tools/fetch-assets.mjs --add-only`；官方主题（`--only theme`）可选，需主题包安装流程；
-  `feedback7-voices`、`assets-season-music`、`audio-pools-data` 等依赖下载 / 缓存的测试仍会在本机失败，CI 不受影响。
+- 未确定或未完成：清单引用只剩 24 个镜像侧没有源文件的 BGM / 敌人音效（上游缺口，本机无法补齐）；官方主题
+  （`--only theme`）可选，需主题包安装流程；`assets.test.js` 的磁盘清单仍因这 24 个失败，`ui/localArt` 仍要求本机
+  清单有 `guide` 组（客户端没有 guide bundle），`assets-season-music` / `audio-pools-data` 依赖 `.cache/gamedata`，
+  这些只影响本机、CI 不受影响。
 - 提交 / 远程 / 素材 / 线上：素材与清单全部被 `.gitignore` 排除，本次只有文档提交；未打包、未部署。
 - 接手入口：本记录；`tools/local-extract/extract.py`；`data/local-assets.json` / `data/local-fx.json`；
   [LOCAL_ASSET_EXTRACTION](../../LOCAL_ASSET_EXTRACTION.md)、[ASSETS](../../ASSETS.md)。
 
 ## 后续补充
 
-（暂无）
+2026-11-24（下载补齐）：提取之外，清单里还缺 2,949 个「只能下载、不能提取」的文件（2,091 个语音 mp3、558 张
+干员图、300 个干员 Spine 文件），于是接着跑了 `node tools/fetch-assets.mjs --add-only --concurrency=16`
+（19,103 项计划，跳过已有；136 秒，约 3,000 个文件实际下载）。结果：
+
+- 缺失引用 2,949 → **24**：规程三名干员语音、干员图与 Spine 已齐；指南页 19 张在 `public/assets/ui/guide/`；
+  `feedback7-voices`（248 名干员的 JP 全量对照）由失败转为通过。
+- 剩余 24 个是镜像侧没有源文件的规程 BGM（`m_sys_act3autochess_loop`、`m_boss{1,2}_act3autochess_loop`）与
+  24 个敌人 / 环境音效（`a_bat_*`、`e_atk_*`、`e_imp_*`），规划阶段就报 `not found`；属上游资源缺口，本机无法补齐。
+- **没有提交重新生成的 `data/assets.json`**：本机 `.cache/gamedata` 比上游提交清单的生成基线新，`--add-only`
+  跑完后清单变成 21,432 文件 / 249 名语音干员（原 21,390 / 248），字节数也变了；那是另一次数据更新（会影响卡面与
+  语音树），不属于素材补齐，已 `git checkout` 还原为上游清单。
+- 因此 `test/assets.test.js` 的「every manifest path exists on disk」仍因这 24 个镜像缺口失败（下载前是 2,949 个），
+  `test/ui/localArt.test.js` 仍要求本机清单有 `guide` 组（本机客户端没有 guide bundle，该组无法由提取器产生）。

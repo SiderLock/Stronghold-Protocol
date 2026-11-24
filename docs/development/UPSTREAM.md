@@ -359,6 +359,6 @@ tooling、Node 24 guards、ubuntu / windows 各 4 个 shard）与 `Local extract
 本次合并有两处真实遗漏，已在本机全量后修复并随 `2559b0a3` 推送：`test/wire-codec.test.js` 的 v1 JSON 回退清单补
 `g.peek` / `m.peek`（上游新增的速查通道）；本分支安装版时装提取器改为可导入的 `tools/local-extract/local_skins.py`，
 同名测试恢复。浏览器套件的四个开关（`SP_E2E` / `SP_REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）仍未启用。规程的 3D 场景 /
-特效 / 开场已于 2026-11-24 用本机客户端提取器补齐（[DEV-20261124-02](records/2026-11-24-02-regulation-local-extract.md)）；
-34 名干员语音与 19 张指南页仍待 `npm run setup` 下载（I006）。
+特效 / 开场已于 2026-11-24 用本机客户端提取器补齐，语音 / 干员图 / Spine / 指南页已用 `fetch-assets --add-only` 下载
+（清单缺失引用 2,949 → 24，均为镜像缺口），见 [DEV-20261124-02](records/2026-11-24-02-regulation-local-extract.md)（I006）。
 
