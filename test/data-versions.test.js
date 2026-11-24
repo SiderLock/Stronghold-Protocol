@@ -434,8 +434,9 @@ test('HTTP: nothing set enables every version, serves their data, and forks no v
     assert.equal(srv.versionHosts.stats().workers, 0, 'the pool exists; no child until the first match of a version');
     assert.equal(srv.versionHosts.stats().matches, 0);
     const health = await (await get('/healthz')).json();
+    // loaded: no other version's data is in memory before a room, a manifest or a match asks for it
     assert.deepEqual(health.versions, {
-      enabled: VERSIONS.map((v) => v.id), default: LOBBY_DEFAULT_VERSION,
+      enabled: VERSIONS.map((v) => v.id), default: LOBBY_DEFAULT_VERSION, loaded: 0,
       hosts: { workers: 0, matches: 0, transport: 'process' },
     });
     assert.equal((await get('/data/chess.json')).status, 200);
@@ -464,7 +465,9 @@ test('HTTP (M1, DESIGN §35.23): an enabled version\'s data is served (immutable
       const cs = srv.versions.csOf(id);
       const ir = await get(`/cs/${cs.slice(0, 16)}/index.json`);
       assert.equal(ir.status, 200);
-      assert.equal(ir.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+      // i18n is not part of cs: the index must revalidate (no-cache + ETag); data/bounds stay immutable
+      assert.equal(ir.headers.get('cache-control'), 'no-cache');
+      assert.ok(ir.headers.get('etag'), 'version index carries an ETag');
       const index = await ir.json();
       assert.equal(index.cs, cs);
       assert.equal(index.version, id);
@@ -472,6 +475,7 @@ test('HTTP (M1, DESIGN §35.23): an enabled version\'s data is served (immutable
       for (const d of Object.values(index.data)) assert.ok(d.url.startsWith(`/data/${v.dir}`), d.url);
       const br = await get(index.bounds.official.url);
       assert.equal(br.status, 200);
+      assert.match(br.headers.get('cache-control') || '', /immutable/);
       assert.equal(Buffer.from(await br.arrayBuffer()).length, index.bounds.official.bytes);
       for (const d of Object.values(index.data).slice(0, 3)) {
         const dr = await get(d.url);
@@ -494,10 +498,11 @@ test('HTTP (M1, DESIGN §35.23): an enabled version\'s data is served (immutable
     assert.ok(Object.values(vanilla.data).every((d) => /^\/data\/[a-z]+\.json\?v=[0-9a-f]{8}$/.test(d.url)));
     assert.deepEqual(vanilla, srv.content.index);
     assert.equal((await get(`/cs/${srv.versions.csOf('act1autochess').slice(0, 16)}/data/chess.json`)).status, 404);
-    // /healthz names them and their match hosts
+    // /healthz names them, how many have their data loaded (the two whose /cs/ manifest was read: its bounds read the data)
+    // and their match hosts
     const health = await (await get('/healthz')).json();
     assert.deepEqual(health.versions, { enabled: ['act2autochess', 'act2autochess@V2_1', 'act1autochess'], default: 'act2autochess',
-      hosts: { workers: 0, matches: 0, transport: 'process' } });
+      loaded: 2, hosts: { workers: 0, matches: 0, transport: 'process' } });
   } finally {
     await srv.close();
   }
@@ -623,14 +628,22 @@ test('pools: resolving by the normal item\'s effectId and the operator\'s charId
   assert.deepEqual(equip.filter((i) => i.shopExcluded).map((i) => i.effectId).sort(), ['eff_acarm042', 'eff_acarm043', 'eff_acarm044', 'eff_acarm045', 'eff_acarm072']);
 });
 
-test('pools: 歌蕾蒂娅\'s pool_chess_glady holds the three operators her garrison_39 names in each version (第一期: 安哲拉, not 深巡)', () => {
-  const want = { '': '斯卡蒂 幽灵鲨 深巡', 'versions/act2autochess-v2_1': '斯卡蒂 幽灵鲨 深巡', 'versions/act1autochess': '斯卡蒂 幽灵鲨 安哲拉', 'versions/act1autochess-v1_1': '斯卡蒂 幽灵鲨 安哲拉' };
-  for (const [dir, names] of Object.entries(want)) {
+test('pools: pool_chess_glady holds the operators that version\'s 歌蕾蒂娅 text names', () => {
+  // 下半 garrison_39 names three (深巡). 第一期 garrison_39 names 安哲拉 instead of 深巡.
+  // 规程 garrison_61 names all four: 幽灵鲨、安哲拉、深巡或斯卡蒂.
+  const want = {
+    '': { names: '斯卡蒂 幽灵鲨 深巡', g: ['garrison_39_a', 'garrison_39_b'] },
+    'versions/act2autochess-v2_1': { names: '斯卡蒂 幽灵鲨 深巡', g: ['garrison_39_a', 'garrison_39_b'] },
+    'versions/act1autochess': { names: '斯卡蒂 幽灵鲨 安哲拉', g: ['garrison_39_a', 'garrison_39_b'] },
+    'versions/act1autochess-v1_1': { names: '斯卡蒂 幽灵鲨 安哲拉', g: ['garrison_39_a', 'garrison_39_b'] },
+    'versions/act3autochess-v3_1': { names: '斯卡蒂 幽灵鲨 深巡 安哲拉', g: ['garrison_61_a', 'garrison_61_b'] },
+  };
+  for (const [dir, spec] of Object.entries(want)) {
     const d = join(ROOT, 'data', dir);
     const chess = readJson(d, 'chess');
     const got = readJson(d, 'choices').pools.pool_chess_glady.items.map((id) => chess[id]?.name);
-    assert.deepEqual(got, names.split(' '), dir || 'data/');
-    for (const g of ['garrison_39_a', 'garrison_39_b']) {
+    assert.deepEqual(got, spec.names.split(' '), dir || 'data/');
+    for (const g of spec.g) {
       const desc = readJson(d, 'garrisons')[g].desc;
       for (const n of got) assert.ok(desc.includes(n), `${dir || 'data/'} ${g} names ${n}: ${desc}`);
     }

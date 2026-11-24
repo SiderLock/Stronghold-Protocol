@@ -90,14 +90,13 @@ import { useGameData, GIcon } from '../ui/gameComponents.js';
 import { useFieldView } from '../ui/fieldHost.js';
 import { TopBar, liveLp, ownLeaks, uniteRemaining, tempInfo, tempReadyReason } from '../ui/hud.js';
 import { BondStrip, BondPopup } from '../ui/bondStrip.js';
-import { TeamPanel } from '../ui/teamPanel.js';
+import { TeamPanel, flyOpsFor, flyOpChessId, mergeFlyOps, bondPopupNav } from '../ui/teamPanel.js';
 import { ShopBar } from '../ui/shopBar.js';
 import { regLook } from '../ui/regHud.js';
 import { selectedBondTimers } from '../ui/bondTimers.js';
 import { DetailPanel, resolveDetail } from '../ui/detailPanel.js';
-// 皮肤语音 (docs/SKINS.md): the settlement line follows the outfit this seat wears. ui/skins.js is on the boot path
-// already (main.js → screens/loadout.js) and reads only store.js/data.js, so a screen may reach it without the asset store.
-import { skinFor } from '../ui/skins.js';
+// 皮肤语音 (docs/SKINS.md): the settlement line follows the outfit this seat wears — ui/skins.js's ownerSkin, read by
+// the same screen (main.js → screens/loadout.js loads it; it reads only store.js/data.js, never the asset store).
 import { RewardOverlay } from '../ui/rewardOverlay.js';
 import { FinalAssaultPlate, HiddenCorePlate, EndPlate, preloadBossPlateArt, bossPlateArtReady, finalPlateRows, endPlateOf } from '../ui/bossPlates.js';
 import { DownedPlate, downedDue, preloadDownedArt, downedArtReady } from '../ui/downedPlate.js';
@@ -123,22 +122,22 @@ import { RegRoundResult, RegHelpBattle, RegYourTurn, packBanners } from '../ui/p
 import { openGuide } from '../ui/guide.js';
 import { actions, onRefreshBusy } from '../ui/gameActions.js';
 import { isHealingRange, rangeStyle } from '../ui/rangeStyle.js';
-import { FacingWheel, holdPiece, setPieceDir, syncPieceDirs, showRange, useTileScreen } from '../ui/facingWheel.js';
+import { FacingWheel, RangeStripes, holdPiece, setPieceDir, syncPieceDirs, showRange, useTileScreen } from '../ui/facingWheel.js';
 import { Underframe, underframeRect, TempRowNotice } from '../ui/underframe.js';
 import { StandInTags } from './game/standInTags.js';
-import { needsFacing, facingIntent, previewGrid, previewRecord, pieceDir, underframeActions, retreatSlot, itemDestroyable } from '../ui/facing.js';
+import { needsFacing, facingIntent, previewGrid, previewRecord, pieceDir, underframeActions, retreatSlot, itemDestroyable, rangeTiles } from '../ui/facing.js';
 import { EquipReplaceDialog, replaceRequest, replaceIntent } from '../ui/equipReplace.js';
 import { pauseAvailable, isPaused, frozenNow } from '../ui/matchStatus.js';
 import { pieceTile } from '../render/drag.js';
 import { FOLD_CAMERA_MS } from '../render/app/tune.js';
 import {
-  phaseMode, phaseBanner, isCombatPhase, showDeadPill, isBossPhase, placementContext, canPlace, boardTargets, dropIntent,
+  phaseMode, phaseBanner, isCombatPhase, showDeadPill, isBossPhase, bondLayersFrozen, placementContext, canPlace, boardTargets, dropIntent,
   battleOverSfx, uniteResultBox, battleResultBox, ownRoundLoss,
   snapHud, activeBubbles, shortcutFor, shortcutBlocked, prepShortcutsSuspended, closesOnFieldPress, phaseTotalSeconds, homeFieldId, ownFieldId, normalizeSp, normalizePersonalChoice, sortedPlayers,
   terrainInfo, deviceInfo, deviceTipAt, noteDeviceUnits, deviceUnitsForEntry,
   countdownState, shopBlockReason, stageOverrides, effectiveStage, watchTarget, dropFailureReason,
   previewEnemyKey, prepCamera, prepCameraFor, deployFoldsShop, deployZoomStep, deployZoomRemember, prepDeployCamera, deployFieldOf, fieldTile, panelSide, panelSlots, bondPopupPlace, unitLoadout, deployedRecord,
-  mergeTarget, mergeProgress, sortBonds, modeOffBonds, readyFundsPrompt, readyCommandPrompt, readyPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownStandIn, roundStartReplay, heldDraftPub,
+  mergeTarget, mergeProgress, modeOffBonds, readyFundsPrompt, readyCommandPrompt, readyPrompt, readyShopFold, ownerBandId, ownDiyRecord, ownStandIn, roundStartReplay, heldDraftPub,
 } from '../ui/gameLogic.js';
 import { toast } from '../ui/toasts.js';
 import { LoadoutButton } from './loadout.js';
@@ -154,7 +153,8 @@ import '../ui/pluginFrame.js';
 import { isClientCombat, observeTarget, teammateProgress, cameraLayers, layerCamera, loneHalf, sidesOf, resumedWatch, followedScout } from '../battle/observe.js';
 import { screenStrip, playerBonds, playerLayer, detailBondOwner, toggleBond, popupView } from '../ui/watchBonds.js';
 import { data, getMode } from '../data.js';
-import { audio, resultSpeaker, resultVoiceSlot } from '../audio.js';
+import { audio, resultSpeakerOf, resultVoiceSlot } from '../audio.js';
+import { ownerSkin } from '../ui/skins.js';
 import { useDocClass, FullscreenButton, reducedMotion } from '../ui/device.js';
 import { TurnPopup, preloadTurnPopupArt, turnPopupArtReady, TURN_CUE_WAIT_MS, TURN_CUE_PLATE_WAIT_MS } from '../ui/turnPopup.js';
 import { spTurnCueKey } from '../ui/gameLogic/phases.js';
@@ -272,6 +272,8 @@ function MatchScreen() {
   const pub = useStore((s) => s.match.public);
   const priv = useStore((s) => s.match.private);
   const field = useStore((s) => s.match.field);
+  // 「同盟盟约速查」的干员名单：战场不在屏上的队友从 g.peek / m.peek 取
+  const peek = useStore((s) => s.match.peek);
   const myId = useStore((s) => s.me.playerId);
   const conn = useStore((s) => s.connection, shallowEqual);
   const emergency = useStore(emergencyActive);
@@ -418,7 +420,7 @@ function MatchScreen() {
   const hasOffers = !!pub?.offers?.length;
   const editable = !emergency && !offerBlocksPrep(pub?.offers) && phase === PHASE.PREP && !!priv && alive && !priv.ready && !watchingOther && !hasPersonalChoice;
   const showShop = !!priv && alive && (phase === PHASE.PREP || phase === PHASE.SP_DRAFT || phase === PHASE.ROUND_START) && !watchingOther;
-  const layersDisabled = phase === PHASE.UNITE || isBossPhase(phase);
+  const layersDisabled = bondLayersFrozen(phase, data.get('config'));
   const sp = phase === PHASE.SP_DRAFT ? normalizeSp(pub?.sp, players, myId, pub?.poolGroups) : null;
   const total = sp?.groups.length ? sp.turnSeconds : phaseTotalSeconds(pub, gd.config, myId);
   const clockPub = sp?.groups.length ? { ...pub, deadline: sp.ownGroupId != null && !sp.untimed && !sp.done ? sp.turnDeadline : 0 } : pub;
@@ -826,19 +828,19 @@ function MatchScreen() {
         // teammate used to make THEIR operator say the viewer's line (review on #73). unitsEnd names chess ids: the
         // record the own piece shows gives the operator whose voice bank speaks — a 补位 piece's stand-in (its own
         // voice, like its 选中 line) and a filled 自选 slot's operator (ownShown), else the chess record's charId
-        const charId = resultSpeaker(mine, Math.random, (id) => ownShown(id)?.assets?.voice ?? ownShown(id)?.charId ?? null);
-        if (!charId) return;
-        // 皮肤语音 (docs/SKINS.md): this battle is the viewer's own half, so the speaker's outfit is the LOCAL picker's
-        // choice for that operator (what `room.skins` sends). A voice-bank alias (`assets.voice`, e.g. an ILLUST outfit
-        // borrowing another operator's bank) has no selection of its own — it resolves to null and keeps its own lines.
-        const resultSkin = skinFor(charId) || null;
+        const who = resultSpeakerOf(mine, Math.random, (id) => ownShown(id)?.assets?.voice ?? ownShown(id)?.charId ?? null);
+        if (!who) return;
+        const charId = who.charId;
+        // …in the outfit this seat's piece wears (#733): this seat's public choice for the operator that record shows
+        const body = ownShown(who.defId)?.charId || charId;
+        const skinKey = ownerSkin(body, { ownerId: pid, myId: pid, players: st.match?.public?.players || [] });
         audio.voice(charId, resultVoiceSlot({
           perfect: !!(mine?.perfect),
           leaked: Array.isArray(mine?.leaked) ? mine.leaked.length : 0,
           killed: mine?.killed ?? msg.result.killed,
           total: mine?.total ?? msg.result.total,
           hard: diff === 'HARD' || diff === 'ABYSS',
-        }), { skin: resultSkin });
+        }), skinKey ? { skinKey, skinCharId: body } : {});
       } catch { /* ignore */ }
     };
     const offs = [net.on('m.field', onFieldMeta), net.on('b.snap', onSnap), net.on('b.ev', onEv)];
@@ -1547,13 +1549,13 @@ function MatchScreen() {
     return () => host.removeEventListener('pointerdown', onDown, true);
   }, []);
 
-  // Close the bond popup on an outside press. Bond-strip discs, detail-card chips and the 本局信息
-  // chips open/toggle it themselves, so leave those interactions to openBond.
+  // Close the bond popup on an outside press. Bond-strip discs, detail-card chips, the 本局信息 chips and the
+  // 「同盟盟约速查」 flyout's discs open/toggle it themselves, so leave those interactions to openBond.
   useEffect(() => {
     const screen = hudElRef.current?.parentElement;
     if (!screen) return undefined;
     const onDown = (e) => {
-      if (!live.current.bondOpen || e.target?.closest?.('.bpop, .bpop-nav__arrow, .bslot, .dbond, .ibond')) return;
+      if (!live.current.bondOpen || e.target?.closest?.('.bpop, .bpop-nav__arrow, .bslot, .dbond, .ibond, .team__fly-bonds .bond')) return;
       setBondOpen(null);
     };
     screen.addEventListener('pointerdown', onDown, true);
@@ -1904,14 +1906,25 @@ function MatchScreen() {
   const popOps = cc && battleRunner && field?.local && bondOpen && bondOpen.ownerId !== myId ? battleRunner.ownerOps(bondOpen.ownerId, field.fieldId) : null;
   const bondPop = popupView({ open: bondOpen, pub, priv, myId, field, units: popOps, live: liveLayers, temporary: tempLayersSnapshot });
   const openBond = (id, ownerId, from) => { setBondOpen((b) => toggleBond(b, id, ownerId, from)); audio.sfx('click', { volume: 0.4 }); };
-  const popupBondIds = sortBonds(stripBonds, id => data.lookup('bonds', id)).map(b => b.bondId);
+  // ‹ › walk the list the popup was opened from: the strip's bonds, or (「同盟盟约速查」, `from: 'fly'`) that seat's flyout
+  // row — a teammate's bond never steps into the strip's list (PR #922 review; teamPanel.js bondPopupNav)
+  // the flyout's rows read the entries the popup reads (popupView above: playerBonds with the same live / temporary
+  // layers), so a flyout disc draws what the card it opens shows (§37.347 review); an eliminated seat draws no row
+  const flyBonds = Object.fromEntries((Array.isArray(pub?.players) ? pub.players : []).filter((p) => p && typeof p.playerId === 'string' && p.alive !== false)
+    .map((p) => [p.playerId, playerBonds({ pub, priv, myId, ownerId: p.playerId, live: liveLayers, temporary: tempLayersSnapshot })]));
+  const popupNav = bondPopupNav(bondOpen, { stripBonds, stripOwnerId: strip.ownerId, players: pub?.players, seatBonds: flyBonds });
+  const popupBondIds = popupNav.ids;
   const switchBond = direction => {
-    if (!bondOpen || bondOpen.from !== 'strip' || popupBondIds.length < 2) return;
+    if (!bondOpen || popupBondIds.length < 2) return;
     const index = popupBondIds.indexOf(bondOpen.id);
     const id = popupBondIds[(index + direction + popupBondIds.length) % popupBondIds.length];
-    openBond(id, strip.ownerId, 'strip');
+    openBond(id, popupNav.ownerId, bondOpen.from);
   };
-  const bondNavigation = bondOpen?.from === 'strip' && popupBondIds.length > 1;
+  const bondNavigation = popupBondIds.length > 1;
+  // 「同盟盟约速查」：按观众裁剪的干员名单。m.public 不携带 boardOps（PR #922 批注）：自己的座位取 m.private，
+  // 屏上战场里的队友取该场的 units，其余来自 peek（g.peek / m.peek）——状态通道，与 g.watch 的战场流分离、
+  // 常开、除自己外所有座位。屏上的战场优先（mergeFlyOps）。
+  const flyOps = mergeFlyOps(flyOpsFor({ myId, priv, field, players: pub?.players, cc, runner: battleRunner }), peek);
   const watchingNow = combat ? (watching || field?.fieldId || home) : watching;
   const shopOpen = showShop && !barCollapsed;
   const ufShown = !!(selEntry && editable && !facing && !drag && showPrep && ufGeo);
@@ -1947,7 +1960,7 @@ function MatchScreen() {
   // the bond popup: next to the card, never over the selected unit's underframe when a place is free (bondPopupPlace)
   const bpPlace = (() => {
     if (!bondOpen) return 'left';
-    if (bondOpen.from === 'strip') return 'center';
+    if (bondOpen.from === 'strip' || bondOpen.from === 'fly') return 'center';
     const { rem, vp } = panelFrame();
     return bondPopupPlace(ufShown ? underframeRect(ufGeo, rem) : null, vp, rem, resolved ? dSide : null);
   })();
@@ -1976,16 +1989,20 @@ function MatchScreen() {
     loadout: detailLoadout, getChess: gd.chess, backups: gd.backups,
   }) : null;
   const cardRangeKey = cardRange ? JSON.stringify(cardRange) : '';
+  // Match the renderer's range clipping; the SVG uses the same BOARD-space tileScreen projection as deployment.
+  const cardRangeTiles = cardRange ? rangeTiles(cardRange.grid, cardRange.row, cardRange.col, cardRange.dir)
+    .filter(([row]) => row !== GEO.HAND_ROW && row !== GEO.TEMP_ROW) : [];
   useEffect(() => {
     if (!view) return undefined;
     showRange(view, cardRange?.grid, cardRange?.row, cardRange?.col, cardRange?.dir, rangeStyle(SEL_RANGE, cardRange?.healing));
     return () => showRange(view, null, 0, 0, null, SEL_RANGE);
   }, [view, cardRangeKey, showPrep, field]);
   // the card's bond chips — and the popup a chip opens: a battle / scouted unit's OWNER's bonds (yours, or that
-  // teammate's — m.public + live layers), your own piece's yours, a popup member card the popup's player; shop / reward
-  // cards read the strip's (ui/watchBonds.js detailBondOwner)
+  // teammate's — m.public + live and temporary layers, the same as the popup: the chip names the 规程 stage, which can
+  // count layers, §37.341), your own piece's yours, a popup member card the popup's player; shop / reward cards read the
+  // strip's (ui/watchBonds.js detailBondOwner)
   const detailOwner = detailBondOwner(detailTarget, { pub, myId, stripOwnerId: strip.ownerId });
-  const detailBonds = detailOwner === strip.ownerId ? stripBonds : playerBonds({ pub, priv, myId, ownerId: detailOwner, live: liveLayers });
+  const detailBonds = detailOwner === strip.ownerId ? stripBonds : playerBonds({ pub, priv, myId, ownerId: detailOwner, live: liveLayers, temporary: tempLayersSnapshot });
   // bonds this mode never activates (标准: 10 of 23, 奥术 among them) — shown 本局禁用 on cards, chips and the popup.
   // A greyed regulation core uses another sentence (its operators cannot appear); covenant add-ons keep `off`.
   const offBonds = modeOffBonds(getMode(pub?.modeId));
@@ -2033,6 +2050,12 @@ function MatchScreen() {
         onWatch=${watchPlayer} cap=${gd.config?.lpCapPerRound ?? 10} uniteLocal=${uniteLocal}
         spMarks=${sp ? spMarks(sp, { solo }) : null}
         self=${Number.isFinite(priv?.lp) ? { lp: priv.lp, pending: liveLpNow.pending, unite: liveLpNow.unite, left: liveLpNow.left } : null}
+        flyOps=${flyOps} seatBonds=${flyBonds} onBond=${(id, ownerId) => openBond(id, ownerId, 'fly')} layersDisabled=${layersDisabled}
+        onFlyToggle=${spectator ? null : actions.peek} online=${conn.status === 'online'}
+        onOp=${(u, p) => {
+          const id = flyOpChessId(u);
+          if (id) setDetail({ kind: 'chess', id, foreign: p?.playerId !== myId, owner: p?.playerId ?? null, tap: ++cardTap.current });
+        }}
         observe=${cc ? { canObserve: (p) => observeTarget(p, pub, myId, { observing: watchingOther, ownDone: localDone, liveWatch: playerSettings.watchDuringBattle === true }), observing: watchingOther, onBack: backHome } : null}
         badges=${teamBadges} />
 
@@ -2164,6 +2187,7 @@ function MatchScreen() {
       : bossPlate?.kind === 'end' ? html`<${EndPlate} key=${bossPlate.key} kind=${bossPlate.end} bossId=${pub?.bossId} hiddenBossId=${pub?.hiddenBossId}
         onDone=${() => setBossPlate(null)} />` : null}
 
+    ${cardRange && view ? html`<${RangeStripes} tiles=${cardRangeTiles} view=${view} healing=${cardRange.healing} underOnly=${true} />` : null}
     ${facing && view ? html`<${FacingWheel} key=${`${facing.uid}:${facing.row},${facing.col}`} view=${view} row=${facing.row} col=${facing.col}
       grid=${facing.grid} healing=${facing.healing} name=${facing.name} onPreview=${previewFacing} onCommit=${commitFacing} onCancel=${cancelFacing} />` : null}
 

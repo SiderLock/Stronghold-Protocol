@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/local-extract/skin-backs.mjs — fill each outfit's Back model from the public web resources.
 //
-// Legacy fallback for an installation missing a local Back. Prefer re-extraction with skins.py --models-only:
+// Legacy fallback for an installation missing a local Back. Prefer re-extraction with local-skins.py --models-only:
 // the client's battle prefab DOES bind both Front and Back, often to TextAssets with identical names. The old
 // name-based scan missed that pair and could export Back as Front (2026-10-21, docs/SKINS.md).
 // The web resources the base operators' Front/Back pairs come from (fexli/ArknightsResource, see

@@ -37,10 +37,11 @@
 import { progressLabel } from '../itemProgress.js';
 import { itemText, garrisonText } from './showTags.js';
 import { BondTimers } from './bondTimers.js';
+import { bondDisplay } from './bondStrip.js';
 import { useEffect, useMemo } from '../../vendor/hooks.module.js';
 import { html, Icon, TierChip, MicroLabel, Button, confirmDialog, useTicker } from './components.js';
 import { OperatorImage, Img, RichText, UnitThumb, BondGlyph, GIcon, diyToken, TokenAvatar } from './gameComponents.js';
-import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondTier, briefingBondTip, pieceBondIds, grantedBonds, morphPairings, ownStandIn, standInOf, standInLoadout, standInLabel, standInTip, standInForText, ownDiyRecord, ownDiyPick, diyRecordFor, pickGetter, unitPick, unitCultivation } from './gameLogic.js';
+import { attackInterval, rangeGridBox, fmtNum, tileKey, chessLoadout, nextThreshold, bondCountCap, bondTier, bondPhased, briefingBondTip, pieceBondIds, grantedBonds, morphPairings, ownStandIn, standInOf, standInLoadout, standInLabel, standInTip, standInForText, ownDiyRecord, ownDiyPick, diyRecordFor, pickGetter, unitPick, unitCultivation } from './gameLogic.js';
 import { skillIconUrl, skillRecordIconUrl, profIconUrl, subProfIconUrl, itemIconUrl, enemyIconUrl, tokenAvatarUrl, factionIconUrl, uiUrl, moduleTypeIconUrl } from './assetUrls.js';
 import { abilityRows } from './abilityLines.js';
 import { data } from '../data.js';
@@ -51,6 +52,9 @@ import { moduleBadge, fullTraitText } from './loadoutModel.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
 import { morphSlotPolicy } from '../../../shared/plugins/rules.js';
 import { audio } from '../audio.js';
+import { store } from '../store.js';
+import { skinsStore, ownerSkin } from './skins.js';
+import { settingsStore } from './settingsStore.js';
 import { tokenVariantFor } from './gameLogic/loadout.js';
 import { useSettings } from './settings.js';
 import { usePrefabPack } from './prefab/view.js';
@@ -286,13 +290,19 @@ export function BondChips({ bondIds, bonds = [], onBond = null, off = null, gran
       const count = Number.isFinite(e?.count) ? e.count : 0;
       const tier = isOff ? 0 : Number.isFinite(e?.tier) ? e.tier : bondTier(count, th, rec?.maxCount ?? null);
       const active = !isOff && (e ? !!e.active : tier > 0);
+      // the 阶 the label names is the strip's numeral (bondStrip bondDisplay: 规程's official phase level, which can count
+      // layers, §37.341); the pips stay the member thresholds. 盟约: no numeral, so just 「已激活」 (§37.342)
+      const phased = bondPhased(data.get('config'));
+      const stage = active ? (e ? bondDisplay(id, e).stage : phased ? tier : 0) : 0;
+      // 在场 n/cap: the popup's denominator (gameLogic bondCountCap: the first threshold, §37.342); is-max still marks the
+      // top member threshold
       const next = nextThreshold(count, th);
-      const cap = next ?? th[th.length - 1] ?? null;
+      const cap = bondCountCap(th);
       const isoTag = iso.has(id) ? t('（变形同构体）') : '';
       // the count holds 调和's +1 (the server's bond entry says so, DESIGN §21.26)
       const harmonyTag = !isOff && Number.isInteger(e?.harmony) && e.harmony > 0 ? t('（含调和 +{harmony}）', { harmony: e.harmony }) : '';
       const label = isOff ? briefingBondTip(rec?.name || id, 'off')
-        : `${rec?.name || id}${isoTag}${cap != null ? t('：在场 {count}/{cap}', { count, cap }) : t('：在场 {count}', { count })}${harmonyTag}${active ? t('，已激活 {tier} 阶', { tier }) : t('，未激活')}`;
+        : `${rec?.name || id}${isoTag}${cap != null ? t('：在场 {count}/{cap}', { count, cap }) : t('：在场 {count}', { count })}${harmonyTag}${!active ? t('，未激活') : stage > 0 ? t('，已激活 {tier} 阶', { tier: stage }) : t('，已激活')}`;
       const body = isOff
         ? html`
         <${BondGlyph} bondId=${id} class="dbond__icon" />
@@ -876,6 +886,24 @@ export function selectVoiceKey(detail) {
 }
 
 /**
+ * The outfit the 选中干员 line of a resolved detail is said in (#733, DESIGN §37.330): the one its card draws —
+ * ChessDetail's body (a 补位 piece's stand-in, a 自选 record's pick, else the chess) under OperatorImage's rule
+ * (`ownerSkin`: the seat that owns the unit / piece — a teammate's unit its owner's public choice, or the skin it arrived
+ * with; a card of the own seat this seat's; the 显示其他玩家的皮肤 switch), never the viewer's choice for another seat.
+ * `{ skinKey, skinCharId }` for audio.voice, or {} for none.
+ * @param {any} detail resolveDetail's result
+ * @param {{ myId?: string|null, players?: any[], localSkins?: Record<string, string>, otherSkins?: boolean }} [view]
+ * @returns {{ skinKey?: string, skinCharId?: string }}
+ */
+export function selectVoiceOutfit(detail, { myId = null, players = [], localSkins = {}, otherSkins = true } = {}) {
+  if (detail?.type !== 'chess') return {};
+  const body = detail.standIn && detail.standIn.standInFor ? detail.standIn : detail.chess;
+  const charId = typeof body?.charId === 'string' && body.charId ? body.charId : null;
+  const skinKey = charId ? ownerSkin(charId, { ownerId: detail.ownerId, skin: detail.skin ?? null, myId, players: Array.isArray(players) ? players : [], localSkins, otherSkins }) : null;
+  return skinKey ? { skinKey, skinCharId: charId } : {};
+}
+
+/**
  * The panel.
  * @param {{ detail:any, editable:boolean, snapHp?:{hp:number,max:number}|null, onClose:Function, onSell:(piece:any)=>void, onDestroy:(piece:any)=>void,
  *   bonds?: any[], offBonds?: Set<string>|null, loadout?: any, onBond?: (bondId:string)=>void, side?: 'left'|'right', shopOpen?: boolean }} props
@@ -901,15 +929,12 @@ export function DetailPanel({ detail, editable, snapHp, onClose, onSell, onDestr
   // 0.2.0 补位: a chess fielded as its stand-in is spoken for by the stand-in (the operator on the field, whose model, name
   // and battle lines the card and audio.js show), never by the operator it replaces; a 自选 record is already the pick's
   const selectChar = voice && detail?.type === 'chess' ? detail.standIn?.assets?.voice || detail.standIn?.charId || detail.chess?.assets?.voice || detail.chess?.charId || null : null;
-  // P2 皮肤语音 (docs/SKINS.md): the outfit this seat wears, when the card knows it. `resolveDetail`'s `appearance`
-  // carries the skin of the seat the card belongs to — a battle / scouted unit's own (`UnitInfo.skin`), a teammate's
-  // member row's public choice; a shop / reward card or an own piece without a unit has none (null) and keeps the
-  // operator's own recordings. The skin is passed as its ID, not the record: `selectChar` below is the VOICE owner
-  // (a stand-in's / a DIY pick's bank), which may be a different operator than the one the skin is written under.
-  const selectSkin = detail?.type === 'chess' ? detail.skin || null : null;
   useEffect(() => {
-    if (selectKey && selectChar) audio.voice(selectChar, 'select', { skin: selectSkin });
-    // (the line belongs to the opening, so the effect follows the identifiers, not a later skin change)
+    if (!selectKey || !selectChar) return;
+    // in the outfit the card shows (#733): the unit's own seat, read when the line starts (selectVoiceOutfit)
+    const s = store.get();
+    audio.voice(selectChar, 'select', selectVoiceOutfit(detail, { myId: s?.me?.playerId ?? null, players: s?.match?.public?.players || [],
+      localSkins: skinsStore.get()?.skins || {}, otherSkins: settingsStore.get()?.otherSkins !== false }));
   }, [selectKey, selectChar]);
   if (!detail) return null;
   let liveNow = null;

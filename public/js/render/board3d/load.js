@@ -18,6 +18,7 @@ import { parseObj } from './obj.js';
 import { runtimeURL } from '../../runtime.js';
 import { trackAssetDemand } from '../../assetPriority.js';
 import { prepareSceneInWorker, resetSceneWorker } from './sceneWorkerClient.js';
+import { readSceneBuffer, sceneBinParts } from './sceneTransport.js';
 
 export const THREE_URL = '/vendor/three.module.js';
 
@@ -355,9 +356,19 @@ export function loadScenePack(assets, stageId, { areas = null } = {}) {
     if (!(await sceneListed(assets, stageId)) || typeof assets.image !== 'function') return null;
     const url = (g, n) => { const u = assets.localUrl(g, n); return typeof u === 'string' && u ? u : null; }; // as in loadBoardPack
     const group = sceneGroup(stageId);
-    const [doc, initialBuffer] = await Promise.all([fetchJson(url(group, 'scene')), fetchBuffer(url(group, 'bin'))]);
-    const buf = initialBuffer?.byteLength === 0 ? await retryEmptyBuffer(url(group, 'bin'), doc?.binBytes) : initialBuffer;
-    if (!isObj(doc) || doc.version !== SCENE_VERSION || !buf) return null;
+    const doc = await fetchJson(url(group, 'scene'));
+    if (!isObj(doc) || doc.version !== SCENE_VERSION) return null;
+    // A download manager can replace a successful binary fetch with an empty response; ask again with one explicit,
+    // complete range once the expected size is known (retryEmptyBuffer). Applies to the single bin and to each part.
+    const readPart = async (key, bytes) => {
+      const first = await fetchBuffer(url(group, key));
+      if (first === null) return null;
+      return first.byteLength === 0 ? retryEmptyBuffer(url(group, key), bytes) : first;
+    };
+    const partSizes = doc.binParts === undefined ? null : sceneBinParts(doc);
+    const buf = doc.binParts === undefined ? await readPart('bin', doc.binBytes)
+      : await readSceneBuffer(doc, (key) => readPart(key, partSizes?.[key === 'bin' ? 0 : Number(key.slice(3))]));
+    if (!buf) return null;
     let chunks = parseSceneChunks(doc, buf);
     if (!chunks || !chunks.length) return null;
     const geometryPromise = areas ? prepareSceneInWorker(doc, buf, areas) : Promise.resolve(null);

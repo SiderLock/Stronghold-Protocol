@@ -572,7 +572,9 @@ export const C2S = {
   // any room phase (the loadout locks at INFO_CHECK because it changes what a unit does; a skin changes only the model)
   'room.skins': { skins: isSkinSelection, randomMode: optional(v => v === 'match'), skinPool: optional(isSkinPool) },
   // 名片干员 (PR #643 split 6): the operator whose portrait fills the player's seat card in the waiting room — an
-  // operator charId ('' for none; the server keeps only a visible charId of the room's chess.json); cosmetic, any room phase
+  // operator charId ('' for none; the server keeps only one server/lobby.js cardAllowed takes: the cross-period roster,
+  // DESIGN §37.325, a card candidate of the room's content, or an enemy avatar key of the room's data — a seat card of
+  // the 20-seat room may wear one); cosmetic, any room phase
   'room.card': { charId: (v) => v === '' || isCharId(v) || (isId(v) && /^enemy_[A-Za-z0-9_]+$/.test(v)) },
   // operator ownership (干员持有, 0.2.0 补位): stored per session / seat; a match takes the list its seat had when it
   // started (an out-of-match setting — during a match it is stored for the next one: ROOM_STARTED)
@@ -649,6 +651,9 @@ export const C2S = {
   // playerId: the player tapped in the team panel (a 联防 / boss pair field shows two) — what an eliminated viewer or a
   // spectator seat follows from then on (Match.watchPref; community report of 2026-10-06, item 56)
   'g.watch': { fieldId: (v) => isStr(v, 32), playerId: isId, $optional: ['playerId'] },
+  // 同盟盟约速查浮窗（public/js/ui/teamPanel.js）：展开 / 收起。`true` 订阅当前回合与阶段，并用 m.peek 回
+  // 除自己外所有座位的名册——状态通道，独立于 g.watch 的战场流（不含战况，始终可用）
+  'g.peek': { open: isBool },
   'g.autoplay': { on: isBool },
   // solo pause (official PauseUp / ResumeUp, DESIGN §14): freezes the running battle (field clock, deadlines, the
   // browser's local runner) — solo matches only (co-op ⇒ WRONG_PHASE), only while a battle runs; m.public.paused
@@ -720,6 +725,9 @@ export const S2C = [
   'm.layer',
   // m.unitStats { seq, round, units: [unitStatsEntry] } — the answer to g.unitStats (the requester only)
   'm.unitStats',
+  // m.peek { seq, ops: { [playerId]: [{ id, golden? }] } } —— g.peek 的应答（只发给请求者）：除自己外所有座位的
+  // 干员名单，形状同 m.private boardOps。m.peek { seq, seat, ops } 替换单个座位。
+  'm.peek',
   // client-side combat (DESIGN §14): b.start { battleId, fieldId, kind, spec, authoritative, startAt, serverNow, elapsed,
   // speed, watch? } · b.pool { hp, max, teamLp, acked: { [fieldId]: cumulative boss damage counted } } ·
   // b.end { battleId, fieldId, reason }

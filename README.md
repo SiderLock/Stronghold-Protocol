@@ -274,7 +274,7 @@ npm start          # 启动服务器：http://localhost:3000
 | 大厅背景与音乐 | 大厅左上角的图片按钮：四种生成的大厅场景（夜巡 / 霜原 / 烬野 / 静默），或自己的图片 / 视频背景（可调暗度），以及大厅音乐；文件只保存在本机浏览器，不上传，队友看不到 |
 | 观战 | 自己的作战结束后（或休整期）点左侧队友头像 →「前往查看」；不参战的朋友可以在大厅点「同盟模拟」、输入同盟密钥后点「观战」（每个同盟最多 2 名观战者，本作新增） |
 | 统计（本机） | 标题画面右上角、等待室的「统计」，大厅左上角「成就统计」窗口里的「查看完整统计」：胜率、策略通过率、称号、战斗累计和对局记录（点一行回看结算页）；只存在本机浏览器里，可以导出 / 导入，没清完第一个回合就退出的对局不计入统计（[玩法指南 §13](docs/PLAYING.md#13-统计本机)） |
-| 名片干员 | 等待室里点自己席位卡上的「更换立绘」选一名干员，同盟里的博士都会看到它的立绘；「默认」按博士编号自动分配 |
+| 名片干员 | 等待室里点自己席位卡上的「更换立绘」选一名干员，同盟里的博士都会看到它的立绘；可以选任一官方时期收录的干员（只作名片展示，切换版本后保留），也可以选一名有立绘的敌人；「默认」按博士编号自动分配 |
 | 界面主题 | 「设置 → 界面主题」：选内置外观或已装的官方主题，「导入主题包」加载 zip、「导入文件夹」加载含 `theme.json` 的文件夹；只影响这台设备，不上传 |
 | 界面语言 | 标题画面的语言按钮，或「设置 → 语言」：中文 / English / 日本語 / 한국어 / 繁體中文 |
 
@@ -383,6 +383,7 @@ node tools/perfbench.mjs --cpu 1,4,6 --profile             # 真实战斗的帧�
 - 规则核对参考：[PRTS 明日方舟中文 Wiki](https://prts.wiki/)。
 - LZ4AK 解包：`tools/local-extract/aklz4.py` 的算法来自 [isHarryh/Ark-Unpacker](https://github.com/isHarryh/Ark-Unpacker)（BSD-3-Clause，经 MooncellWiki/UnityPy）；解析 Unity 资源使用 [UnityPy](https://github.com/K0lb3/UnityPy)（MIT）。
 - 库：[PixiJS](https://pixijs.com/)（MIT）、[pixi-spine](https://github.com/pixijs/spine)（MIT；其中包含的 Spine Runtime 另受 [Spine Runtimes License](https://esotericsoftware.com/spine-runtimes-license) 约束）、[three.js](https://threejs.org/)（MIT）、[Preact](https://preactjs.com/) + [htm](https://github.com/developit/htm)（MIT）、[ws](https://github.com/websockets/ws)（MIT）。
+- English text: Terra Archive ([terra-archive.net](https://terra-archive.net/)), unofficial translation（规程 / act3 版本游戏文本）
 
 感谢以上项目的作者与维护者，以及鹰角网络带来的这款游戏。
 
@@ -404,7 +405,7 @@ An **unofficial, non-commercial fan remake** of Arknights' seasonal auto-chess t
 
 - **Versions:** five official seasons ship side by side: 规程·序列Ⅰ (`act3autochess@V3_1`, the lobby default since 0.4.0, whose solo play uses the official 极速模拟 / 规程等级 1–20 levels), 第二期下半 (`act2autochess`), 第二期上半, 第一期下半 and 第一期上半. The lobby's 「版本」 button picks one; a room keeps its own version, and switching it takes a unanimous vote of the humans in it. Servers choose the enabled ones with `SP_VERSIONS` / `SP_VERSION_DEFAULT` — see the 官方版本 section of [docs/DEPLOY.md](docs/DEPLOY.md).
 - **Run:** download the full bundle `Stronghold-Protocol-v<version>.zip` (~800 MB, all the art inside, the Chinese, Japanese, English, Korean and own-language operator voices, the official battlefield scenes and the official battle effects included) from [Releases](../../releases/latest) — or the lite one, `…-lite.zip` (~25 MB), which downloads the art (~720 MB) on its first start; from 0.2.1 on, `…-update.zip` holds only the files changed since the earlier 0.2.x releases: stop the server, extract it over an existing 0.2.x folder and start again (the first start deletes the files the new version dropped and verifies the install) — install Node.js 22 or 24, then double-click `scripts\start-windows.bat` (Windows) or run `./scripts/start.sh` (macOS / Linux) and open <http://localhost:3000>. From source: `npm install && npm run setup && npm start` (setup downloads ~720 MB of art from public mirrors, the emotes and the how-to-play pages included; the official 3D board, some official HUD icons, two enemy models and 39 summon models are extracted from a local Arknights client — without one the game uses the 2D board and look-alike stand-ins (the summons show their avatars), and a server can copy `public/assets/local/` and `data/local-assets.json` from the full bundle of the same version).
-- **Languages:** Chinese (the default), English, 日本語, 한국어 and 繁體中文 — switch on the title screen or in Settings. Game texts come from the official clients; the Japanese, Korean and Traditional Chinese interface strings are machine translations (corrections welcome: [docs/I18N.md](docs/I18N.md)).
+- **Languages:** Chinese (the default), English, 日本語, 한국어 and 繁體中文 — switch on the title screen or in Settings. Game texts come from the official clients; the Japanese, Korean and Traditional Chinese interface strings are machine translations (corrections welcome: [docs/I18N.md](docs/I18N.md)). Act3 / 规程 English game texts: Terra Archive ([terra-archive.net](https://terra-archive.net/)), unofficial translation.
 - **Play with friends:** create a co-op room and share the 4-letter key or the `?room=KEY` link. On a LAN, use the address printed at start; otherwise use a virtual-LAN tool, a tunnel or a VPS — see [docs/DEPLOY.md](docs/DEPLOY.md).
 - **Interface themes:** 设置 → 界面主题 restyles your own screen only — the built-in look, the two official-themed packs that come with the full bundle, 「全能的」可露希尔 as a separate theme pack, or a third-party `theme.json` pack you import. Format: [docs/THEMES.md](docs/THEMES.md); tutorial: [docs/THEME-GUIDE.md](docs/THEME-GUIDE.md).
 - **Help:** a blocked LAN address, a stuck art download, missing extracted art, phone performance and version-data failures are answered in the Chinese [常见问题](#常见问题) section above.

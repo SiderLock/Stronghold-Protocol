@@ -8,6 +8,7 @@ import { unitStatsEntry } from '../../../shared/protocol.js';
 import { PHASE, ERR, EMOTES, EMOTE_COOLDOWN_MS, GEO } from '../../../shared/constants.js';
 import { deriveSeed } from '../../sim/rng.js';
 import { OK, fail } from './common.js';
+import { bossLayerGainsEnabled } from '../finalAssault.js';
 import { onHumanEmote } from '../botEmotes.js';
 
 export class MatchIntents {
@@ -51,6 +52,8 @@ export class MatchIntents {
       case 'g.emote': return this.emote(ps, msg.id);
       // playerId: the player tapped (a shared field names two) — the watch preference (item 56)
       case 'g.watch': return this.watch(ps, msg.fieldId, msg.playerId ?? null);
+      // 「同盟盟约速查」浮窗：订阅 / 解除其按观众裁剪的干员名单
+      case 'g.peek': return this.peek(ps, !!msg.open);
       case 'g.autoplay': return this.setAutoplay(ps, !!msg.on);
       case 'g.pause': return this.setPause(ps, !!msg.on);
       case 'g.uniteSkipVote': return this.voteSkipUnite(ps, msg);
@@ -135,12 +138,13 @@ export class MatchIntents {
     if (key && cached && cached.key === key) return cached.units;
     const units = [];
     // the flags of the battle it previews: a normal round gains IN_BATTLE layers from its start (a <战斗开始时> layer gain
-    // raises bond stats at t = 0 there too); the Final Assault / Hidden Core fight without (previewed as a normal field)
+    // raises bond stats at t = 0 there too). Boss / hidden follow config.finalAssault.layerGainsEnabled (规程 on).
+    // The preview is still built as a normal field; only the flag changes.
     const bossRound = this.round === this.gd.bossRound || this.round === this.gd.hiddenRound;
     const b = this.newBattle({
       seed: deriveSeed(this.seed, `preview:${this.round}:${ps.seat}`), kind: 'normal', modeId: this.modeId, round: this.round,
       stageId: this.stageId, rect: { ...GEO.NORMAL_RECT }, timeLimit: 60, players, spawns: [], routes: this.wave ? this.wave.routes : [],
-      sharedBoss: null, flags: { layerGainsEnabled: !bossRound, ...this.gd.dp }, fieldId: `n:${ps.playerId}`, recordEvents: false,
+      sharedBoss: null, flags: { layerGainsEnabled: !bossRound || bossLayerGainsEnabled(this.gd), ...this.gd.dp }, fieldId: `n:${ps.playerId}`, recordEvents: false,
     });
     try {
       if (typeof b.start === 'function') b.start();
