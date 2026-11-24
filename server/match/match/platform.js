@@ -214,6 +214,8 @@ export class MatchPlatform {
       else if (this.clientCombat) this._authorityLost(ps, 'disconnect');
       // a rehearsal this host was running falls back to the server (DESIGN §14; a no-op without tasks)
       this._rehearsalHostChanged();
+      // 速查订阅不跨连接存活（重连后由 g.peek 重新打开）
+      this._peekForget(playerId);
       this.markPublic();
     });
   }
@@ -268,6 +270,7 @@ export class MatchPlatform {
       ps.autoplay = false;
       this.refreshUniteSkipVote();
       this.watchers.delete(playerId);
+      this._peekForget(playerId);
       if (this.ended) return;
       this._resume();
       if (this.emergencyFrozen) this._emergencyLostAuthorities.add(playerId);

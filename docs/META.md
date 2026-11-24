@@ -59,14 +59,17 @@ LOBBY → INFO_CHECK (co-op 25 s; solo and single-human matches untimed; all hum
 → for r = 1..lastRound (+ hidden):
      ROUND_START (2 s)  income + pending coins, upgrade price −1 (r > 1, floor 0), temp NOT wiped (what overflowed after
                         the last prep's deadline — battle-result grants, a SETTLE merge's elite with no copy deployed,
-                        returned equipment — is shown and usable in this prep, `PlayerState.tempDue`; every queued reward
-                        offer — a promotion's pick, a special refresh, an item offer — is kept until picked),
+                        returned equipment — is shown and usable in this prep, `PlayerState.tempDue`; likewise every
+                        reward offer queued after the last prep's deadline — a promotion's pick, a special refresh, an
+                        item offer — is shown in this prep, `PlayerState.offerDue`, [ASSUMED]),
                         shop reroll (frozen slots kept in place, then unfrozen), the round's wave generated (preview),
                         onRoundStart dispatch
      [SP_DRAFT]         r ∈ modes[m].spRounds (机变)
      PREP               onPrepStart; co-op timer rounds[r].prepTime, solo / single human untimed; ends when every alive seat is ready
      (prep end)         onPrepEnd, the temp pieces due at this prep resolved (tempDue; what arrived after Ready or
-                        during onPrepEnd waits for the next prep), queued reward offers kept until picked, unfrozen shop cleared, funds lost
+                        during onPrepEnd waits for the next prep), the queued reward offers due at this prep lapse
+                        unpicked (offerDue, §37.339: the same due prep as temp; what arrived after Ready or during
+                        onPrepEnd waits for the next prep [ASSUMED]), unfrozen shop cleared, funds lost
                         (band_cannot keeps them), boss round: Σ activated layers recorded for the hidden-core check
      COMBAT             one Battle per alive player (FieldRunner, 2× game speed; limit = 2 × maxPlayTime game s, §3)
      UNITE              co-op, ≥ 1 leaker and ≥ 1 perfect player (§4)
@@ -152,7 +155,8 @@ The private snapshot's `command` contains `effectId`, `bandId`, type, cost, cool
 text, unlock parameters and exact valid targets. `g.command {effectId,target}` accepts `{}`, `{uid}`, `{slot}` or
 `{row,col}` according to the skill. The server checks phase, ownership, funds, stock, special recruit and target before
 payment. Random draws use `rngMeta`; intents participate in the existing test journal/replay. `[ASSUMED]` a queued
-recruit/reward offer is the special-recruit state. Marks apply to this round's normal battle, a boss / pair / hidden
+recruit/reward offer is the special-recruit state; it ends when the offer is picked or lapses at its prep's end
+(§37.339). Marks apply to this round's normal battle, a boss / pair / hidden
 field that includes that player's board, and a 联防 helper's half. A leaker's board is not on the unite field, so an
 untouched chest there is not at risk. Treasure marks (`enemy_9038_achest`) persist until a validated battle receipt
 says an enemy touched them. While one stands, its board tile refuses operators and the prep view shows the chest.
@@ -283,7 +287,7 @@ fields' `startAt` / `lastProgressAt` and the boss start by the paused time and r
 
 `drawDisabledBonds` retains the covenant result `{ drawn, staticOff, banned }`. With
 `config.version.rules.bondDraw === 'regulation'`, SINGLE also returns `choice: { groups: [ids, ids], picked: null }`;
-MULTI greys half the available cores immediately. `Match.bondChoice` is settled by `pickBondGroup` during INFO_CHECK.
+MULTI greys cores by difficulty from the version config (`bans.core`: 标准 0, 险境 / 绝境 / 终极 5; `server/match/pool.js`, DESIGN §37.128), and add-ons 2 below 险境, 5 from 险境 (§37.119). `Match.bondChoice` is settled by `pickBondGroup` during INFO_CHECK.
 `g.bondGroup { idx, setupRevision }` refuses stale revisions, non-integer/out-of-range indices, repeated choices,
 spectators, co-op, reroll votes and other phases. It responds with the ordinary intent acknowledgement.
 The choice rebuilds the provisional shared pool and every player's 自选 stock; no shop or chess acquisition runs
@@ -899,7 +903,8 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
 
 ## 3. Rules implemented (summary; details in each module header)
 
-* **Economy**: income `config.economy.income[r]` (= min(3+r, 12)); bounty coins / pending funds credited at the next
+* **Economy**: income `config.economy.income[r]` (= min(3+r, 12); 规程 min(3+r, 11) and its 极速模拟 min(5+r, 11), from
+  official recordings — a mode's `economy` merges over the season's); bounty coins / pending funds credited at the next
   round start; leftover funds lost at prep end except `leftoverFundsKeptByBands`. Chess price by tier (2/3/3/3/4/4),
   items by `price`, refresh 1 (free refreshes first), sell +1 (elite too; items cannot be sold, only destroyed).
 * **Shop**: `shopSlots[level]` chess slots + item slot(s), copy-weighted rolls over remaining pool copies of unbanned,
@@ -960,8 +965,18 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   the expandable temp queue; all returned equipment is retained); summons of
   consumed copies are removed; a reward offer of 3
   **different** free chess of tier min(level+1, 6) (copy-weighted from the shared pool, already-drawn ones excluded; a
-  short tier tops up from the tier below — user playtest #6 item 19; pick 1, expires at prep end; queued when several
-  merges or special refreshes happen — `shop.rewardOffer.queued` counts the ones behind the shown offer). The same rule holds for every way a merge completes — buy, reward pick, effect / band / choice grants
+  short tier tops up from the tier below — user playtest #6 item 19; pick 1; queued when several
+  merges or special refreshes happen — `shop.rewardOffer.queued` counts the ones behind the shown offer). Every queued
+  offer — the promotion reward, a strategy's special refresh, an item / 调度中心 offer (`offerChess` / `offerItems`) —
+  lapses unpicked at the deadline of the first prep in which the player could act on it (`PlayerState.offerDue`, set
+  when queued like a temp piece's `tempDue`: this prep before Ready, else the next [ASSUMED]; un-readying makes it due
+  at this prep [ASSUMED]; `lapseOffers` in `endPrep`); nothing is picked for the player, a multi-pick offer (`picks`, 规程 促销券 golden)
+  goes as a whole, elimination clears every offer. Source: the official client tip 「晋级的特殊奖励无法被刷新、冻结，也不会
+  保留至下一回合」 (autoChessData.gameTipsList, every season) names the promotion reward; the other offers follow it
+  [ASSUMED] (the owner's decision of 2026-11-22, §37.339, reversing §32.14.32's keep-until-picked), as does the carry-over
+  of an offer that arrives when its player can no longer act in that prep (the tip does not cover it). AI seats take
+  their queued offers at the prep start, after each buy loop, right after equipping and once more before Ready
+  (`botPrep.js createPrepSteps`). The same rule holds for every way a merge completes — buy, reward pick, effect / band / choice grants
   (`acquireChess`), transformations — and in every phase: a merge completed after the prep (SETTLE / Final Assault
   effects such as 突变细胞) keeps its offer for the next prep; its elite takes the deployed copy's tile at once, or goes to
   the hand / temp (kept through the next prep, see Hand). In a boss round's prep the tile is read on the player's half of
@@ -989,7 +1004,11 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   where it was dropped) keeps each placed summon whose tile is still legal for the owner's final position and sends only
   the others back onto their stack (PR #969's official recording of the new client, accepted for all five versions by the
   maintainer on 2026-11-18; the PRTS help line "移动干员时，其所属召唤物全部退场并重置至手牌区" describes the older client;
-  `PlayerState._liftOutOfRange` after the move). A stack that overflowed into temp and was removed at a prep deadline comes back at the
+  `PlayerState._liftOutOfRange` after the move). A summon left on a tile it cannot stand on is returned the same way
+  (GitHub #984: 幻影 `position: MELEE` swapped onto the ranged tile its owner left). `_legal` is `canPlace` plus the range
+  rules, so a ranged-only tile, water and a blocked tile are covered. The swap stays allowed; the client does not predict
+  the return. An in-place re-orientation does not re-check tile class (`_roomForOutOfRange`): facing does not move the
+  summon. A stack that overflowed into temp and was removed at a prep deadline comes back at the
   next round start (§手牌区 "干员所属召唤物会于下一回合返还": `PlayerState.startRound` tops every board owner's summons up
   to the deploy limit, `grantTokensFor`). A summon whose text reads "只能部署在召唤者攻击范围内" (tokens.json `ownerRange`:
   the tacticians' 援军, 伺夜 狼群 / 缪尔赛思 流形 — choosing the tactical point; player report #9 after 0.1.0) only goes on
@@ -1001,7 +1020,9 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
   place (or promoted) a summon its new range leaves out goes back onto its stack with a toast (`_liftOutOfRange` in
   `recompute`) — one still inside stays [ASSUMED]. A re-orientation that would leave such a summon with no stack and no
   free hand / temp slot is refused (HAND_FULL, like withdrawing a summon into a full hand); in the other cases (a
-  promotion, an owner moved while hand and temp are full) the summon leaves the board and its stack waits in the expandable temp queue (`_returnToken`), so no out-of-range placement reaches the battle. The client lights and accepts
+  promotion, an owner moved while hand and temp are full) the summon leaves the board and its stack waits in the
+  expandable temp queue (`_returnToken`), so no illegal placement (out of range, or a tile the summon cannot stand on)
+  reaches the battle. The client lights and accepts
   the same tiles (`ui/gameLogic.js summonRange`), the bot plans inside them. Battle side: SIM.md §1.1 token pieces.
 * **Bonds**: bondsMeta.js (BOARD distinct, BOARD_AND_DECK, 绝技 elites, 调和 +1 — the state and the views mark it
   `harmony: 1`, DESIGN §21.26 —, 独行 downward, 助力 upper tiers, 变形同构体 grants). Σ activated layers for the hidden
@@ -1047,7 +1068,7 @@ Any `choice:` handler whose EffectRef reuses its own key must guard like this (o
 * **SETTLE**: LP −min(counted leaks, 10) (after 联防: survivors attributed to their source, same cap); IN_BATTLE layer
   gains applied, each bond up to `BOND_LAYER_CAP` (999, `layerGainRoom`, as `PlayerState.addLayers`); kill-bounty coins (paid by the Battle to the killer — a 联防 helper included; a death no operator caused pays the card's owner, in 联防 the helper whose half it fell on: `Battle._bountyPayee`) and perfect-bounty coins
   (own phase perfect) go to pending funds; bounty rounds decrement; LP ≤ 0 ⇒ eliminated (all copies back to the pool).
-* **Final Assault / Hidden Core**: finalAssault.js header. Boards are passed in board coordinates; the sim maps board
+* **Final Assault / Hidden Core**: finalAssault.js header. Permanent IN_BATTLE layer gains follow `config.finalAssault.layerGainsEnabled` (规程 true, 盟约 false) and are kept in `_finishFinal` the same way SETTLE keeps a normal battle's gains. 联防 stays off. Hidden-core eligibility still uses the layer sum frozen at the end of the boss round's prep. Boards are passed in board coordinates; the sim maps board
   rows 9–12 onto boss rows 2–5 (`BOSS_ROW_OFFSET` −7, matching every stage's boss rows) and mirrors the right side.
   Pairing uses a separate seeded shuffle before Final Assault prep (salt `boss-pairs`) and a new one before Hidden Core
   prep (salt `boss-pairs:15`, `finalAssault.js bossPairSalt`: pairs and sides drawn anew, GitHub #845, DESIGN §35.27);
@@ -1189,9 +1210,42 @@ overtime drain starts; `deadline` = the level's 120 s countdown), `unite { helpe
 `players[].status`: INFO_CHECK ready/deciding · drafts ready (picked) / deciding (their turn) / acting (waiting) ·
 PREP ready/acting · COMBAT/boss combat/done · UNITE helping/done · others done · `left` / `dead` override.
 
+`players[]` here never carries a roster: `boardOps` (below) is a `m.private` field, because one broadcast cannot follow
+`g.watch` (§1.4).
+
 `m.private` = DESIGN §8.3 exactly (sent per player whenever it changed). `nextEnemies` = the current round's wave
 (+ the player's bounty enemies, tag `bounty`; boss rounds: the player's boss field, tag `boss` — the leader's entry with its
 spawn tile `start`, where the boss-field prep shows it —, + its bounties).
+
+`m.private boardOps` = `ps.alive ? [{ id: charId, golden?: 1 }] : []` — the chess pieces on the player's own board
+(its field record char, so a 替补 / 自选 slot shows the operator it actually deploys), for the alliance-bond flyout
+(「同盟盟约速查」).
+Board only: the hand, the temp area, equipment, summons (tokens), coordinates and `standInFor` are not copied; `[]` once
+the seat is eliminated. It is per-viewer on purpose: `m.public players[]` has NO `boardOps` — that view is one
+broadcast for every seat and the spectator bench, so the field there would bypass `g.watch` (§1.4). A teammate's
+operators reach the flyout through `g.peek` / `m.peek` (below) while the flyout is open — the standing roster channel —
+and, where one of their fields is on screen (`m.field` prep scout, `b.start`), the client prefers that field's own
+board over the snapshot (ui/teamPanel.js `flyOpsFor` + `mergeFlyOps`, called from game.js; the screen fills the live
+seats, peek answers the rest — a runner entry takes its elite bit from its chess record, as the thumbnail does). That
+is the status channel: a read-only roster channel separate from the battlefield channel (`g.watch` → `m.field` /
+`b.*`), which carries no battle state and never writes `MatchWatch.watchers`. `MatchPeek._peekVisible` is its own
+policy and is always on: the official
+flyout shows every teammate's operators at all times, so it answers in prep, inside a battle window and across a
+boss round's groups alike — a roster is status, not battle state (it is static inside a battle window and was already
+visible in prep).
+
+`g.peek { open }` / `m.peek` — the flyout's operator table. `open: true` subscribes the asking seat for the current
+round and phase and answers `m.peek { seq, ops: { [pid]: [{ id, golden? }] } }` with the lean lists of every other
+seat (the own seat never: that one is `m.private boardOps`); a repeat `open: true` in the same round and phase within
+a second is a re-render and keeps the earlier answer, but a round / phase change always answers again with a full
+snapshot (the new subscription's `known` is empty; without it the flush after the intent would send one per-seat frame
+per seat instead). A later layout change (add / remove / elite only, never a move) pushes `m.peek { seq, seat, ops }`
+to every open subscriber that may see that seat. `open: false`, a disconnect, a leave, and a round / phase change drop
+the subscription (the client collapses the flyout on the same boundaries, and after a reconnect closes it again);
+`ops: []` clears a seat. Nothing here goes into `m.public`, nothing
+is written to disk, and a spectator seat is refused like every other intent but `g.watch` (the client does not send
+it from a spectator seat, nor a mount-time `open: false`). A bond opened from a flyout row (`from: 'fly'`) steps ‹ ›
+through that row's bonds only (ui/teamPanel.js `bondPopupNav`), never through the top strip's.
 
 Bond layers in the views (DESIGN §20.15): from the end of COMBAT (`_finishCombat`, every normal result in) until SETTLE,
 `m.private bonds` and `m.public players[].bonds` add the finished battle's IN_BATTLE gains (`PlayerState.pendingLayerGains`
@@ -1241,7 +1295,7 @@ round was over. The official 1 s `broadcastBeginDelay` is not modelled.
 
 ### Read-only strategy progress (#794)
 
-Strategy effect entries may carry `progress: {current,total}` and `roundProgress: {current,total}`. Chiave derives these from existing refresh and lazy round counters; views never advance or reset them. `battleInput.bandProgress` captures the preparation values for a watched battlefield.
+Strategy effect entries may carry `progress: {current,total}` and `roundProgress: {current,total}`. Chiave derives these from existing refresh and lazy round counters (in 规程, whose handler counts the cycle within the round, the per-round `round.refreshes` drives `progress`); views never advance or reset them. `battleInput.bandProgress` captures the preparation values for a watched battlefield.
 
 ## 6. Testing & tools
 
@@ -1327,7 +1381,8 @@ See [BOT_STRATEGIES](BOT_STRATEGIES.md) for composition and lifecycle details.
   does not count it), no knock-out hooks (`kill`, 'killed' deaths) a second time. A reached 阿戈尔 revive tier then
   revives that member on the same scan as the devour's knock-outs, spending one slot of this battle; 规程
   `bondeffect_egir_2` does not.
-* A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep; its elite goes where a prep
+* A merge completed after the prep (SETTLE effects) keeps its reward offer for the next prep (it lapses at that prep's
+  end, `offerDue`; the carry-over is [ASSUMED], §37.339); its elite goes where a prep
   merge's would — onto the tile of a consumed deployed copy (PRTS 卫戍协议/帮助 "若消耗已部署至作战区的干员，则发送至作战区
   对应位置"), else to the hand, overflowing into temp (temp pieces that arrive after the prep wait through the next prep).
 

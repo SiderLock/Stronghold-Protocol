@@ -83,7 +83,7 @@ test('installed voices survive manifest composition and pre-caching, and play th
   assert.ok(served.chars[CHAR].skins[SKIN].voiceJp.start.includes('~0123456789abcdef/'));
   const audio = { voice: { [CHAR]: { start: '/assets/base-cn.mp3' } },
     voiceJp: { [CHAR]: { start: '/assets/base-jp.mp3' } } };
-  assert.deepEqual(voiceLine(audio, CHAR, 'start', 'jp', () => 0, doc.chars[CHAR].skins[SKIN]), {
+  assert.deepEqual(voiceLine(audio, CHAR, 'start', 'jp', () => 0, true, doc.chars[CHAR].skins[SKIN]), {
     url, fallback: skin.voice.start,
   });
   await writeFile(path.join(f.root, 'data/assets.json'), '{}');

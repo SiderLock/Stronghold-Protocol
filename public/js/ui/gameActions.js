@@ -117,6 +117,8 @@ export const actions = {
   emote: (id) => act('g.emote', { id }, { quiet: true }),
   // `playerId`: the player tapped in the team panel (a shared field shows two) — what an eliminated viewer follows
   watch: (fieldId, playerId = null) => act('g.watch', typeof playerId === 'string' && playerId ? { fieldId, playerId } : { fieldId }, { sfx: 'tab' }),
+  // 「同盟盟约速查」浮窗：展开 / 收起 —— 服务端将下发队友的干员名单（m.peek）
+  peek: (open) => act('g.peek', { open: !!open }, { sfx: false, quiet: true }),
   autoplay: (on) => act('g.autoplay', { on }),
   uniteSkipVote: ({ voteId } = {}) => act('g.uniteSkipVote', voteId == null ? {} : { voteId }, { sfx: 'confirm' }),
   // solo battles only (ui/matchStatus.js pauseAvailable): m.public.paused follows

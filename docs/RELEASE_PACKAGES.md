@@ -1,9 +1,10 @@
 # 本 fork 的便携发布包
 
-[`v0.3.3-20p.1` 已正式发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.1)，采用下述完整包范围。[`v0.3.3-20p.2` 已发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.2)，只提供覆盖该版四平台便携包的增量更新，不重新发布完整包；适用范围和覆盖步骤见[本次更新说明](releases/v0.3.3-20p.2.md)。[`v0.3.4-20p.1` 是预发布](releases/v0.3.4-20p.1.md)（预同步上游 0.3.4 与 CN 2.7.91），不提供完整包或增量包，只发布源码与更新说明。这不改变旧版已经发布的附件。后续正式发布仍先由维护者验收候选文案、文件与校验结果。
+`v0.4.0-20p.1` 正在准备候选包，采用下述完整包范围（上游 0.4.0 与 `dev` 第 84 轮的合并）。候选尚未发布：维护者验收文案、文件与校验结果后才会上传附件。
 
-[`v0.3.4-20p.3` 已预发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.4-20p.3)，延续源码发布方式，包含特效分档、素材修复与渲染优化；
-变更和验证边界见 [本次发行说明](releases/v0.3.4-20p.3.md)。
+此前的 [`v0.3.3-20p.1` 已正式发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.1)；[`v0.3.3-20p.2`](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.2) 只提供覆盖该版四平台便携包的增量更新，不重新发布完整包，步骤见[该版更新说明](releases/v0.3.3-20p.2.md)。[`v0.3.4-20p.1`](releases/v0.3.4-20p.1.md) 至 [`v0.3.4-20p.3`](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.4-20p.3) 是预发布，只发布源码与更新说明，不提供完整包或增量包。这不改变旧版已经发布的附件。
+
+本次候选的变更与验证边界见 [v0.4.0-20p.1 发行说明](releases/v0.4.0-20p.1.md)：规程·序列Ⅰ、上游 0.4.0 同步与二十人适配。
 
 ## 平台与启动
 
@@ -20,10 +21,10 @@
 
 ## 素材来源与排除规则
 
-美术、音频、字体及配套素材索引仅直接取自作者上游 `v0.3.3` 的原始完整包：
+美术、音频、字体及配套素材索引仅直接取自作者上游 `v0.4.0` 的原始完整包：
 
-- 来源：[Stronghold-Protocol-v0.3.3.zip](https://github.com/sganggs/Stronghold-Protocol/releases/tag/v0.3.3)。
-- 完整归档 SHA-256：`1bfc651096ff4c44b76296717bd605220b5204714722832140a3d407153cd2be`。
+- 来源：[Stronghold-Protocol-v0.4.0.zip](https://github.com/sganggs/Stronghold-Protocol/releases/tag/v0.4.0)。
+- 完整归档 SHA-256：`aded7ef95d8494e377154a4e0db55cb317866518497ff3cab2d8b280e63a0b45`。
 - 只允许其中的 `public/assets/`、`public/fonts/` 普通文件，以及原包的 `data/assets.json`、`data/local-assets.json`、`data/local-fx.json`。逐文件记录来源与 SHA-256，不从维护者本机同名目录取替代文件；配套索引一起保留，避免引用仅存在于本机的素材。
 - 上游原包自带部分 `public/assets/local/` 特效、场景及模型，按本次「仅上游现有素材」的要求保留；目录名 `local` 本身不能判定文件属于我们。本分支自行提取或新增的同路径文件不得覆盖它们。
 - 排除本机 `data/local-skins.json` 及其他未经上游归档核验的素材索引、个人时装、特效 / 场景输出、私人记录、公告、运行配置、原始报告、缓存或其他服务文件。
@@ -38,7 +39,7 @@
 - `app/docs/LOCAL_ASSET_EXTRACTION.md`：Python 环境、皮肤图片 / 模型 / 特效提取与核验。
 - `app/docs/REFERENCES.md`：参考开发者、功能思路、冻结版本与采用范围。
 - `app/docs/RELEASE_PACKAGES.md`：本页。
-- `app/docs/releases/v0.3.3-20p.1.md`：简明更新内容及素材边界。
+- `app/docs/releases/v0.4.0-20p.1.md`：简明更新内容及素材边界。
 - `RELEASE.json`：候选版本、源码提交、目标平台和上游归档来源。
 - `PACKAGE-MANIFEST.json`：包内实际文件的大小与 SHA-256。
 

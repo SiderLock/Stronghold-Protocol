@@ -98,6 +98,17 @@
   box-shadow: 0 0 4px rgba(0, 0, 0, .6);
 }
 .bond__ban .icon { width: 80%; height: 80%; }
+/* Keep the 阵容不完整 corner out of the disc's grid, including its CSS-only fallback. */
+.bond__tag {
+  position: absolute; top: calc(var(--disc) * -.27); right: calc(var(--disc) * -.27);
+  width: calc(var(--disc) * .54); height: calc(var(--disc) * .54); pointer-events: none;
+  background: var(--tag) center / 100% 100% no-repeat;
+}
+.bond__tag.is-plain {
+  display: grid; place-items: start end; color: #e3e7e6;
+  background: linear-gradient(225deg, rgba(18, 22, 21, .94) 50%, transparent 50%);
+}
+.bond__tag.is-plain .icon { width: 46%; height: 46%; margin: 6% 6% 0 0; }
 .bond.is-frozen { opacity: .5; }
 .bond.is-clickable { cursor: var(--sp-cursor-pointer, pointer); }
 .bond--sm { --disc: .42rem; }
@@ -267,6 +278,14 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 
 .bpop__population { display: inline-flex; align-items: center; gap: .04rem; white-space: nowrap; }
 .bpop__population > .icon { width: .22rem; height: .22rem; color: var(--mint-400); }
+/* the count reads as one string, 「n/第一档」 with no gap in it. Active, as the official cards draw it in both families:
+   the members in the accent (the icon's and the check's colour), 「/第一档」 light grey, one size and one bold weight (盟约
+   维多利亚 7/3, BV1yyC9BPEXV 1600 s; 规程 不屈 3/2, PR #923's round-11 screenshot; §37.342): the 「/第一档」 takes the
+   members' size and weight (`.bpop__facts b`, and its floor in the match-info dialog below). The inactive red plate keeps
+   its bold white members and small 「/n」 (no official inactive card found). */
+.bpop__tally { white-space: nowrap; }
+.bpop__population:not(.is-inactive) .bpop__count { color: var(--mint-400); }
+.bpop__population:not(.is-inactive) .bpop__cap { color: var(--text-md); font-size: calc(.18 * var(--t)); font-weight: 700; }
 .bpop__check { display: inline-grid; place-items: center; border: 2px solid var(--mint-400); border-radius: .02rem; color: var(--mint-400); }
 .bpop__check .icon { width: .14rem; height: .14rem; }
 .bpop__stage { padding: .01rem .1rem; font-size: calc(.13 * var(--t)); background: rgba(255, 255, 255, .08); color: var(--text-lo); white-space: nowrap; }
@@ -303,7 +322,9 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 }
 .bpop__body > * { flex-shrink: 0; }
 
-/* Original bond board sprites supply both the disc and the segmented ring. */
+/* Original bond board sprites supply both the disc and its ring. Once active, the full lit ring around the lit centre at
+   every tier: the unbroken 1_1 in 规程, N_N split by the first threshold in a 盟约 period and on the bond popup's header
+   disc in both families (§37.342). Before activation, the segmented member progress (components.js bondFrame). */
 .bond.is-sprite .bond__disc::before {
   content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: var(--bond-frame-size); height: var(--bond-frame-size);
@@ -311,16 +332,18 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 }
 .bond.is-sprite .bond__core { position: relative; background: none; box-shadow: none; }
 .bond.is-sprite .bond__icon { filter: brightness(0) invert(.65); }
-.bond.is-sprite.is-full .bond__icon { filter: brightness(0) opacity(.85); }
+.bond.is-sprite.is-active:not(.is-disabled) .bond__icon { filter: brightness(0) opacity(.85); }
 .bond.is-sprite .bond__glyph { color: var(--text-lo); }
-.bond.is-sprite.is-full .bond__glyph { color: #06221a; }
+.bond.is-sprite.is-active:not(.is-disabled) .bond__glyph { color: #06221a; }
 
-/* Enlarge only the central plate; clip away the ring in this second sprite layer. */
+/* Enlarge only the central plate of the same sprite; clip away the ring in this second layer. The mint underneath keeps an
+   active centre lit while the sprite loads. */
 .bond.is-sprite .bond__core::before {
   content: ''; position: absolute; inset: 0; pointer-events: none;
   background: var(--bond-frame) center / calc(var(--bond-frame-size) * 1.08) calc(var(--bond-frame-size) * 1.08) no-repeat;
   clip-path: circle(46% at 50% 50%);
 }
+.bond.is-sprite.is-active:not(.is-disabled) .bond__core::before { background-color: var(--mint-400); }
 .bond.is-sprite .bond__core > .bond__icon, .bond.is-sprite .bond__core > .bond__glyph { position: relative; }
 
 /* Fielded members glow; elite portraits retain their existing gold border. */
@@ -335,7 +358,7 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 /* Missing or failed frame images retain a readable disc without requesting guessed URLs. */
 .bond.is-frame-missing .bond__core { background: #29332f; border: 2px solid #718079; }
 .bond.is-frame-missing.is-active .bond__core { border-color: var(--mint-400); }
-.bond.is-frame-missing.is-full .bond__core { background: var(--mint-400); }
+.bond.is-frame-missing.is-active:not(.is-disabled) .bond__core { background: var(--mint-400); }
 
 /* Match information opens the same card above its drawer / dialog, without replacing the parent (#915). */
 .match-bond-modal { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
@@ -345,7 +368,7 @@ button.bpop__harmony:hover { border-style: solid; color: #fff; }
 .match-bond-dialog .bpop__head { padding-right: var(--match-bond-close); }
 .match-bond-dialog .bpop__name { font-size: max(calc(.28 * var(--t)), 20px); }
 .match-bond-dialog .bpop__facts { flex-wrap: wrap; }
-.match-bond-dialog .bpop__facts b { font-size: max(calc(.18 * var(--t)), 14px); }
+.match-bond-dialog .bpop__facts b, .match-bond-dialog .bpop__population:not(.is-inactive) .bpop__cap { font-size: max(calc(.18 * var(--t)), 14px); }
 .match-bond-dialog .bpop__sec h4 { font-size: max(calc(.16 * var(--t)), 13px); }
 .match-bond-dialog .bpop__desc { font-size: max(calc(.16 * var(--t)), 12px); }
 .match-bond-dialog .bpop__facts, .match-bond-dialog .bpop__off { font-size: max(calc(.15 * var(--t)), 12px); }

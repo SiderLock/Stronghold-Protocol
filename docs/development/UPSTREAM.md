@@ -301,3 +301,64 @@ golden：默认版本（第二期下半）291 个场景全部匹配；规程 6 �
   [DEV-20261119-01](records/2026-11-19-01-upstream-v0.4.0.md)。
 - 规程素材（34 名干员语音、规程敌人模型 / 特效、3D 场景）尚未下载，运行 `npm run setup` 可补齐；界面与战斗在
   现有素材上回退到占位图，不影响服务端启动。
+
+## 14. dev 第 84 轮增量同步（2026-11-24）
+
+- 来源：作者 `upstream/dev` `c7cea5a9b1723736ca9563ac42e0770253ebeb6e`（2026-11-24 03:45:06 +08:00），
+  相对上次合并 `c2b4ca01`（2026-11-19）新增 166 个提交、394 个文件（+29,853 / −7,425）。本次开始 HEAD `659ccb1e`。
+  核对结果：最新发布仍是标签 `v0.4.0`（`b6d8b2ef`，2026-11-15），`upstream/master` = `55f528e9`（发布后一条 CI 提交），
+  **没有新版本**；`upstream/dev` 仍在推进（第 83 / 84 轮整合）。以上为 `git fetch` 后的本地引用与 GitHub API。
+- 内容：规程的数值与模板审计（「攻击力提升至」按防御前结算 §37.293、收入 min(3 + round, 11) §37.299、地图自带地形
+  特效、盐坨子炮原版模型与载客逻辑、规程英文本 via Terra Archive TL、远见层数叠加、奖励递延失效）、盟约圆盘外观、
+  设置分类与跨类搜索、匹配内队友速查浮窗（`g.peek` 数据通道）、跨时期名片干员名录（`data/card-roster.json`）、
+  时装独立语音、干员朝攻击目标转身、场景变长分段传输、素材包与 Docker 维护。
+- 方式：在 `dev` 上 `git merge --no-commit --no-ff upstream/dev`（合并基 `c2b4ca01`）；41 个文件冲突按
+  「上游行为为底、回接二十人扩展」逐项解决。取舍明细见 [DEV-20261124-01](records/2026-11-24-01-upstream-dev-round84.md)。
+- 保留：二十席位（`MAX_SEATS` 20、默认 8）、D010 固定分组卡池 / 装备、D028 私人自选库存（不乘联机或五人组倍数）、
+  D004 组内真人优先（房间开关继续只读，服务端只接受旧客户端的 `on`）、D012 并行组内轮选、D013 多轮联防、
+  D033 单独模拟 2 小时重连、D035 同组软避让、D046 开发功能发布门禁，以及本分支的聊天、换座 / 转让房主、
+  公告图片、素材缓存、表情栏、压缩与渲染优化。
+
+适配要点：
+
+- **名片干员**：`room.card` 同时接受跨时期名录（上游，先问、不加载版本数据）、房间内容与**敌人头像键**（本分支二十席位）；
+  选择器合并成「敌人」页签 + 「本房间版本 / 其他时期」分组 + 中文名搜索 + 名录载入 / 失败 / 重试提示。
+- **时装语音**：`voiceLine` 采用上游的参数顺序与 `outfit` 记录；保留本分支的同名中文回退顺序。本分支原先的
+  `skinRecordOf` 跨干员扫描移除——上游的 `_unitOutfit` / `selectVoiceOutfit` 会给出皮肤真正归属的干员。
+  三个本分支测试按新签名与契约更新。
+- **插件外观**：干员皮肤 = 上游的外观 + 五棵语音树 **加上** 本分支的召唤物替换映射 `tokens`；召唤物自己的
+  `tokens[id].skins` 不带语音与映射。`schemas/overlay.schema.json` 拆出 `operatorSkinRecord` / `skinRecord` 与合并后的校验一致。
+- **工具同名**：上游新增的 `tools/local-extract/skins.py` 是 `extract.py --only skins / library` 的插件导出模块；
+  本分支的同名安装版提取器改名为 `tools/local-extract/local-skins.py`，文档与发布清单同步。
+- **设置**：上游的分类与跨类搜索里保留本分支的「帧率上限」「自动调整渲染分辨率」与官方特效三档说明。
+- **场景载入**：本分支的空响应重试同时覆盖单 `scene.bin` 与上游的 `binParts` 分段传输。
+- **阵营 / 联防 / 分组**：团队栏同时保留上游的盟约速查浮窗（`g.peek`、行高测量、外部点击关闭）与本分支的固定分组
+  区块、队伍表情栏。
+
+golden：五个版本只出现 D028 归因的差异——默认 / 第一期下半 / 第一期上半 / 第二期上半各 2 个
+（`coop2-NORMAL-70-diy`、`coop2-NORMAL-5-coverage-diy`），规程的 14 个联机场景全部不同（规程每个席位在 INFO_CHECK
+都有选择自编）。把 `initDiyStock` 的 `gd.basePoolCopies` 临时换成 `gd.poolCopies` 后五版本与上游目标逐字段一致，
+恢复后按本分支重录这 22 个场景；重录后五个版本复核全部匹配（默认 291、规程 14 个 matches、其余三版各 16 个 matches）。
+
+推送与 CI：2026-11-24 已推送 `origin/dev`（合并 `e21b3bef`、记录补记 `6013053b`、修复 `2559b0a3`）。推送时 GitHub 拒绝
+启动工作流（422 `Actions has been disabled for this repository.`，而 `/actions/permissions` 为 `enabled: true`、工作流
+`state=active`，API 置启用返回 204 仍无效；与 2026-10-23 的 CI 修复任务同类平台状态）。仓库所有者在 Settings → Actions
+重新启用后，14:42 以 `workflow_dispatch` 在 `2559b0a3` 上触发：**CI 全部通过**——11 个 job（golden full corpus、
+tooling、Node 24 guards、ubuntu / windows 各 4 个 shard）与 `Local extractor Python compatibility` 均 success；
+其中 `windows-latest shard 2` 首次在 `test/asset-digest-cache.test.js` 的「文件在校验后替换不能被旧身份保存」
+（TOCTOU 竞态用例）上 flaky 失败一次，重跑该 job 通过，代码与测试自 `c2b4ca01` 起未改。
+
+本机完整 `npm test` 作为补充（12,997 项：12,795 通过、59 失败、142 跳过），失败全部归因本机环境：（a）`python3`
+是 Microsoft Store 占位符（退出码 9009）：`setup-game-dir`、`setup-plugin-fx`、`version-assets` 等；（b）Node 24.13
+的插件 / SES 用例原生退出 `0xC0000409`（CI 用 Node 22，这些 job 在 CI 全绿）：`plugins/dsl-data`、`contentBattle`、
+`csp`、`script-integration`、`official-tables`、`plugin-package`、`versions-service`、`setup-assets`；（c）规程素材未下载、
+`.cache/gamedata` 索引不全（I006）：`assets.test.js` 的磁盘清单、`feedback7-voices`、`assets-season-music`、
+`audio-pools-data`、`render/vfx-areas`、`enemy-skill-clips`、`ui/localArt`；（d）Windows 会话没有符号链接权限：
+`studio/size-limits`；（e）0.8 Mbps 压力用例未达标（历史既有）；其余整机并行时超时的计时用例单独复跑通过。
+
+本次合并有两处真实遗漏，已在本机全量后修复并随 `2559b0a3` 推送：`test/wire-codec.test.js` 的 v1 JSON 回退清单补
+`g.peek` / `m.peek`（上游新增的速查通道）；本分支安装版时装提取器改为可导入的 `tools/local-extract/local_skins.py`，
+同名测试恢复。浏览器套件的四个开关（`SP_E2E` / `SP_REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）仍未启用。规程的 3D 场景 /
+特效 / 开场已于 2026-11-24 用本机客户端提取器补齐，语音 / 干员图 / Spine / 指南页已用 `fetch-assets --add-only` 下载
+（清单缺失引用 2,949 → 24，均为镜像缺口），见 [DEV-20261124-02](records/2026-11-24-02-regulation-local-extract.md)（I006）。
+

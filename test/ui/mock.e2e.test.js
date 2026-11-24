@@ -549,7 +549,8 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
   test('教鞭: PREP cards confirm twice, use its timer, reset on a new ID; old replies cannot clear a new busy pick', async () => {
     const { page, problems } = await open('phase=PREP', { render: 'fallback' });
     await page.click('.gm__gear');
-    await page.waitForSelector('.modal .set-keys');
+    await page.click('[data-settings-tab="controls"]');
+    await page.waitForSelector('.modal .set-keys', { visible: true });
     await page.click('.set-key[data-action="ready"]');
     await page.waitForSelector('.set-key.is-waiting[data-action="ready"]');
     await page.keyboard.press('KeyW');
@@ -1109,15 +1110,23 @@ describe('in-match UI (mock harness, headless Chrome)', { skip: !ENABLED && 'set
     await page.close();
   });
 
-  test('watch: the other pair of the Final Assault is refused and the eye stays put', async () => {
+  // PR #971 (§37.268, 9390a808): the Final Assault's other pair can be watched. The mock fights on the server path (no
+  // pub.combatMode 'client'), where no own local battle runs, so the 「作战中查看队友」 switch (default off; it only gates a
+  // client-combat screen whose own battle still runs: battle/observe.js observeTarget, test/match/observe.test.js) does
+  // not apply and the tap opens the other pair's field. Until §37.268 it was refused (「无法查看另一组队友的战场」).
+  test('watch: the other pair of the Final Assault opens (PR #971) and no refusal is shown', async () => {
     const { page, problems } = await open('phase=FINAL_ASSAULT');
+    const target = await page.evaluate(() => {
+      const pub = globalThis.__MOCK__.store.get().match.public;
+      const p = pub.players.find((x) => x.name === 'Doctor·B');
+      return { fieldId: pub.fields.find((f) => f.players.includes(p.playerId))?.fieldId, mine: globalThis.__MOCK__.store.get().match.field?.fieldId };
+    });
+    assert.ok(target.fieldId && target.fieldId !== target.mine, `the other pair's field (${JSON.stringify(target)})`);
     const rows = await page.$$('.team__row');
-    await (await rows[2].$('.team__btn')).click(); // P3: the other pair (field b2)
-    await sleep(500);
-    const watched = await page.$$eval('.team__row.is-watched .team__name', (els) => els.map((e) => e.textContent));
-    assert.ok(!watched.includes('Doctor·B') && !watched.includes('灰烬'), `other pair not marked watched (${watched})`);
-    assert.match(await page.$eval('.toast', (el) => el.textContent), /另一组/);
-    assert.equal(await page.$eval('.vswitch__label', (el) => el.textContent), '全景');
+    await (await rows[2].$('.team__btn')).click(); // P3 (Doctor·B): the other pair
+    await page.waitForFunction((id) => globalThis.__MOCK__.store.get().match.field?.fieldId === id, { timeout: 5000 }, target.fieldId);
+    await page.waitForFunction(() => [...document.querySelectorAll('.team__row.is-watched .team__name')].some((e) => e.textContent === 'Doctor·B'), { timeout: 5000 });
+    assert.equal(await page.$$eval('.toast', (els) => els.some((el) => /另一组/.test(el.textContent))), false, 'no refusal');
     assert.deepEqual(problems, []);
     await page.close();
   });

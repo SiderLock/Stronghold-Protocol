@@ -1,5 +1,5 @@
 // server/http/assetViews.js — the installation's own outfits merged into the served asset manifest (docs/SKINS.md
-// 「本机提取的官方时装」). The extractor (tools/local-extract/skins.py) writes the official outfits' models and pictures
+// 「本机提取的官方时装」). The extractor (tools/local-extract/local_skins.py) writes the official outfits' models and pictures
 // under public/assets/local/skins/ and one metadata sidecar, data/local-skins.json; the server merges it into the copy
 // it serves at /data/assets.json, so the picker — which reads the composed manifest — offers them with no plugin
 // installed. A cosmetic plugin's overlay is still applied later on the client, so a plugin's record wins.

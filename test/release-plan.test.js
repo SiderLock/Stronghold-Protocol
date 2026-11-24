@@ -11,14 +11,14 @@ import { digestFile } from '../server/update.js';
 test('release allowlist excludes local art, sidecars and private development notes', () => {
   const got = publicationFiles(['package.json', 'server/index.js', 'shared/constants.js',
     'test/helpers/battleHarness.js', 'docs/RELEASE_PACKAGES.md', `docs/releases/${RELEASE}.md`,
-    'docs/LOCAL_ASSET_EXTRACTION.md', 'tools/local-extract/skins.py',
+    'docs/LOCAL_ASSET_EXTRACTION.md', 'tools/local-extract/skins.py', 'tools/local-extract/local_skins.py',
     'docs/development/README.md', 'docs/development/records/private.md',
     'data/assets.json', 'data/local-skins.json', 'data/local-fx.json', 'data/local-unexpected.json',
     'public/assets/local/skins/a.png', 'public/assets/upstream.png', 'public/fonts/test.woff',
     'public/vendor/pixi.min.js', 'runtime/settings.json', '.env.production', 'public/dev/report.html']);
   assert.deepEqual(got, ['docs/LOCAL_ASSET_EXTRACTION.md', 'docs/RELEASE_PACKAGES.md',
     `docs/releases/${RELEASE}.md`, 'package.json', 'server/index.js', 'shared/constants.js',
-    'test/helpers/battleHarness.js', 'tools/local-extract/skins.py']);
+    'test/helpers/battleHarness.js', 'tools/local-extract/local_skins.py', 'tools/local-extract/skins.py']);
 });
 
 test('current notes summarize both upstream releases and local changes before the download boundary', () => {
@@ -26,11 +26,11 @@ test('current notes summarize both upstream releases and local changes before th
   const rel = `docs/releases/${RELEASE}.md`;
   const text = fs.readFileSync(path.join(root, rel), 'utf8');
   const changes = text.split('## 下载与素材边界')[0];
-  assert.match(changes, /releases\/tag\/v0\.3\.2/);
   assert.match(changes, /releases\/tag\/v0\.3\.3/);
-  assert.match(changes, /每局都随机/);
-  assert.match(changes, /水遁忍者/);
-  assert.match(changes, /多人同步优化/);
+  assert.match(changes, /releases\/tag\/v0\.4\.0/);
+  assert.match(changes, /规程·序列Ⅰ/);
+  assert.match(changes, /二十人/);
+  assert.match(changes, /私人自选库存/);
   for (const [, , href] of markdownLinkMatches(text)) {
     if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(href)) continue;
     assert.ok(fs.existsSync(path.resolve(root, path.dirname(rel), href.split('#')[0])), href);

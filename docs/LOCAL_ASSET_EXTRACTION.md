@@ -12,15 +12,15 @@ py -3.12 -m venv .venv-extract
 $gameAssets = 'D:\自己的客户端\Arknights_Data\StreamingAssets\AB\Windows'
 ```
 
-皮肤工具首次运行需要皮肤数据表缓存，缓存缺失时会联网读取数据表；`--dry-run` 不是完全离线模式。`skins.py` 的 `--extra` 可以指定本机热更新 bundle 根目录，否则按现有客户端目录规则寻找。不同版本的资源结构和完整度可能不同，缺少资源时保留缺项，不伪造模型。
+皮肤工具首次运行需要皮肤数据表缓存，缓存缺失时会联网读取数据表；`--dry-run` 不是完全离线模式。`local_skins.py` 的 `--extra` 可以指定本机热更新 bundle 根目录，否则按现有客户端目录规则寻找。不同版本的资源结构和完整度可能不同，缺少资源时保留缺项，不伪造模型。
 
 ## 皮肤图片与模型
 
 先小范围扫描，再提取相同范围；以下角色 ID 只是可替换的示例。
 
 ```powershell
-.\.venv-extract\Scripts\python.exe tools/local-extract/skins.py --game "$gameAssets" --only char_003_kalts --limit 1 --dry-run --json
-.\.venv-extract\Scripts\python.exe tools/local-extract/skins.py --game "$gameAssets" --only char_003_kalts --limit 1 --json
+.\.venv-extract\Scripts\python.exe tools/local-extract/local_skins.py --game "$gameAssets" --only char_003_kalts --limit 1 --dry-run --json
+.\.venv-extract\Scripts\python.exe tools/local-extract/local_skins.py --game "$gameAssets" --only char_003_kalts --limit 1 --json
 node tools/local-extract/skin-meta.mjs --sidecar data/local-skins.json --json
 ```
 

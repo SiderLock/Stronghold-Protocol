@@ -16,7 +16,7 @@
 //                              spine: Spine } }, voice / voiceJp / voiceEn / voiceKr / voiceNative:
 //                              { <slot>: audio or a list of 1–16 } } } } }
 //   enemies[key]             { icon: image, spine: Spine }
-//   tokens[id]               { avatar: image, spine: Spine, skins: { <owner skin id>: { …a skin… } } }
+//   tokens[id]               { avatar: image, spine: Spine, skins: { <owner skin id>: { …a skin, without lines… } } }
 //   bonds / items / bands / skills / modules / ui[key], prof.icon / large / battlecard / sub[key]     image
 //   audio.bgm[lobby|prep|combat|unite|boss], audio.bossBgm[bossId]     a track { loop, intro? }: replaced as a whole
 //   audio.voice / voiceJp / voiceEn / voiceKr / voiceNative[charId]  { <slot>: audio or a list of 1–16 }      audio.sfx.ui / battle[key]  audio
@@ -38,7 +38,7 @@
 // lines under the same five trees as the operator (`voice` — Chinese —, `voiceJp`, `voiceEn`, `voiceKr`, `voiceNative`):
 // each is a map of slots of the same shape as `audio.voice[<charId>]` (a sound or a list of 1–16), the player's language
 // asks the matching tree first, and a slot the skin lacks falls back to the operator's own line (public/js/audio.js
-// voiceLine).
+// voiceLine, DESIGN §37.330). A summon says nothing, so its own `tokens[id].skins` carry no lines.
 // A reference from a skin is resolved against the entry's own skin of the same key, so it means something only once the
 // installation's manifest carries `skins` itself (the committed data/assets.json of this version has none); until then
 // only the operator's own record can be referenced. A token mapping is never a reference: it has to bring its own model.
@@ -175,12 +175,21 @@ const SKIN_TOKENS_MAX = 64;
  * Back direction pair, so a `{ front, back? }` object is not one.
  */
 const TOKEN_SKIN_RECORD = { required: ['spine'], fields: { tokenSkinId: 'text', spine: 'spine' } };
-/** One skin of an operator: the pictures and models the operator's own record has, under its key, and its name. */
+/** One appearance: the pictures and models the operator's own record has, under its key, and its name — a summon's skin
+ *  (`tokens[id].skins`) as it is, and the base of an operator's (OPERATOR_SKIN_RECORD). */
 const SKIN_RECORD = { fields: { name: 'text', group: 'text', avatar: 'image', avatarE2: 'image', portrait: 'image',
-  portraitE2: 'image', illust: 'image', spine: { fields: { front: 'spine', back: 'spine' } },
+  portraitE2: 'image', illust: 'image', spine: { fields: { front: 'spine', back: 'spine' } } } };
+/**
+ * One skin of an operator (`chars[charId].skins`): an appearance, plus that outfit's own lines (#733, DESIGN §37.330) —
+ * one tree per dub, named and slotted like the manifest's (`audio.voice` 中文, `voiceJp`, `voiceEn`, `voiceKr`,
+ * `voiceNative`). While the outfit is worn a slot it has plays instead of the operator's line of the same dub, a slot
+ * it lacks (or leaves an empty list) the operator's own (public/js/audio.js voiceLine). It may also restyle the
+ * operator's summons: its `tokens` map holds one record per token id — a model the skin gives that token, plus an
+ * appearance id for it. A summon says nothing, so its own `tokens[id].skins` carry no lines.
+ */
+const OPERATOR_SKIN_RECORD = { fields: { ...SKIN_RECORD.fields,
   tokens: { each: TOKEN_SKIN_RECORD, key: TOKEN_KEY, max: SKIN_TOKENS_MAX, keyProblem: true,
     keyName: 'key (letters, digits, _ . / -, at most 128 characters)' },
-  // the skin's own battle lines: the same five trees the operator's record uses (the Chinese one is `voice`)
   voice: VOICE_TREE, voiceJp: VOICE_TREE, voiceEn: VOICE_TREE, voiceKr: VOICE_TREE, voiceNative: VOICE_TREE } };
 const SFX_UNIT = { fields: { attack: 'audio', hit: 'audio', skill: 'audio', die: 'audio', born: 'audio',
   skills: { each: 'audio', key: INDEX }, attacks: { each: 'audio', key: INDEX }, hits: { each: 'audio', key: INDEX } } };
@@ -188,7 +197,7 @@ const SFX_UNIT = { fields: { attack: 'audio', hit: 'audio', skill: 'audio', die:
 /** @type {readonly AssetContainer[]} the record containers a cosmetic plugin writes (see the header) */
 export const ASSET_CONTAINERS = Object.freeze(/** @type {AssetContainer[]} */ ([
   { path: ['chars'], record: { fields: { avatar: 'image', avatarE2: 'image', portrait: 'image', portraitE2: 'image', illust: 'image',
-      spine: { fields: { front: 'spine', back: 'spine' } }, skins: { each: SKIN_RECORD, key: SKIN_KEY, max: SKINS_MAX, keyName: 'key (letters, digits, _ @ # + . -, at most 64 characters)', keyProblem: true } } } },
+      spine: { fields: { front: 'spine', back: 'spine' } }, skins: { each: OPERATOR_SKIN_RECORD, key: SKIN_KEY, max: SKINS_MAX, keyName: 'key (letters, digits, _ @ # + . -, at most 64 characters)', keyProblem: true } } } },
   { path: ['enemies'], record: { fields: { icon: 'image', spine: 'spine' } } },
   { path: ['tokens'], record: { fields: { avatar: 'image', spine: 'spine', skins: { each: SKIN_RECORD, key: SKIN_KEY, max: SKINS_MAX, keyName: 'key (letters, digits, _ @ # + . -, at most 64 characters)', keyProblem: true } } } },
   ...['bonds', 'items', 'bands', 'skills', 'modules', 'ui'].map((k) => ({ path: [k], record: 'image' })),
