@@ -34,10 +34,14 @@ const V1_JSON_FALLBACK = Object.freeze({
     'room.aiRequest', 'room.aiVote', 'room.cancelVersionVote', 'room.card', 'room.proposeVersion',
     'room.setAiTakeover', 'room.setSoloUnlimited', 'room.versionVote', 'state.resync',
     // P2P relay (0.3.4), lobby plugin preview and 规程's bond group / 选择自编 / 指令 (0.4.0) — post-v1, JSON fallback
-    'p2p.enable', 'p2p.signal', 'p2p.ready', 'plugins.preview', 'g.bondGroup', 'g.diyBring', 'g.command', 'g.commandChoice'],
+    'p2p.enable', 'p2p.signal', 'p2p.ready', 'plugins.preview', 'g.bondGroup', 'g.diyBring', 'g.command', 'g.commandChoice',
+    // 盟约速查 (upstream 0.4.0's g.peek, 2026-11-24): post-v1, JSON fallback
+    'g.peek'],
   s2c: ['m.chat', 'm.chatState', 'm.emergency', 'm.layer', 'b.rehearsal', 'b.rehearsalCancel',
     // P2P relay frames (0.3.4) never joined v1: they ride the JSON fallback like the other post-v1 types
-    'p2p.config', 'p2p.frame', 'p2p.signal'],
+    'p2p.config', 'p2p.frame', 'p2p.signal',
+    // 盟约速查 (upstream 0.4.0's g.peek subscription, 2026-11-24): post-v1, JSON fallback
+    'm.peek'],
 });
 
 test('v1 complete catalog fingerprint prevents accidental published field or enum renumbering', () => {

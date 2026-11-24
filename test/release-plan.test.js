@@ -11,14 +11,14 @@ import { digestFile } from '../server/update.js';
 test('release allowlist excludes local art, sidecars and private development notes', () => {
   const got = publicationFiles(['package.json', 'server/index.js', 'shared/constants.js',
     'test/helpers/battleHarness.js', 'docs/RELEASE_PACKAGES.md', `docs/releases/${RELEASE}.md`,
-    'docs/LOCAL_ASSET_EXTRACTION.md', 'tools/local-extract/skins.py', 'tools/local-extract/local-skins.py',
+    'docs/LOCAL_ASSET_EXTRACTION.md', 'tools/local-extract/skins.py', 'tools/local-extract/local_skins.py',
     'docs/development/README.md', 'docs/development/records/private.md',
     'data/assets.json', 'data/local-skins.json', 'data/local-fx.json', 'data/local-unexpected.json',
     'public/assets/local/skins/a.png', 'public/assets/upstream.png', 'public/fonts/test.woff',
     'public/vendor/pixi.min.js', 'runtime/settings.json', '.env.production', 'public/dev/report.html']);
   assert.deepEqual(got, ['docs/LOCAL_ASSET_EXTRACTION.md', 'docs/RELEASE_PACKAGES.md',
     `docs/releases/${RELEASE}.md`, 'package.json', 'server/index.js', 'shared/constants.js',
-    'test/helpers/battleHarness.js', 'tools/local-extract/local-skins.py', 'tools/local-extract/skins.py']);
+    'test/helpers/battleHarness.js', 'tools/local-extract/local_skins.py', 'tools/local-extract/skins.py']);
 });
 
 test('current notes summarize both upstream releases and local changes before the download boundary', () => {

@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-11-24 / 2026-11-24，Asia/Shanghai |
-| 状态 | 已完成（本地合并与定向验证；全量测试与浏览器套件交给推送后的 CI） |
+| 状态 | 已完成（本地合并、定向验证、已推送；GitHub Actions 被平台禁用，全量改在本机跑，浏览器套件未启用） |
 | 类型 | 上游合并 |
 | 分支与开始 HEAD | `dev`，`659ccb1e`（与 `origin/dev` 一致），工作区干净 |
 | 上游基线 | 已合并 `c2b4ca01`（0.4.0，2026-11-19）；本次目标 `upstream/dev` `c7cea5a9`（2026-11-24 03:45:06 +08:00）。标签 `v0.4.0` = `b6d8b2ef`（2026-11-15），`upstream/master` = `55f528e9`（2026-11-15，发布后一条 CI 提交），**没有新版本发布**；以上为 `git fetch` 后的本地引用与 GitHub API 核对 |
@@ -107,7 +107,9 @@
 | `node --test test/versions-*.test.js test/data-versions.test.js` | 版本数据与 guard | 86 项：77 通过、9 跳过 |
 | `node --test test/ui/{ai-picks-last,band-draft-badges,card-sync,skins-sync,seat-art,team-flyout,bond-covenant,bond-stage,settings-search,version-content}.test.js` | 界面单测 | 48 项通过 |
 
-未运行：完整 `npm test`（含 `test/sim` 全量）、浏览器 E2E（`SP_E2E` / `REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）。
+| `npm test`（完整，本机代替 CI） | Node 24.13.0，本机 | 12,997 项：12,795 通过、59 失败、142 跳过；失败全部归因本机环境（`python3` 占位符 9009、Node 24.13 插件 / SES 用例原生退出 `0xC0000409`、规程素材与缓存不全、Windows 符号链接权限、0.8 Mbps 压力用例、并行计时超时），分类见 [UPSTREAM §14](../UPSTREAM.md#14-dev-第-84-轮增量同步2026-11-24)；其中两处真实遗漏已修复 |
+| `node --test test/wire-codec.test.js test/local-extract-skins.test.js test/release-plan.test.js …` | 修复后复测 | 81 项：80 通过、1 跳过 |
+未运行：浏览器 E2E（`SP_E2E` / `REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）。
 按用户 2026-11-19 的要求，全量与浏览器套件交给推送后的 GitHub CI；本机只做上述定向验证。
 
 ## 结果、遗留与接手
@@ -116,10 +118,18 @@
   D004 真人优先、D033 2 小时重连、多轮联防、D035 同组软避让、D046 发布门禁与规程 / 盟约两族的界面扩展保留。
 - 未确定或未完成：未推送（因此 CI 尚未运行全量与浏览器套件）；未打包、未部署；规程素材（34 名干员语音、敌人模型 /
   特效、3D 场景）仍未下载（I006）；上游 `dev` 仍在推进，下次同步仍以当时的 `upstream/dev` 为基线。
-- 提交 / 远程 / 素材 / 线上：本地合并提交；`origin/dev` 未更新；素材未变；线上仍是此前部署的版本。
+- 提交 / 远程 / 素材 / 线上：合并提交 `e21b3bef` 与记录补记 `6013053b`（2026-11-24 已推送 `origin/dev`）；素材未变；线上仍是此前部署的版本。
 - 接手入口：本记录、[UPSTREAM §14](../UPSTREAM.md#14-dev-第-84-轮增量同步2026-11-24)、
   `test/golden/*/matches.json` 的 D028 场景、`server/match/player/diy.js` 的 `basePoolCopies` 说明。
 
 ## 后续补充
 
-（暂无）
+2026-11-24（推送与测试）：按用户「推一下，然后测试」把 `dev` 推到 `origin/dev`（`6013053b`）。GitHub 没有启动工作流：
+workflow dispatch 返回 422 `Actions has been disabled for this repository.`，而 `/actions/permissions` 为 `enabled: true`、
+工作流 `state=active`，API 置启用返回 204 仍不生效——与 DEV-20261023-03（本地记录）同类平台状态，
+需要所有者在 Settings → Actions 重新启用或联系 GitHub 支持。因此改跑本机完整 `npm test`（结果见验证表）。
+
+完整跑出两处合并遗漏并修复：`test/wire-codec.test.js` 的 v1 JSON 回退清单缺 `g.peek` / `m.peek`（上游新增速查通道，
+编码器按未知类型原样透传因而功能正常，但覆盖断言失败）；本分支安装版提取器 `local-skins.py` 改名为可导入的
+`local_skins.py`（`local-extract-skins.test.js` 以 `import skins` 加载它）。修复后 `wire-codec`、`local-extract-skins`
+与发布 / 文档检查全部通过。其余失败项逐项定位为本机环境，不是本次合并引入。

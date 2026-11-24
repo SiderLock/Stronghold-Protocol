@@ -13,7 +13,7 @@ Per outfit, from `skinpack/<charId>.ab`:
 Names / series / ids come from the official `skin_table.json` (Kengxxiao mirror via jsDelivr, cached in
 `.cache/gamedata/excel/`): `displaySkin.skinName`, `displaySkin.skinGroupName`, `battleSkin.skinOrPrefabId`.
 
-  .venv/bin/python tools/local-extract/skins.py [--game <AB root>] [--only char_003_kalts,…] [--limit N]
+  .venv/bin/python tools/local-extract/local_skins.py [--game <AB root>] [--only char_003_kalts,…] [--limit N]
                                                [--out public/assets/local] [--dry-run] [--refresh] [--json]
 
 Writes `public/assets/local/skins/<charId>/<stem>/{front,back}/…`, `portrait.png`, `illust.png` and merges

@@ -35,7 +35,7 @@ def faces(): return {k:v['marker'] for k,v in skins.battle_faces(env,objects,'ch
 `;
 
 function py(code) {
-  const r = spawnSync(PY, ['-B', '-c', `import sys,json\nsys.path.insert(0,${JSON.stringify(TOOL)})\nimport skins\n${FIXTURE}\n${code}`],
+  const r = spawnSync(PY, ['-B', '-c', `import sys,json\nsys.path.insert(0,${JSON.stringify(TOOL)})\nimport local_skins as skins\n${FIXTURE}\n${code}`],
     { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
   assert.equal(r.status, 0, r.stderr);
   return JSON.parse(r.stdout);

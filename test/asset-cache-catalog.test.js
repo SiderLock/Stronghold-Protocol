@@ -275,7 +275,7 @@ test('the catalog includes the installation outfits and the official effects (a 
   const model = (base) => ({ skel: `/assets/${base}.skel`, atlas: `/assets/${base}.atlas`, textures: [`/assets/${base}.png`],
     pma: true, anims: { idle: 'Idle' }, animations: { Idle: 1 }, events: [], hits: {}, bounds: { width: 1, height: 1 } });
   const f = await fixture(t, { chars: { char_a: { avatar: '/assets/a.png' } } }, null, {
-    // an outfit as the extractor writes it (tools/local-extract/local-skins.py)
+    // an outfit as the extractor writes it (tools/local-extract/local_skins.py)
     'local-skins.json': { version: 1, skins: { 'char_a@x#1': { charId: 'char_a', name: 'X',
       avatar: '/assets/local/skins/char_a/x/avatar.png', portrait: '/assets/local/skins/char_a/x/portrait.png',
       spine: { front: { ...model('local/skins/char_a/x/front/model') } } } } },

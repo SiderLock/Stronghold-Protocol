@@ -224,7 +224,7 @@ Installation outfits use the same five voice fields. `node tools/local-extract/s
 outfit's official `skin_table.voiceId`, downloads the declared dubs' battle slots, and adds them to
 `data/local-skins.json`. `mergeLocalSkins` retains these fields in the served manifest. The downloader validates MP3
 files and keeps them under `public/assets/local/voices/`. Incomplete downloads retain the installed slots for retry.
-Subsequent `local-skins.py` art refreshes preserve these voice fields for the same operator's outfit.
+Subsequent `local_skins.py` art refreshes preserve these voice fields for the same operator's outfit.
 The command, metadata and resource checks are described in [本地素材提取参考](LOCAL_ASSET_EXTRACTION.md#官方时装独立语音).
 
 ## 小人预览 (model preview)
@@ -343,7 +343,7 @@ official outfits *are* official files. They therefore live where the rest of the
 merges into the manifest it serves. Nothing about the choice, the sync, the sim, the protocol or the golden results
 changes — the picker simply finds them, exactly like a plugin's outfits.
 
-    tools/local-extract/local-skins.py         skinpack/<charId>.ab → models, 立绘, 半身像 + data/local-skins.json
+    tools/local-extract/local_skins.py         skinpack/<charId>.ab → models, 立绘, 半身像 + data/local-skins.json
       ↓
     public/assets/local/skins/<charId>/<skin>/…   front/back .skel .atlas pages, portrait.png, illust.png
     data/local-skins.json                          { version, skins: { <official skin id>: { charId, name, group, spine, portrait, illust } } }
@@ -364,7 +364,7 @@ changes — the picker simply finds them, exactly like a plugin's outfits.
 - **Repair an existing installation** with Windows-native Python where the client lives, then regenerate metadata:
 
   ```powershell
-  .venv-extract-win/Scripts/python.exe tools/local-extract/local-skins.py --game "D:\…\StreamingAssets\AB\Windows" --models-only
+  .venv-extract-win/Scripts/python.exe tools/local-extract/local_skins.py --game "D:\…\StreamingAssets\AB\Windows" --models-only
   node tools/local-extract/skin-meta.mjs --json
   ```
 
@@ -381,7 +381,7 @@ changes — the picker simply finds them, exactly like a plugin's outfits.
   it into the sidecar; without it the client refuses the entry ("no spine entry") and the unit silently falls back to the
   operator's own model.
 - **The launcher's downloads are an overlay**: content fetched after the install lands under
-  `Arknights_Data/PersistentData/Bundles` with the same relative paths, and it wins over the install. `local-skins.py` reads
+  `Arknights_Data/PersistentData/Bundles` with the same relative paths, and it wins over the install. `local_skins.py` reads
   that layer first (`--extra`, default: the client's `PersistentData/Bundles`), so an outfit the launcher downloaded
   after the install is extracted too — three of the 523 on the 2026-10 client exist only there.
   Names, series and ids are the official ones from `skin_table.json` (`displaySkin.skinName`,
@@ -396,7 +396,7 @@ changes — the picker simply finds them, exactly like a plugin's outfits.
   not have (a sidecar from a newer client) is skipped; a record with no model and no picture is dropped; a broken
   model costs the model only, the pictures still play.
 - **Run it with the Windows interpreter when the client is on a Windows drive**: `.venv-extract-win/Scripts/python.exe
-  tools/local-extract/local-skins.py --game "D:\…\StreamingAssets\AB\Windows"` — reading the client and writing the pages
+  tools/local-extract/local_skins.py --game "D:\…\StreamingAssets\AB\Windows"` — reading the client and writing the pages
   through WSL's `/mnt/…` mount is an order of magnitude slower (the same 4 outfits took ~5 s there against minutes).
   The file names are Windows paths; run it from PowerShell if `python.exe` is not reachable from the shell you use.
 - **The in-match shop slot is an avatar slot** (`css/screens/game-shop.css` `.scard__art`): the official shop card draws
@@ -405,7 +405,7 @@ changes — the picker simply finds them, exactly like a plugin's outfits.
   afford, made a square avatar as wide as the card is tall and it covered everything.
 - **The card picture is a 1:2 crop.** The picker's tile is a fixed 1:2 box (the shape of the 180×360 portrait an
   appearance is chosen by) and the enlarged view letterboxes whatever it is given; an outfit's art from the client is the
-  wide splash (~1.25:1). `local-skins.py` therefore writes `portrait.png` as **full height × half width, centred on the
+  wide splash (~1.25:1). `local_skins.py` therefore writes `portrait.png` as **full height × half width, centred on the
   figure** (408×817 for a 1022×817 splash) and keeps the untouched splash as `illust.png` (`--crop-portraits` re-crops
   the already extracted files without touching the models).
 - **The 180×180 avatars** come from the client's `spritepack/ui_char_avatar_*.ab` (19 shards, read in a couple of
@@ -667,7 +667,7 @@ exists) gets no section rather than an empty grid.
 | `test/studio/targets.test.js` | The studio's target index: an outfit is a target of its own under its operator's record, searchable by name / series / operator, and `skin:<key>` reads back although the key carries `@ # + .` |
 | `tools/local-extract/skinfx.py` | 官方时装特效's data: read every `skinpack/<charId>.ab`, name each hooker's outfit, write `index.json`'s optional `skinFx` section and print the variant keys a `--fx-keys` run must export |
 | `test/render/vfx-skinfx.test.js` | 官方时装特效's runtime: the outfit decides (not the target, for an attack's own effects), a variant the set does not hold falls back to the base key, an older index without the section plays everything as before, and preloading covers the outfits in the battle |
-| `tools/local-extract/local-skins.py` | 本机提取的官方时装: `skinpack/<charId>.ab` → models + 立绘 + 半身像 under `public/assets/local/skins/`, and `data/local-skins.json` (official names from `skin_table.json`) |
+| `tools/local-extract/local_skins.py` | 本机提取的官方时装: `skinpack/<charId>.ab` → models + 立绘 + 半身像 under `public/assets/local/skins/`, and `data/local-skins.json` (official names from `skin_table.json`) |
 | `test/asset-views-skins.test.js` | The served-manifest merge: additive, an outfit the manifest already has is kept, an unknown operator skipped, a record with nothing to show dropped, a broken model costs only the model |
 | `test/fixtures/skin-preview.html` + `test/fixtures/skin-preview.js` | Browser-test harness injected by `test/helpers/skinPreviewFixture.js`; the app server publishes no preview page |
 | `test/render/skin-preview.browser.test.js` | The live half, in a real browser: the canvas appears for a model the machine has, a clip button re-points the same canvas instead of rebuilding it, and unmounting removes it |
