@@ -83,3 +83,6 @@
   语音树），不属于素材补齐，已 `git checkout` 还原为上游清单。
 - 因此 `test/assets.test.js` 的「every manifest path exists on disk」仍因这 24 个镜像缺口失败（下载前是 2,949 个），
   `test/ui/localArt.test.js` 仍要求本机清单有 `guide` 组（本机客户端没有 guide bundle，该组无法由提取器产生）。
+- 官方主题也试了一次：`--only theme` 只从客户端拿到 `ac_n_initial`（222 个文件、25 个重绘槽，缩略图 / 预览与颜色
+  有告警），`ac_n_iron` / `ac_s_closur` 的 bundle 不在这份客户端里；产物在 `out/local-extract/themes/`（git 忽略的
+  scratch，未安装、未提交）。
