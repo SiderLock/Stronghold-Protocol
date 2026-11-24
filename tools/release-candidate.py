@@ -14,11 +14,11 @@ import subprocess
 import tarfile
 import zipfile
 
-RELEASE = "v0.3.3-20p.1"
+RELEASE = "v0.4.0-20p.1"
 NODE_VERSION = "22.23.3"
-UPSTREAM_FILE = "Stronghold-Protocol-v0.3.3.zip"
-UPSTREAM_SHA = "1bfc651096ff4c44b76296717bd605220b5204714722832140a3d407153cd2be"
-UPSTREAM_URL = "https://github.com/sganggs/Stronghold-Protocol/releases/download/v0.3.3/" + UPSTREAM_FILE
+UPSTREAM_FILE = "Stronghold-Protocol-v0.4.0.zip"
+UPSTREAM_SHA = "aded7ef95d8494e377154a4e0db55cb317866518497ff3cab2d8b280e63a0b45"
+UPSTREAM_URL = "https://github.com/sganggs/Stronghold-Protocol/releases/download/v0.4.0/" + UPSTREAM_FILE
 UPSTREAM_INDEXES = {"data/assets.json", "data/local-assets.json", "data/local-fx.json"}
 NODES = {
     "Windows-x64": ("win-x64.zip", "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"),
@@ -94,16 +94,16 @@ def server_announcement(notes, changelog):
     """Keep the complete two upstream change sections, then append this fork's changes."""
     blocks = re.split(r"(?m)(?=^## )", changelog)
     upstream = []
-    for version in ("0.3.3", "0.3.2"):
+    for version in ("0.4.0", "0.3.3"):
         matches = [b for b in blocks if re.match(r"## " + re.escape(version) + r"(?:\s|$)", b)]
         if len(matches) != 1:
             raise ValueError(f"missing/ambiguous upstream changelog: {version}")
         upstream.append(matches[0].rstrip())
     fork = notes.split("### 本分支新增与修复\n", 1)[1].split("以上概括自上游", 1)[0].rstrip()
     body = (f"# {RELEASE} 完整更新公告\n\n"
-            "以下完整保留上游 0.3.3、0.3.2 的更新记录与贡献者署名，本分支更新补充在末尾。\n"
+            "以下完整保留上游 0.4.0、0.3.3 的更新记录与贡献者署名，本分支更新补充在末尾。\n"
             "上游原文中的默认设置、性能数据和四人测试结论属于上游，不能视为本分支二十人环境的测试结果；本分支保留既有容量与网络配置。\n\n"
-            "来源：[上游 v0.3.3 原始更新日志](https://github.com/sganggs/Stronghold-Protocol/blob/v0.3.3/CHANGELOG.md)。\n\n"
+            "来源：[上游 v0.4.0 原始更新日志](https://github.com/sganggs/Stronghold-Protocol/blob/v0.4.0/CHANGELOG.md)。\n\n"
             + "\n\n".join(upstream) + "\n\n## 本分支新增与修复\n\n" + fork
             + "\n\n服务器完成更新后，请刷新页面加载新版本；更新时间以服主通知为准。\n")
     if len(body.encode("utf-16-le")) // 2 > 50000 or len(body.encode("utf-8")) > 128 * 1024:
@@ -222,7 +222,7 @@ Windows 双击 `启动游戏.bat`；Linux / macOS 在终端运行 `bash 启动�
 自带运行时不代表支持所有旧系统；Node 平台要求见 https://github.com/nodejs/node/blob/v{NODE_VERSION}/BUILDING.md#platform-list 。
 默认打开 http://localhost:3000 ，按 Ctrl+C 停止。端口等选项可追加 `--port 3001`，部署说明见 [app/docs/DEPLOY.md](app/docs/DEPLOY.md)。
 
-素材与素材索引仅来自作者上游 v0.3.3 完整包，包括其自带的官方特效与场景；不带本分支新增的时装、模型或自提取内容，也不另发素材包。随机时装只使用当前安装已有的资源，缺项按原逻辑回退。
+素材与素材索引仅来自作者上游 v0.4.0 完整包，包括其自带的官方特效与场景；不带本分支新增的时装、模型或自提取内容，也不另发素材包。随机时装只使用当前安装已有的资源，缺项按原逻辑回退。
 使用或再分发游戏素材可能涉及侵权，上游收录、非商业和署名不代表授权。自行提取也须遵守权利人的许可及适用条款。
 请阅读 [更新说明](更新说明.md)、[权利声明](app/NOTICE.md) 和 [本地提取参考](app/docs/LOCAL_ASSET_EXTRACTION.md)。
 

@@ -26,11 +26,11 @@ test('current notes summarize both upstream releases and local changes before th
   const rel = `docs/releases/${RELEASE}.md`;
   const text = fs.readFileSync(path.join(root, rel), 'utf8');
   const changes = text.split('## 下载与素材边界')[0];
-  assert.match(changes, /releases\/tag\/v0\.3\.2/);
   assert.match(changes, /releases\/tag\/v0\.3\.3/);
-  assert.match(changes, /每局都随机/);
-  assert.match(changes, /水遁忍者/);
-  assert.match(changes, /多人同步优化/);
+  assert.match(changes, /releases\/tag\/v0\.4\.0/);
+  assert.match(changes, /规程·序列Ⅰ/);
+  assert.match(changes, /二十人/);
+  assert.match(changes, /私人自选库存/);
   for (const [, , href] of markdownLinkMatches(text)) {
     if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(href)) continue;
     assert.ok(fs.existsSync(path.resolve(root, path.dirname(rel), href.split('#')[0])), href);
