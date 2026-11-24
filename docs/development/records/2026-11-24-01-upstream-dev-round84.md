@@ -5,7 +5,7 @@
 | 字段 | 内容 |
 |---|---|
 | 开始 / 最后更新 | 2026-11-24 / 2026-11-24，Asia/Shanghai |
-| 状态 | 已完成（本地合并、定向验证、已推送；GitHub Actions 被平台禁用，全量改在本机跑，浏览器套件未启用） |
+| 状态 | 已完成（已合并、已推送；GitHub CI 全绿；本机完整 `npm test` 的两处遗漏已修复；浏览器套件未启用） |
 | 类型 | 上游合并 |
 | 分支与开始 HEAD | `dev`，`659ccb1e`（与 `origin/dev` 一致），工作区干净 |
 | 上游基线 | 已合并 `c2b4ca01`（0.4.0，2026-11-19）；本次目标 `upstream/dev` `c7cea5a9`（2026-11-24 03:45:06 +08:00）。标签 `v0.4.0` = `b6d8b2ef`（2026-11-15），`upstream/master` = `55f528e9`（2026-11-15，发布后一条 CI 提交），**没有新版本发布**；以上为 `git fetch` 后的本地引用与 GitHub API 核对 |
@@ -109,6 +109,8 @@
 
 | `npm test`（完整，本机代替 CI） | Node 24.13.0，本机 | 12,997 项：12,795 通过、59 失败、142 跳过；失败全部归因本机环境（`python3` 占位符 9009、Node 24.13 插件 / SES 用例原生退出 `0xC0000409`、规程素材与缓存不全、Windows 符号链接权限、0.8 Mbps 压力用例、并行计时超时），分类见 [UPSTREAM §14](../UPSTREAM.md#14-dev-第-84-轮增量同步2026-11-24)；其中两处真实遗漏已修复 |
 | `node --test test/wire-codec.test.js test/local-extract-skins.test.js test/release-plan.test.js …` | 修复后复测 | 81 项：80 通过、1 跳过 |
+| GitHub CI（`CI` workflow） | `2559b0a3`，run 45342399730 attempt 2 | 11 个 job 全部 success：golden full corpus、tooling（lint/imports/typecheck）、node 24 guards、ubuntu / windows 各 4 个 shard；windows shard 2 的 `asset-digest-cache` TOCTOU 用例 flaky 失败一次，重跑通过 |
+| `Local extractor Python compatibility` | `2559b0a3`，run 45342404067 | success |
 未运行：浏览器 E2E（`SP_E2E` / `REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）。
 按用户 2026-11-19 的要求，全量与浏览器套件交给推送后的 GitHub CI；本机只做上述定向验证。
 
@@ -124,10 +126,17 @@
 
 ## 后续补充
 
-2026-11-24（推送与测试）：按用户「推一下，然后测试」把 `dev` 推到 `origin/dev`（`6013053b`）。GitHub 没有启动工作流：
-workflow dispatch 返回 422 `Actions has been disabled for this repository.`，而 `/actions/permissions` 为 `enabled: true`、
-工作流 `state=active`，API 置启用返回 204 仍不生效——与 DEV-20261023-03（本地记录）同类平台状态，
-需要所有者在 Settings → Actions 重新启用或联系 GitHub 支持。因此改跑本机完整 `npm test`（结果见验证表）。
+2026-11-24（推送与测试）：按用户「推一下，然后测试」把 `dev` 推到 `origin/dev`（`6013053b`）。推送时 GitHub 拒绝启动
+工作流：workflow dispatch 返回 422 `Actions has been disabled for this repository.`，而 `/actions/permissions` 为
+`enabled: true`、工作流 `state=active`，API 置启用返回 204 仍不生效——与 DEV-20261023-03（本地记录）同类平台状态。
+期间改跑本机完整 `npm test`（结果见验证表），发现下文两处遗漏。
+
+仓库所有者随后在 Settings → Actions 重新启用，14:42 以 `workflow_dispatch` 在 `2559b0a3` 上触发：
+**CI 全部通过**——CI 的 11 个 job（golden full corpus、tooling、Node 24 guards、ubuntu / windows 各 4 个 shard）与
+`Local extractor Python compatibility` 全部 success（run 45342399730 attempt 2、run 45342404067）。
+`windows-latest shard 2` 首次在 `test/asset-digest-cache.test.js` 的 TOCTOU 用例「文件在校验后替换」
+（`hashAssetFile` + `Missing expected rejection`）上 flaky 失败一次，重跑该 job 通过；该测试与
+`server/assetDigestCache.js` 自 `c2b4ca01` 起未改，属 Windows 文件时间戳竞态的既有脆弱点。
 
 完整跑出两处合并遗漏并修复：`test/wire-codec.test.js` 的 v1 JSON 回退清单缺 `g.peek` / `m.peek`（上游新增速查通道，
 编码器按未知类型原样透传因而功能正常，但覆盖断言失败）；本分支安装版提取器 `local-skins.py` 改名为可导入的

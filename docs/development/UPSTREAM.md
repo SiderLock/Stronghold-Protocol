@@ -340,20 +340,23 @@ golden：五个版本只出现 D028 归因的差异——默认 / 第一期下�
 都有选择自编）。把 `initDiyStock` 的 `gd.basePoolCopies` 临时换成 `gd.poolCopies` 后五版本与上游目标逐字段一致，
 恢复后按本分支重录这 22 个场景；重录后五个版本复核全部匹配（默认 291、规程 14 个 matches、其余三版各 16 个 matches）。
 
-推送与 CI：2026-11-24 已推送 `origin/dev`（`6013053b`，即本次合并 `e21b3bef` 与其后的记录补记）。GitHub 拒绝
-启动工作流：`POST …/actions/workflows/ci.yml/dispatches` 返回 422 `Actions has been disabled for this repository.`，
-而 `/actions/permissions` 显示 `enabled: true`、三个工作流 `state=active`，用 API 置为启用返回 204 后仍不生效
-（与 2026-10-23 的 CI 修复任务同类平台状态，该记录仅本地保留）；需要仓库所有者在 Settings → Actions
-重新启用，或联系 GitHub 支持。仓库是公开仓库，不是分钟数问题。
+推送与 CI：2026-11-24 已推送 `origin/dev`（合并 `e21b3bef`、记录补记 `6013053b`、修复 `2559b0a3`）。推送时 GitHub 拒绝
+启动工作流（422 `Actions has been disabled for this repository.`，而 `/actions/permissions` 为 `enabled: true`、工作流
+`state=active`，API 置启用返回 204 仍无效；与 2026-10-23 的 CI 修复任务同类平台状态）。仓库所有者在 Settings → Actions
+重新启用后，14:42 以 `workflow_dispatch` 在 `2559b0a3` 上触发：**CI 全部通过**——11 个 job（golden full corpus、
+tooling、Node 24 guards、ubuntu / windows 各 4 个 shard）与 `Local extractor Python compatibility` 均 success；
+其中 `windows-latest shard 2` 首次在 `test/asset-digest-cache.test.js` 的「文件在校验后替换不能被旧身份保存」
+（TOCTOU 竞态用例）上 flaky 失败一次，重跑该 job 通过，代码与测试自 `c2b4ca01` 起未改。
 
-因此按用户 2026-11-24 的要求，改用本机完整 `npm test` 代替 CI：12,997 项中 12,795 通过、59 失败、142 跳过。
-失败全部归因于本机环境：（a）`python3` 是 Microsoft Store 占位符（退出码 9009）：`setup-game-dir`、`setup-plugin-fx`、
-`version-assets` 等；（b）Node 24.13 的插件 / SES 用例原生退出 `0xC0000409`（本目录早前记录已注明，CI 用 Node 22）：
-`plugins/dsl-data`、`contentBattle`、`csp`、`script-integration`、`official-tables`、`plugin-package`、`versions-service`、
-`setup-assets`；（c）规程素材未下载、`.cache/gamedata` 索引不全（I006）：`assets.test.js` 的磁盘清单、`feedback7-voices`、
-`assets-season-music`、`audio-pools-data`、`render/vfx-areas`、`enemy-skill-clips`、`ui/localArt`；（d）Windows 会话没有
-符号链接权限：`studio/size-limits`；（e）0.8 Mbps 压力用例未达标（历史既有）；其余整机并行时超时的计时用例单独复跑通过。
+本机完整 `npm test` 作为补充（12,997 项：12,795 通过、59 失败、142 跳过），失败全部归因本机环境：（a）`python3`
+是 Microsoft Store 占位符（退出码 9009）：`setup-game-dir`、`setup-plugin-fx`、`version-assets` 等；（b）Node 24.13
+的插件 / SES 用例原生退出 `0xC0000409`（CI 用 Node 22，这些 job 在 CI 全绿）：`plugins/dsl-data`、`contentBattle`、
+`csp`、`script-integration`、`official-tables`、`plugin-package`、`versions-service`、`setup-assets`；（c）规程素材未下载、
+`.cache/gamedata` 索引不全（I006）：`assets.test.js` 的磁盘清单、`feedback7-voices`、`assets-season-music`、
+`audio-pools-data`、`render/vfx-areas`、`enemy-skill-clips`、`ui/localArt`；（d）Windows 会话没有符号链接权限：
+`studio/size-limits`；（e）0.8 Mbps 压力用例未达标（历史既有）；其余整机并行时超时的计时用例单独复跑通过。
 
-本次合并有两处真实遗漏，已在本机全量后修复并补提交：`test/wire-codec.test.js` 的 v1 JSON 回退清单补 `g.peek` /
-`m.peek`（上游新增的速查通道）；本分支安装版时装提取器改为可导入的 `tools/local-extract/local_skins.py`，同名测试恢复。
-浏览器套件的四个开关（`SP_E2E` / `SP_REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）仍未启用；规程素材仍未下载（I006）。
+本次合并有两处真实遗漏，已在本机全量后修复并随 `2559b0a3` 推送：`test/wire-codec.test.js` 的 v1 JSON 回退清单补
+`g.peek` / `m.peek`（上游新增的速查通道）；本分支安装版时装提取器改为可导入的 `tools/local-extract/local_skins.py`，
+同名测试恢复。浏览器套件的四个开关（`SP_E2E` / `SP_REAL_E2E` / `RENDER_E2E` / `SIM_E2E`）仍未启用；规程素材仍未下载（I006）。
+
