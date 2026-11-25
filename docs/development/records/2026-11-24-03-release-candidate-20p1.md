@@ -1,4 +1,4 @@
-# DEV-20261124-03 · 合入 master 并生成 v0.4.0-20p.1 四平台候选包
+# DEV-20261124-03 · 合入 master 与 v0.4.0-20p.3 便携包
 
 ## 基本信息
 
@@ -9,7 +9,7 @@
 | 类型 | 发布准备（PR 合并 + 候选包构建） |
 | 分支与源码 | `dev` → `master` 的 PR #6 已合并为 `b581e882`；候选包源码提交 `9563b450`（干净 HEAD，与 `master` 树一致） |
 | 工具 | `tools/release-candidate.py`（Python 3.12.10）、`tools/release-plan.mjs`、四个官方 Node 归档 |
-| 关联 | [DEV-20261124-01](2026-11-24-01-upstream-dev-round84.md)、[DEV-20261124-02](2026-11-24-02-regulation-local-extract.md)；发行说明 [v0.4.0-20p.1](../../releases/v0.4.0-20p.1.md) |
+| 关联 | [DEV-20261124-01](2026-11-24-01-upstream-dev-round84.md)、[DEV-20261124-02](2026-11-24-02-regulation-local-extract.md)；发行说明 [v0.4.0-20p.1](../../releases/v0.4.0-20p.3.md) |
 
 ## 需求、范围与验收
 
@@ -38,7 +38,7 @@
 |---|---|---|
 | `dev` → `master` PR #6 | 合并为 `b581e882`，CI（push 与 pull_request 两次）全绿 | PR 正文列出内容、来源、验证、golden 位移与 `[ASSUMED]` |
 | `README` 整理 | 17 处替换：拆长句、破折号改冒号、日期与等级范围用「至」、更新包拆三步、两段拆段 | 链接、版本号、锚点不动；`static-local-art` 与 `docs-paths` 复跑通过 |
-| 更新 `tools/release-plan.mjs` / `tools/release-candidate.py` | `RELEASE=v0.4.0-20p.1`、上游归档与哈希指向 0.4.0、公告保留 0.4.0 / 0.3.3 两段、包内说明同步版本 | 与 [v0.4.0-20p.1 发行说明](../../releases/v0.4.0-20p.1.md) 一起提交 |
+| 更新 `tools/release-plan.mjs` / `tools/release-candidate.py` | `RELEASE=v0.4.0-20p.1`、上游归档与哈希指向 0.4.0、公告保留 0.4.0 / 0.3.3 两段、包内说明同步版本 | 与 [v0.4.0-20p.3 发行说明](../../releases/v0.4.0-20p.3.md) 一起提交 |
 | 下载并校验输入 | 四个 Node 归档哈希与固定值一致；上游归档 1,092 MiB、哈希一致 | 输入在 `.cache/release-candidate-20261124/downloads/` |
 | 首次候选构建 `D:\release-candidate-20261124-01` | 四包生成、`verify_archive` 通过 | 源码 `a6569ea7`，后因 README 修复废弃 |
 | 最终候选构建 `D:\release-candidate-20261124-02` | 四包生成、`verify_archive` 通过；1,304 个允许的源码文件、38,745 个上游素材文件、`MANIFEST.json` 7,429 条 | 源码 `9563b450` |
@@ -65,8 +65,16 @@
 - 未确定或未完成：macOS 两个包只做了归档、架构与权限核验，未实机启动；Linux 同样只有结构核验（文档明确要求不能由 Windows 检查替代）；
   `tools/package-smoke.mjs` 面向 `npm run package` 的布局，不认候选包根下的 `app/`，本轮改用「解压 + 包内 Node 启动 + HTTP 探活」的冒烟。
 - 提交 / 远程 / 素材 / 线上：PR 已合并、`dev` 已推送；候选包在仓库外，**没有**上传 Release、打 tag 或部署；游戏素材不进 Git。
-- 接手入口：本记录；`docs/releases/v0.4.0-20p.1.md`；`docs/RELEASE_PACKAGES.md`；`tools/release-candidate.py`。
+- 接手入口：本记录；`docs/releases/v0.4.0-20p.3.md`；`docs/RELEASE_PACKAGES.md`；`tools/release-candidate.py`。
 
 ## 后续补充
 
-（暂无）
+2026-11-25（换发行标签并发布）：核对公开状态发现 `v0.4.0-20p.1` 的 tag 指向 `f7d7f6a8`、`v0.4.0-20p.2`
+指向 `a7172dc4`，两者都是第 84 轮之前的历史提交，且都没有附件。本记录 11-24 的构建名带 `.1`，
+若把第 84 轮的包挂到 `.1`，GitHub 的源码下载和便携包会对应不同提交。因此：
+
+- `RELEASE` 改为 `v0.4.0-20p.3`（`tools/release-plan.mjs`、`tools/release-candidate.py`），发行说明改名
+  [v0.4.0-20p.3](../../releases/v0.4.0-20p.3.md)，`docs/RELEASE_PACKAGES.md` 同步；
+- 候选包按新的源码提交重建并发布为 `v0.4.0-20p.3`，四个平台包与 `SHA256SUMS.txt` 一起上传，源码下载与包内
+  `RELEASE.json` 的 `source` 指向同一提交；
+- 11-24 的 `.1` 构建产物（`D:\release-candidate-20261124-02`）只作历史留存，不再上传。

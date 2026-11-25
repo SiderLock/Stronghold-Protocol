@@ -8,7 +8,7 @@ import { writePackIndex } from './packs.mjs';
 import { manifestText } from './package-update.mjs';
 import { inManifest, digestFile, parseManifest } from '../server/update.js';
 
-export const RELEASE = 'v0.4.0-20p.1';
+export const RELEASE = 'v0.4.0-20p.3';
 const EXTRA_DOCS = ['docs/RELEASE_PACKAGES.md', `docs/releases/${RELEASE}.md`];
 
 export function publicationDenied(rel) {
