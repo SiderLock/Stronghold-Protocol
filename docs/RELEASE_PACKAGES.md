@@ -1,6 +1,6 @@
 # 本 fork 的便携发布包
 
-`v0.4.0-20p.3` 发布第 84 轮的便携包，采用下述完整包范围（上游 0.4.0 与 `dev` 第 84 轮的合并）。`v0.4.0-20p.1` 与 `v0.4.0-20p.2` 已指向更早的提交，所以本次用 `.3`，让源码下载与便携包对应同一个提交。
+`v0.4.0-20p.3` 已发布第 84 轮的便携包（[Release](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.4.0-20p.3)），采用下述完整包范围（上游 0.4.0 与 `dev` 第 84 轮的合并）。`v0.4.0-20p.1` 与 `v0.4.0-20p.2` 已指向更早的提交，所以本次用 `.3`，让源码下载与便携包对应同一个提交。
 
 此前的 [`v0.3.3-20p.1` 已正式发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.1)；[`v0.3.3-20p.2`](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.2) 只提供覆盖该版四平台便携包的增量更新，不重新发布完整包，步骤见[该版更新说明](releases/v0.3.3-20p.2.md)。[`v0.3.4-20p.1`](releases/v0.3.4-20p.1.md) 至 [`v0.3.4-20p.3`](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.4-20p.3) 是预发布，只发布源码与更新说明，不提供完整包或增量包。这不改变旧版已经发布的附件。
 

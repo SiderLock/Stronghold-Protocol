@@ -78,3 +78,19 @@
 - 候选包按新的源码提交重建并发布为 `v0.4.0-20p.3`，四个平台包与 `SHA256SUMS.txt` 一起上传，源码下载与包内
   `RELEASE.json` 的 `source` 指向同一提交；
 - 11-24 的 `.1` 构建产物（`D:\release-candidate-20261124-02`）只作历史留存，不再上传。
+
+2026-11-25（发布结果）：PR #7 合并为 `482eb3a7`，CI 全绿；用该提交重建候选（`D:\release-candidate-20261125-01`），
+发布 [v0.4.0-20p.3](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.4.0-20p.3)。五个附件：
+
+| 附件 | 字节 | SHA-256 |
+|---|---|---|
+| `Stronghold-Protocol-v0.4.0-20p.3-Windows-x64.zip` | 1,187,083,360 | `3e8afa7e…` |
+| `…-linux-x64.tar.gz` | 1,173,322,385 | `e3371e02…` |
+| `…-darwin-arm64.tar.gz` | 1,166,416,204 | `5453599f…` |
+| `…-darwin-x64.tar.gz` | 1,167,635,101 | `c410272d…` |
+| `SHA256SUMS.txt` | 467 | 与本地一致 |
+
+核对结果：tag `v0.4.0-20p.3` → `482eb3a7`（`target_commitish=master`），包内 `RELEASE.json.source` 同为
+`482eb3a7…`；`codeload` 的源码 zip 返回 200；GitHub 的 `releases/latest` 指向本版；发布体由
+`ReleaseNotes.md` 生成，链接指向该提交。macOS / Linux 仍只有结构核验，Windows 包在发布前实机启动过
+（`/healthz` 与特效索引 200）。
