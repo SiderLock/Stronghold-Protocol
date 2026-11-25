@@ -14,7 +14,7 @@ import subprocess
 import tarfile
 import zipfile
 
-RELEASE = "v0.4.0-20p.1"
+RELEASE = "v0.4.0-20p.3"
 NODE_VERSION = "22.23.3"
 UPSTREAM_FILE = "Stronghold-Protocol-v0.4.0.zip"
 UPSTREAM_SHA = "aded7ef95d8494e377154a4e0db55cb317866518497ff3cab2d8b280e63a0b45"

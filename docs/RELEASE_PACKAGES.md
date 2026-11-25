@@ -1,10 +1,10 @@
 # 本 fork 的便携发布包
 
-`v0.4.0-20p.1` 正在准备候选包，采用下述完整包范围（上游 0.4.0 与 `dev` 第 84 轮的合并）。候选尚未发布：维护者验收文案、文件与校验结果后才会上传附件。
+`v0.4.0-20p.3` 发布第 84 轮的便携包，采用下述完整包范围（上游 0.4.0 与 `dev` 第 84 轮的合并）。`v0.4.0-20p.1` 与 `v0.4.0-20p.2` 已指向更早的提交，所以本次用 `.3`，让源码下载与便携包对应同一个提交。
 
 此前的 [`v0.3.3-20p.1` 已正式发布](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.1)；[`v0.3.3-20p.2`](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.3-20p.2) 只提供覆盖该版四平台便携包的增量更新，不重新发布完整包，步骤见[该版更新说明](releases/v0.3.3-20p.2.md)。[`v0.3.4-20p.1`](releases/v0.3.4-20p.1.md) 至 [`v0.3.4-20p.3`](https://github.com/SiderLock/Stronghold-Protocol/releases/tag/v0.3.4-20p.3) 是预发布，只发布源码与更新说明，不提供完整包或增量包。这不改变旧版已经发布的附件。
 
-本次候选的变更与验证边界见 [v0.4.0-20p.1 发行说明](releases/v0.4.0-20p.1.md)：规程·序列Ⅰ、上游 0.4.0 同步与二十人适配。
+本次的变更与验证边界见 [v0.4.0-20p.3 发行说明](releases/v0.4.0-20p.3.md)：规程·序列Ⅰ、上游 0.4.0 同步与二十人适配。
 
 ## 平台与启动
 
@@ -39,7 +39,7 @@
 - `app/docs/LOCAL_ASSET_EXTRACTION.md`：Python 环境、皮肤图片 / 模型 / 特效提取与核验。
 - `app/docs/REFERENCES.md`：参考开发者、功能思路、冻结版本与采用范围。
 - `app/docs/RELEASE_PACKAGES.md`：本页。
-- `app/docs/releases/v0.4.0-20p.1.md`：简明更新内容及素材边界。
+- `app/docs/releases/v0.4.0-20p.3.md`：简明更新内容及素材边界。
 - `RELEASE.json`：候选版本、源码提交、目标平台和上游归档来源。
 - `PACKAGE-MANIFEST.json`：包内实际文件的大小与 SHA-256。
 
